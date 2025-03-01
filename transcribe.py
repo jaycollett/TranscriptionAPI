@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 warnings.filterwarnings("ignore", category=UserWarning, module="whisper.transcribe")
 
 # Get environment variables for Whisper model & language
-MODEL = os.environ.get("MODEL", "turbo")  # Default to "base" model to save memory
+MODEL = os.environ.get("MODEL", "base")  # Default to "base" model to save memory
 LANGUAGE = os.environ.get("LANGUAGE", None)  # Auto-detect language if not set
 
 # Singleton Model Storage
@@ -26,8 +26,8 @@ def load_whisper_model():
         _whisper_model = whisper.load_model(MODEL, device="cuda" if torch.cuda.is_available() else "cpu")
 
         # Reduce memory usage on GPU
-        #if torch.cuda.is_available():
-        #    _whisper_model.half()
+        if torch.cuda.is_available():
+            _whisper_model.half()
 
         logging.info("✅ Whisper model loaded successfully.")
     return _whisper_model
@@ -80,7 +80,16 @@ def consensus_two(seq1, seq2):
 
 def consensus_three(seq1, seq2, seq3):
     """ Merges three transcriptions using sequential consensus voting. """
-    return consensus_two(consensus_two(seq1, seq2), seq3)
+    consensus_result = consensus_two(consensus_two(seq1, seq2), seq3)
+    
+    # Prevent repetition artifacts at the end of the transcription
+    if len(consensus_result) > 10:
+        last_ten_words = consensus_result[-10:]
+        if len(set(last_ten_words)) < 3:  # If last 10 words have low diversity, trim excess
+            consensus_result = consensus_result[:-5]
+            logging.warning("🚨 Detected excessive repetition at the end of transcription. Trimming output.")
+    
+    return consensus_result
 
 def transcribe_audio(file_path):
     """ Performs triple-pass Whisper transcription with consensus alignment. """
@@ -92,7 +101,7 @@ def transcribe_audio(file_path):
     for attempt in range(3):
         logging.info(f"Transcription attempt {attempt + 1}...")
         result = model.transcribe(file_path, language=LANGUAGE, beam_size=7, best_of=7) if LANGUAGE else model.transcribe(file_path)
-        transcript_text = result["text"]
+        transcript_text = result["text"].strip()
         logging.info(f"Transcription attempt {attempt + 1} completed: {transcript_text[:100]}...")  # Log partial transcription
         transcripts.append(transcript_text)
     
