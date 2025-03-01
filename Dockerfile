@@ -24,7 +24,9 @@ COPY init_db.sql /app/
 # Expose the Flask port
 EXPOSE 5000
 
-ENV PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+ENV PYTORCH_CUDA_ALLOC_CONF="max_split_size_mb:64"
+ENV CUDA_LAUNCH_BLOCKING=0
 
 # Start Flask with the worker inside the same container
 CMD ["python3", "app.py"]

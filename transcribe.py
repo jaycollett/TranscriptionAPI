@@ -15,6 +15,9 @@ warnings.filterwarnings("ignore", category=UserWarning, module="whisper.transcri
 MODEL = os.environ.get("MODEL", "turbo")  # Default to "base" model to save memory
 LANGUAGE = os.environ.get("LANGUAGE", None)  # Auto-detect language if not set
 
+# Ensure PyTorch doesn't pre-allocate excessive GPU memory
+torch.cuda.empty_cache()
+
 # Singleton Model Storage
 _whisper_model = None
 
