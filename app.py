@@ -113,6 +113,15 @@ def transcription_worker():
                     app.logger.info(f"✅ Transcription completed for {filename} (GUID: {guid})")
 
                 # Cleanup transcriptions older than 24 hours
+                cursor.execute("SELECT guid, filename FROM transcriptions WHERE status = 'processed' AND created_at <= datetime('now', '-1 day')")
+                old_records = cursor.fetchall()
+                
+                for guid, filename in old_records:
+                    file_path = os.path.join("/tmp/audio_files", f"{guid}{os.path.splitext(filename)[-1]}")
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        app.logger.info(f"🗑️ Deleted old audio file {file_path}")
+                
                 cursor.execute("DELETE FROM transcriptions WHERE status = 'processed' AND created_at <= datetime('now', '-1 day')")
                 conn.commit()
                 app.logger.info("🧹 Old processed transcriptions deleted")
@@ -125,4 +134,4 @@ if __name__ == "__main__":
     worker_thread = threading.Thread(target=transcription_worker, daemon=True)
     worker_thread.start()
     app.logger.info("✅ Transcription worker thread started successfully.")
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+    app.run(host='0.0.0.0', port=5000, debug=True)
