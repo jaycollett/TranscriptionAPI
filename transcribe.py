@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 warnings.filterwarnings("ignore", category=UserWarning, module="whisper.transcribe")
 
 # Get environment variables for Whisper model & language
-MODEL = os.environ.get("MODEL", "base")  # Default to "base" model to save memory
+MODEL = os.environ.get("MODEL", "turbo")  # Default to "base" model to save memory
 LANGUAGE = os.environ.get("LANGUAGE", None)  # Auto-detect language if not set
 
 # Singleton Model Storage
@@ -24,11 +24,6 @@ def load_whisper_model():
     if _whisper_model is None:
         logging.info("🔄 Loading Whisper model...")
         _whisper_model = whisper.load_model(MODEL, device="cuda" if torch.cuda.is_available() else "cpu")
-
-        # Reduce memory usage on GPU
-        if torch.cuda.is_available():
-            _whisper_model.half()
-
         logging.info("✅ Whisper model loaded successfully.")
     return _whisper_model
 
