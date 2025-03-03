@@ -31,7 +31,7 @@ def load_whisper_model():
     return _whisper_model
 
 # Get environment variables for Whisper model & language
-MODEL = os.environ.get("MODEL", "large-v3")  # Highest quality model
+MODEL = os.environ.get("MODEL", "turbo")  # Highest quality model
 LANGUAGE = os.environ.get("LANGUAGE", None)  # Auto-detect language if not set
 
 def align_two(seq1, seq2):

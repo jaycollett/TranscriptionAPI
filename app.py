@@ -143,7 +143,7 @@ def upload_audio():
 
 
 
-@app.route('/transcription/<guid>', methods=['GET'])
+@app.route('/status/<guid>', methods=['GET'])
 def get_transcription(guid):
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
