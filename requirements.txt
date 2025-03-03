@@ -1,2 +1,9 @@
-flask
+torch
+torchvision
+torchaudio
 openai-whisper
+flask
+ffmpeg
+fuzzywuzzy
+python-Levenshtein
+pydub
