@@ -4,6 +4,6 @@ torchaudio
 openai-whisper
 flask
 ffmpeg
-fuzzywuzzy
 python-Levenshtein
 pydub
+numpy

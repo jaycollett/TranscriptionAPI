@@ -103,7 +103,7 @@ def upload_audio():
         duration_min = duration_sec / 60  # Convert seconds to minutes
 
         # **Calculate estimated processing time**
-        processing_time_est = (duration_min * 2) * 1.03  # +3% buffer
+        processing_time_est = (duration_min) * 1.03  # +3% buffer
         processing_time_est_sec = processing_time_est * 60  # Convert to seconds
 
         # **Check pending transcriptions and sum up processing times**
