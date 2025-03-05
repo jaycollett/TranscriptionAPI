@@ -29,7 +29,7 @@ def load_whisper_model():
     return _whisper_model
 
 # Get environment variables for Whisper model & language
-MODEL = os.environ.get("MODEL", "large-v3")  # Use large-v3 for best accuracy
+MODEL = os.environ.get("MODEL", "large-v3-turbo")  # Use large-v3-turbo for best accuracy
 LANGUAGE = os.environ.get("LANGUAGE", "en")  # Default to English
 
 def transcribe_audio(file_path, guid):
