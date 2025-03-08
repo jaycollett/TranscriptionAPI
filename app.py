@@ -3,6 +3,7 @@ import uuid
 import sqlite3
 import threading
 import time
+import math
 from flask import Flask, request, jsonify
 from transcribe import transcribe_audio, load_whisper_model
 from pydub import AudioSegment
@@ -18,11 +19,6 @@ db_file = 'transcriptions.db'
 # Ensure database file exists before initializing
 if not os.path.exists(db_file):
     open(db_file, 'w').close()
-
-# Load the Whisper model once at startup
-app.logger.info("🔄 Loading Whisper model...")
-model = load_whisper_model()
-app.logger.info("✅ Whisper model loaded successfully.")
 
 # Initialize SQLite database
 def init_db():
@@ -100,11 +96,8 @@ def upload_audio():
         # **Analyze the audio file to get duration**
         audio = AudioSegment.from_file(file_path)
         duration_sec = len(audio) / 1000  # Convert milliseconds to seconds
-        duration_min = duration_sec / 60  # Convert seconds to minutes
-
-        # **Calculate estimated processing time**
-        processing_time_est = (duration_min) * 1.03  # +3% buffer
-        processing_time_est_sec = processing_time_est * 60  # Convert to seconds
+        psf = 15.1 # Processing speed factor
+        processing_time_est_sec = math.ceil(duration_sec / psf) * 3
 
         # **Check pending transcriptions and sum up processing times**
         with sqlite3.connect(db_file) as conn:
@@ -199,8 +192,8 @@ def transcription_worker():
     app.logger.info("🟢 Transcription worker started. Checking for pending transcriptions every 30 seconds.")
 
     while True:
-        app.logger.info("⏳ Worker sleeping for 30 seconds...")
-        time.sleep(30)
+        app.logger.info("⏳ Worker sleeping for 15 seconds...")
+        time.sleep(15)
         app.logger.info("🔍 Worker waking up to check for pending transcriptions...")
 
         try:
@@ -246,6 +239,8 @@ def transcription_worker():
             app.logger.error(f"❌ Worker error: {e}")
 
 if __name__ == "__main__":
+    # Load the Whisper model once at startup
+    model = load_whisper_model()
     app.logger.info("🔥 Starting transcription worker thread...")
     worker_thread = threading.Thread(target=transcription_worker, daemon=True)
     worker_thread.start()
