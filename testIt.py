@@ -4,9 +4,9 @@ import uuid
 import os
 
 # API URLs
-API_BASE_URL = "http://localhost:5030"
+API_BASE_URL = "http://localhost:5032"
 UPLOAD_URL = f"{API_BASE_URL}/upload"
-TRANSCRIPTION_URL = f"{API_BASE_URL}/transcription"
+STATUS_URL = f"{API_BASE_URL}/status"
 
 # File Path
 AUDIO_FILE_PATH = "/home/jay/Downloads/simple.mp3"
@@ -31,26 +31,43 @@ def upload_audio():
         print(f"🔄 Estimated completion time: {response_json['estimated_completion_utc']}")
         return response_json['guid']
     else:
-        print(f"❌ Upload failed: {response.json()}")
+        try:
+            error = response.json()
+        except Exception:
+            error = response.text
+        print(f"❌ Upload failed: {error}")
         return None
 
 def check_transcription():
     """Checks the transcription status until it's completed."""
     while True:
-        response = requests.get(f"{TRANSCRIPTION_URL}/{guid}")
+        response = requests.get(f"{STATUS_URL}/{guid}")
 
         if response.status_code == 200:
             response_json = response.json()
             status = response_json['status']
 
             if status == 'pending':
-                print(f"⏳ Still processing... Estimated completion: {response_json['estimated_completion_utc']}")
+                print(f"⏳ Still processing... Estimated completion: {response_json.get('estimated_completion_utc', 'Unknown')}")
+            elif status == 'processing':
+                print("🚀 Transcription is currently in progress...")
             elif status == 'processed':
                 print("✅ Transcription complete!")
-                print(f"📝 Transcription:\n{response_json['transcription']}")
+                print(f"📝 Transcription:\n{response_json.get('transcription', 'No transcription available')}")
+                print("⏰ Timings:")
+                timings = response_json.get('timings', [])
+                for segment in timings:
+                    start = segment.get('start', 'Unknown')
+                    end = segment.get('end', 'Unknown')
+                    text = segment.get('text', 'No text')
+                    print(f"  Start: {start}, End: {end}, Text: {text}")
                 return
         else:
-            print(f"❌ Error checking status: {response.json()}")
+            try:
+                error = response.json()
+            except Exception:
+                error = response.text
+            print(f"❌ Error checking status: {error}")
 
         time.sleep(20)  # Wait 20 seconds before checking again
 
