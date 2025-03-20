@@ -4,7 +4,7 @@ import uuid
 import os
 
 # API URLs
-API_BASE_URL = "http://localhost:5032"
+API_BASE_URL = "http://localhost:5032"  # Updated port to match Docker container
 UPLOAD_URL = f"{API_BASE_URL}/upload"
 STATUS_URL = f"{API_BASE_URL}/status"
 
@@ -17,7 +17,7 @@ guid = str(uuid.uuid4())
 def upload_audio():
     """Uploads the audio file to the API for processing."""
     if not os.path.exists(AUDIO_FILE_PATH):
-        print(f"❌ Error: Audio file not found at {AUDIO_FILE_PATH}")
+        print(f"Error: Audio file not found at {AUDIO_FILE_PATH}")
         return None
 
     with open(AUDIO_FILE_PATH, 'rb') as file:
@@ -27,15 +27,15 @@ def upload_audio():
 
     if response.status_code == 201:
         response_json = response.json()
-        print(f"✅ Upload successful! GUID: {response_json['guid']}")
-        print(f"🔄 Estimated completion time: {response_json['estimated_completion_utc']}")
+        print(f"Upload successful! GUID: {response_json['guid']}")
+        print(f"Estimated completion time: {response_json['estimated_completion_utc']}")
         return response_json['guid']
     else:
         try:
             error = response.json()
         except Exception:
             error = response.text
-        print(f"❌ Upload failed: {error}")
+        print(f"Upload failed: {error}")
         return None
 
 def check_transcription():
@@ -48,13 +48,13 @@ def check_transcription():
             status = response_json['status']
 
             if status == 'pending':
-                print(f"⏳ Still processing... Estimated completion: {response_json.get('estimated_completion_utc', 'Unknown')}")
+                print(f"Still processing... Estimated completion: {response_json.get('estimated_completion_utc', 'Unknown')}")
             elif status == 'processing':
-                print("🚀 Transcription is currently in progress...")
-            elif status == 'processed':
-                print("✅ Transcription complete!")
-                print(f"📝 Transcription:\n{response_json.get('transcription', 'No transcription available')}")
-                print("⏰ Timings:")
+                print("Transcription is currently in progress...")
+            elif status == 'processed' or status == 'completed':
+                print("Transcription complete!")
+                print(f"Transcription:\n{response_json.get('transcription', 'No transcription available')}")
+                print("Timings:")
                 timings = response_json.get('timings', [])
                 for segment in timings:
                     start = segment.get('start', 'Unknown')
@@ -67,11 +67,11 @@ def check_transcription():
                 error = response.json()
             except Exception:
                 error = response.text
-            print(f"❌ Error checking status: {error}")
+            print(f"Error checking status: {error}")
 
         time.sleep(20)  # Wait 20 seconds before checking again
 
 if __name__ == "__main__":
-    print("🚀 Submitting transcription job...")
+    print("Submitting transcription job...")
     if upload_audio():
         check_transcription()
