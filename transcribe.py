@@ -1,14 +1,14 @@
 import os
 import logging
 import warnings
-import torch
+import torch # type: ignore
 import math
-import numpy as np
+import numpy as np # type: ignore # type: ignore
 import json
 import re
 import string
-from faster_whisper import WhisperModel
-from pydub import AudioSegment
+from faster_whisper import WhisperModel # type: ignore
+from pydub import AudioSegment # type: ignore
 import time
 from functools import lru_cache
 
@@ -116,10 +116,8 @@ def get_audio_duration(file_path):
 
 def transcribe_audio(file_path, guid):
     """
-    Performs multi-pass Faster-Whisper transcription and selects the pass with the highest confidence.
-    
-    The transcript file is written as a single line (segments joined by spaces) for MFA,
-    matching the original working format. The returned transcription (for the database) is the same.
+    Performs multi-pass Faster-Whisper transcription, penalizing passes with a low word rate.
+    Returns the best transcript (with timings) based on an adjusted confidence score.
     """
     start_time = time.time()
     logger.info(f"Starting transcription for: {file_path} (GUID: {guid})")
@@ -146,60 +144,45 @@ def transcribe_audio(file_path, guid):
 
     transcriptions = []
     confidence_scores = []
-    all_segments = []  # List to hold segments from each pass
+    all_segments = []   # List to hold segments from each pass
+    word_counts = []    # List to store word count for each pass
+    adjusted_confidences = []  # List to store adjusted confidence values
 
     def calculate_weighted_confidence(segments):
         """
         Calculate a weighted average confidence score for a list of transcription segments.
-        
-        Each segment is expected to have an attribute 'words' (a list of word objects).
-        Each word object should have:
-        - 'probability': a float between 0 and 1,
-        - 'start': the start time (in seconds),
-        - 'end': the end time (in seconds).
-        
-        The function weights each word's probability by its duration (end - start).
-        If word start/end are missing, it falls back to approximating the word duration as:
-            (segment.end - segment.start) / number_of_words_in_segment.
-        
-        Returns:
-        A float representing the weighted average confidence score.
+        Each word's probability is weighted by its duration.
         """
         total_duration = 0.0
         weighted_sum = 0.0
 
         for segment in segments:
-            # Retrieve the words for this segment.
             words = getattr(segment, "words", None)
             if not words:
-                continue  # Skip segments with no word data.
+                continue
             for word in words:
                 prob = getattr(word, "probability", None)
-                # Skip if probability is not available or is non-positive.
                 if prob is None or prob <= 0:
                     continue
-
-                # Try to get the word's start and end times.
                 word_start = getattr(word, "start", None)
                 word_end = getattr(word, "end", None)
                 if word_start is not None and word_end is not None:
                     duration = word_end - word_start
                 else:
-                    # Fallback: approximate duration as the segment duration divided by the number of words.
                     seg_start = getattr(segment, "start", 0)
                     seg_end = getattr(segment, "end", 0)
                     seg_duration = seg_end - seg_start
                     duration = seg_duration / len(words) if len(words) > 0 else 0
-
                 weighted_sum += duration * prob
                 total_duration += duration
 
-        # If no duration was accumulated, return 0 to indicate no valid confidence.
-        if total_duration == 0:
-            return 0.0
-        return weighted_sum / total_duration
+        return weighted_sum / total_duration if total_duration > 0 else 0.0
 
     def run_transcription_pass(params, pass_index):
+        """
+        Run a single transcription pass using the given parameters.
+        Returns a dict containing the segments, transcript, and confidence.
+        """
         pass_start_time = time.time()
         logger.info(f"Starting pass {pass_index+1} with patience={params['patience']}, temperature={params['temperature']}, and beam_size={params['beam_size']}")
         try:
@@ -215,7 +198,6 @@ def transcribe_audio(file_path, guid):
                 condition_on_previous_text=True,
                 patience=params["patience"]
             )[0])
-            # Build transcript by joining segment texts with a space.
             transcript = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
             total_duration = get_audio_duration(file_path)
             words = len(transcript.split())
@@ -228,7 +210,6 @@ def transcribe_audio(file_path, guid):
             logger.error(f"Error during transcription in pass {pass_index+1}: {str(e)}")
             raise
 
-        # Calculate weighted confidence using the new method
         avg_confidence = calculate_weighted_confidence(segments)
         pass_time = time.time() - pass_start_time
         logger.info(f"Pass {pass_index+1} completed in {pass_time:.2f}s with weighted confidence score: {avg_confidence:.4f}")
@@ -241,21 +222,38 @@ def transcribe_audio(file_path, guid):
     # Run each transcription pass sequentially.
     for i, params in enumerate(passes):
         result = run_transcription_pass(params, i)
-        all_segments.append(result["segments"])
-        transcriptions.append(result["transcript"])
-        confidence_scores.append(result["confidence"])
+        transcript = result["transcript"]
+        segments = result["segments"]
+        conf = result["confidence"]
 
-    if not confidence_scores:
+        transcriptions.append(transcript)
+        all_segments.append(segments)
+        confidence_scores.append(conf)
+
+        wc = len(transcript.split())
+        word_counts.append(wc)
+        # Compute words per second for this pass
+        wps = wc / duration_sec if duration_sec > 0 else 0
+
+        # If the pass has less than 1.4 words per second, penalize its confidence.
+        if wps < 1.4:
+            adjusted = conf * (wps / 1.4)
+        else:
+            adjusted = conf
+        adjusted_confidences.append(adjusted)
+        logger.info(f"Pass {i+1} adjusted confidence: {adjusted:.4f} (word rate: {wps:.2f} words/sec, word count: {wc})")
+
+    if not adjusted_confidences:
         logger.error(f"Whisper transcription failed for {guid}: No valid transcription found")
         return {"transcription": "", "timings": []}
 
-    # Select the best pass (highest average confidence).
-    best_index = np.argmax(confidence_scores)
+    # Select the best pass based on the adjusted confidence scores.
+    best_index = int(np.argmax(adjusted_confidences))
     best_segments = all_segments[best_index]
     final_transcript = " ".join(segment.text.strip() for segment in best_segments if segment.text.strip())
     final_transcript = clean_transcript_duplicates(final_transcript)
 
-    # Extract segment timings (to be stored in the database).
+    # Extract segment timings for storage.
     final_timings = [{"start": seg.start, "end": seg.end, "text": seg.text.strip()} for seg in best_segments if seg.text.strip()]
 
     # Save the transcript file (a single line) for MFA.
