@@ -12,10 +12,10 @@ from pydub import AudioSegment # type: ignore
 import time
 from functools import lru_cache
 
-# Set audio file location
+# Set audio file location from environment variable or default to /tmp/audio_files
 upload_folder = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
 
-# Configure logging
+# Configure logging to include timestamp, log level, logger name, and message
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
@@ -23,35 +23,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger('transcribe')
 
-# Suppress Whisper's FP16 warning
+# Suppress specific warning from Faster-Whisper about FP16 usage
 warnings.filterwarnings("ignore", category=UserWarning, module="faster_whisper")
 
-# Configuration from environment variables
+# Determine device type (GPU if available, else CPU) and set compute precision
 device = "cuda" if torch.cuda.is_available() else "cpu"
 compute_type = "float32"
 
 logger.info(f"Running Faster-Whisper on {device.upper()} with compute type {compute_type}")
 
-# Sentinel variable to ensure the model loads only once
+# Sentinel variable to ensure the model is loaded only once and reused
+import threading
 _whisper_model = None
+_model_lock = threading.Lock()
 
 def load_whisper_model():
     """Load the Faster-Whisper model once and reuse it."""
     global _whisper_model
-    if _whisper_model is None:
-        start_time = time.time()
-        logger.info("Loading Faster-Whisper model...")
-        # Get the model name from environment variable or default to "large-v3-turbo"
-        model_name = os.environ.get("MODEL", "large-v3-turbo")
-        _whisper_model = WhisperModel(
-            model_name,
-            device=device,
-            compute_type=compute_type,
-            cpu_threads=os.cpu_count(),  # Use all available CPU cores
-            num_workers=2  # Number of workers for the loader
-        )
-        elapsed = time.time() - start_time
-        logger.info(f"Faster-Whisper model '{model_name}' loaded successfully in {elapsed:.2f} seconds")
+    with _model_lock:
+        if _whisper_model is None:
+            start_time = time.time()
+            logger.info("Loading Faster-Whisper model...")
+            model_name = os.environ.get("MODEL", "large-v3-turbo")
+            _whisper_model = WhisperModel(
+                model_name,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=os.cpu_count(),
+                num_workers=2
+            )
+            elapsed = time.time() - start_time
+            logger.info(f"Faster-Whisper model '{model_name}' loaded successfully in {elapsed:.2f} seconds")
     return _whisper_model
 
 def clean_transcript_duplicates(text):
@@ -72,19 +74,19 @@ def clean_transcript_duplicates(text):
     Returns:
         str: The cleaned transcript.
     """
-    # Step 1: Split the text into sentences.
+    # Step 1: Split the text into sentences using punctuation as delimiters.
     sentences = re.split(r'(?<=[.!?])\s+', text)
     if not sentences:
         return text
 
-    # Step 2: Clean duplicates within each sentence.
+    # Step 2: Remove adjacent duplicate words within each sentence.
     cleaned_sentences = []
     for sentence in sentences:
         # Remove adjacent duplicate words within the sentence.
         sentence_cleaned = re.sub(r'\b(\w+)(\s+)\1\b', r'\1', sentence, flags=re.IGNORECASE)
         cleaned_sentences.append(sentence_cleaned)
 
-    # Step 3: Clean duplicates at sentence boundaries.
+    # Step 3: Remove duplicate words that occur at sentence boundaries.
     final_sentences = [cleaned_sentences[0]]
     for i in range(1, len(cleaned_sentences)):
         prev_sentence = final_sentences[-1].strip()
@@ -111,7 +113,7 @@ def clean_transcript_duplicates(text):
 @lru_cache(maxsize=1)
 def get_audio_duration(file_path):
     """Return the duration of the audio file in seconds."""
-    audio = AudioSegment.from_file(file_path)
+    audio = AudioSegment.from_file(file_path)  # Load audio using pydub
     return len(audio) / 1000.0  # Convert milliseconds to seconds
 
 def transcribe_audio(file_path, guid):
@@ -131,7 +133,7 @@ def transcribe_audio(file_path, guid):
         logger.warning(f"Could not calculate estimated processing time: {e}")
         duration_sec = 0
 
-    model = load_whisper_model()
+    model = load_whisper_model()  # Load the Whisper model (cached)
 
     # Define transcription passes with different parameters.
     passes = [
@@ -142,7 +144,7 @@ def transcribe_audio(file_path, guid):
         {"temperature": 0.2, "patience": 3.5, "beam_size": 26}
     ]
 
-    transcriptions = []
+    transcriptions = []  # Store raw transcripts from each pass
     confidence_scores = []
     all_segments = []   # List to hold segments from each pass
     word_counts = []    # List to store word count for each pass
@@ -153,7 +155,7 @@ def transcribe_audio(file_path, guid):
         Calculate a weighted average confidence score for a list of transcription segments.
         Each word's probability is weighted by its duration.
         """
-        total_duration = 0.0
+        total_duration = 0.0  # Total duration of all words
         weighted_sum = 0.0
 
         for segment in segments:
@@ -176,14 +178,14 @@ def transcribe_audio(file_path, guid):
                 weighted_sum += duration * prob
                 total_duration += duration
 
-        return weighted_sum / total_duration if total_duration > 0 else 0.0
+        return weighted_sum / total_duration if total_duration > 0 else 0.0  # Avoid division by zero
 
     def run_transcription_pass(params, pass_index):
         """
         Run a single transcription pass using the given parameters.
         Returns a dict containing the segments, transcript, and confidence.
         """
-        pass_start_time = time.time()
+        pass_start_time = time.time()  # Track how long this pass takes
         logger.info(f"Starting pass {pass_index+1} with patience={params['patience']}, temperature={params['temperature']}, and beam_size={params['beam_size']}")
         try:
             segments = list(model.transcribe(
@@ -199,9 +201,9 @@ def transcribe_audio(file_path, guid):
                 patience=params["patience"]
             )[0])
             transcript = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
-            total_duration = get_audio_duration(file_path)
             words = len(transcript.split())
-            wps = words / total_duration if total_duration > 0 else 0
+            wps = words / duration_sec if duration_sec > 0 else 0
+            total_duration = duration_sec  # Define total_duration for logging and validation
             logger.info(f"Pass {pass_index+1} stats: {words} words in {total_duration:.1f}s audio ({wps:.2f} words/sec)")
             if total_duration > 5.0 and words < int(total_duration / 4):
                 expected_words = int(total_duration / 4)
@@ -210,7 +212,7 @@ def transcribe_audio(file_path, guid):
             logger.error(f"Error during transcription in pass {pass_index+1}: {str(e)}")
             raise
 
-        avg_confidence = calculate_weighted_confidence(segments)
+        avg_confidence = calculate_weighted_confidence(segments)  # Compute confidence score
         pass_time = time.time() - pass_start_time
         logger.info(f"Pass {pass_index+1} completed in {pass_time:.2f}s with weighted confidence score: {avg_confidence:.4f}")
         return {
@@ -248,18 +250,23 @@ def transcribe_audio(file_path, guid):
         return {"transcription": "", "timings": []}
 
     # Select the best pass based on the adjusted confidence scores.
-    best_index = int(np.argmax(adjusted_confidences))
+    best_index = int(np.argmax(adjusted_confidences))  # Choose the best scoring pass
     best_segments = all_segments[best_index]
     final_transcript = " ".join(segment.text.strip() for segment in best_segments if segment.text.strip())
     final_transcript = clean_transcript_duplicates(final_transcript)
 
     # Extract segment timings for storage.
+    # Extract start/end times and text for each segment
     final_timings = [{"start": seg.start, "end": seg.end, "text": seg.text.strip()} for seg in best_segments if seg.text.strip()]
 
     # Save the transcript file (a single line) for MFA.
     transcript_output_path = os.path.join(upload_folder, f"{guid}.txt")
-    with open(transcript_output_path, "w") as transcript_file:
-        transcript_file.write(final_transcript)
+    try:
+        with open(transcript_output_path, "w") as transcript_file:
+            transcript_file.write(final_transcript)
+    except Exception as e:
+        logger.error(f"Failed to write transcript to {transcript_output_path}: {e}")
+        return {"transcription": "", "timings": []}
 
     total_time = time.time() - start_time
     logger.info(f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds")
@@ -270,5 +277,5 @@ if __name__ == "__main__":
     # For testing purposes
     test_file = os.path.join(upload_folder, "test_audio.mp3")
     test_guid = "00000000-0000-0000-0000-000000000000"
-    result = transcribe_audio(test_file, test_guid)
+    result = transcribe_audio(test_file, test_guid)  # Run test transcription
     print(json.dumps(result, indent=2))

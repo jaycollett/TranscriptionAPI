@@ -1,16 +1,16 @@
 import os
 import uuid
 import sqlite3
-import threading
+import threading  # For background processing and thread-local DB connections
 import time
 import math
 import json
 import subprocess
-from flask import Flask, request, jsonify
-from transcribe import transcribe_audio, load_whisper_model
-from pydub import AudioSegment
+from flask import Flask, request, jsonify  # Web framework and request handling
+from transcribe import transcribe_audio, load_whisper_model  # Custom transcription logic
+from pydub import AudioSegment  # Audio file manipulation
 from datetime import datetime, timedelta
-import logging
+import logging  # Logging for debugging and monitoring
 
 
 # Configure logging
@@ -25,7 +25,6 @@ app.config['UPLOAD_FOLDER'] = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Database configuration
-import threading
 
 db_file = 'transcriptions.db'
 db_connection_timeout = 30  # Connection timeout in seconds
@@ -39,6 +38,7 @@ if not os.path.exists(db_file):
 local_storage = threading.local()
 
 def get_db_connection():
+    # Establish a thread-local SQLite connection with autocommit and cross-thread access
     """
     Returns a SQLite database connection with proper timeout settings.
     Uses thread-local storage to ensure each thread gets its own connection.
@@ -55,6 +55,7 @@ def get_db_connection():
     return local_storage.connection
 
 def close_db_connection():
+    # Clean up thread-local connection if it exists
     """Close the database connection for the current thread if it exists."""
     if hasattr(local_storage, 'connection'):
         local_storage.connection.close()
@@ -63,6 +64,7 @@ def close_db_connection():
 
 # Initialize SQLite database with timings column included in the CREATE TABLE statement
 def init_db():
+    # Initialize the SQLite database schema and performance settings
     """Initialize the database with necessary tables."""
     # Use a temporary connection specifically for initialization to avoid impacting thread-local storage
     with sqlite3.connect(db_file, timeout=db_connection_timeout) as conn:
@@ -102,6 +104,7 @@ def init_db():
 init_db()
 
 def run_forced_alignment(audio_path, whisper_segments, guid):
+    # Use Montreal Forced Aligner to refine Whisper's segment timings
     """
     Runs Montreal Forced Aligner (MFA) to refine the timestamps from the Whisper transcript,
     ensuring they align with Whisper's segment structure.
@@ -205,6 +208,7 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
 
 
 @app.route('/transcriptions', methods=['GET'])
+# Endpoint to list all transcription jobs with metadata
 def get_all_transcriptions():
     """Returns all transcriptions with status, GUID, submission, completion timestamps, and estimated processing time."""
     conn = get_db_connection()
@@ -233,6 +237,7 @@ def get_all_transcriptions():
 
 
 @app.route('/upload', methods=['POST'])
+# Endpoint to upload an audio file and register a transcription job
 def upload_audio():
     try:
         # Check if file is in request
@@ -304,13 +309,20 @@ def upload_audio():
             'estimated_completion_utc': estimated_completion_utc.strftime('%Y-%m-%d %H:%M:%S UTC')
         }), 201  # Created status
 
+    except FileNotFoundError as e:
+        app.logger.error(f"File not found error: {e}")
+        return jsonify({'error': 'File not found'}), 400
+    except ValueError as e:
+        app.logger.error(f"Value error: {e}")
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
-        app.logger.error(f"Error processing request: {e}")
+        app.logger.error(f"Unexpected error processing request: {e}")
         return jsonify({'error': 'Internal Server Error'}), 500
 
 
 
 @app.route('/status/<guid>', methods=['GET'])
+# Endpoint to check the status or result of a transcription job
 def get_transcription(guid):
     """Get the status or results of a specific transcription job by GUID."""
     conn = get_db_connection()  # Uses thread-local connection
@@ -380,12 +392,13 @@ def get_transcription(guid):
 
 
 def transcription_worker():
+    # Background thread that polls for pending jobs and processes them
     """Background worker that processes pending audio files every N seconds."""
-    app.logger.info("Transcription worker started. Checking for pending transcriptions every 15 seconds.")
+    app.logger.info("Transcription worker started. Checking for pending transcriptions every 30 seconds.")
 
     while True:
         app.logger.info("Worker sleeping for 30 seconds...")
-        time.sleep(30)
+        time.sleep(30)  # Sleep interval between polling cycles
         app.logger.info("Worker waking up to check for pending transcriptions...")
 
         try:
@@ -464,26 +477,33 @@ def transcription_worker():
                         (guid,)
                     )
             
-            # Cleanup transcriptions older than 24 hours (once per iteration)
-            try:
-                cursor.execute("""
-                    SELECT guid, filename FROM transcriptions 
-                    WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')
+            # Cleanup transcriptions older than 24 hours (once per hour)
+            if int(time.time()) % 3600 < 30:  # Run cleanup roughly every hour
+                try:
+                    cursor.execute("""
+                        SELECT guid, filename FROM transcriptions 
+                        WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')
                     LIMIT 20
-                """)
-                old_records = cursor.fetchall()
-                
-                if old_records:
-                    for guid, filename in old_records:
-                        file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}{os.path.splitext(filename)[-1]}")
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                            app.logger.info(f"Deleted old audio file {file_path}")
+                    """)
+                    old_records = cursor.fetchall()
                     
-                    cursor.execute("DELETE FROM transcriptions WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')")
-                    app.logger.info("Old completed transcriptions deleted")
-            except Exception as cleanup_error:
-                app.logger.error(f"Cleanup error: {cleanup_error}")
+                    if old_records:
+                        for guid, filename in old_records:
+                            file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}{os.path.splitext(filename)[-1]}")
+                            if os.path.exists(file_path):
+                                try:
+                                    os.remove(file_path)
+                                    app.logger.info(f"Deleted old audio file {file_path}")
+                                except Exception as file_err:
+                                    app.logger.error(f"Failed to delete file {file_path}: {file_err}")
+                        
+                        try:
+                            cursor.execute("DELETE FROM transcriptions WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')")
+                            app.logger.info("Old completed transcriptions deleted")
+                        except Exception as db_cleanup_err:
+                            app.logger.error(f"Failed to delete old DB records: {db_cleanup_err}")
+                except Exception as cleanup_error:
+                    app.logger.error(f"Cleanup error: {cleanup_error}")
 
         except Exception as e:
             app.logger.error(f"Worker error: {e}")
@@ -491,12 +511,14 @@ def transcription_worker():
 
 # Cleanup function to close database connections when app is shutting down
 @app.teardown_appcontext
+# Flask hook to clean up DB connections after each request
 def shutdown_session(exception=None):
     """Ensure thread connections are closed when the app context ends."""
     close_db_connection()
     
 # Register a function to clean up connections when Flask is shutting down
 def cleanup_connections():
+    # Called on app shutdown to close any open DB connections
     """Clean up all database connections when the application is shutting down."""
     app.logger.info("Shutting down application, closing database connections...")
     close_db_connection()
