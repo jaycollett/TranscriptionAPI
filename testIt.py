@@ -4,12 +4,12 @@ import uuid
 import os
 
 # API URLs
-API_BASE_URL = "http://localhost:5032"  # Updated port to match Docker container
+API_BASE_URL = "http://localhost:5030"  # Updated port to match Docker container
 UPLOAD_URL = f"{API_BASE_URL}/upload"
 STATUS_URL = f"{API_BASE_URL}/status"
 
 # File Path
-AUDIO_FILE_PATH = "/home/jay/Downloads/simple.mp3"
+AUDIO_FILE_PATH = "test.mp3"
 
 # Generate a unique GUID for this job
 guid = str(uuid.uuid4())

@@ -18,7 +18,7 @@ docker run -dit \
   -p 5030:5000 \
   -e MODEL="large-v3-turbo" \
   -e UPLOAD_FOLDER="/tmp/audio_files" \
-  transcription-api
+  transcription-api:latest
 
 echo "Container started!"
 echo "API is available at http://localhost:5030"

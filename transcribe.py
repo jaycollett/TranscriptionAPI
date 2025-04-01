@@ -11,6 +11,9 @@ from faster_whisper import WhisperModel # type: ignore
 from pydub import AudioSegment # type: ignore
 import time
 from functools import lru_cache
+import noisereduce as nr  # type: ignore
+import scipy.io.wavfile as wavfile
+import tempfile
 
 # Set audio file location from environment variable or default to /tmp/audio_files
 upload_folder = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
@@ -28,7 +31,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="faster_whisper")
 
 # Determine device type (GPU if available, else CPU) and set compute precision
 device = "cuda" if torch.cuda.is_available() else "cpu"
-compute_type = "float32"
+compute_type = "float16" if device == "cuda" else "float32"
 
 logger.info(f"Running Faster-Whisper on {device.upper()} with compute type {compute_type}")
 
@@ -56,64 +59,66 @@ def load_whisper_model():
             logger.info(f"Faster-Whisper model '{model_name}' loaded successfully in {elapsed:.2f} seconds")
     return _whisper_model
 
-def clean_transcript_duplicates(text):
+def normalize_timestamp(ts):
+    """Convert timestamp to a consistent format (float)"""
+    if isinstance(ts, (tuple, list)):
+        return float(ts[0])
+    return float(ts)
+
+def clean_boundary_duplicates(text):
     """
-    Clean up a transcript by removing accidental adjacent duplicate words,
-    both within individual sentences and across sentence boundaries.
-
-    This function splits the text into sentences (based on punctuation),
-    then uses a regex to remove consecutive duplicate words within each sentence.
-    Finally, it checks the boundary between sentences: if the last word of the previous
-    sentence is identical to the first word of the next sentence—and the previous sentence
-    ended with a period ('.')—the duplicate at the start of the next sentence is removed,
-    including any following punctuation.
-    
-    Args:
-        text (str): The input transcript text.
-    
-    Returns:
-        str: The cleaned transcript.
+    Remove duplicated phrases that might occur at segment boundaries.
+    Finds word sequences (2+ words) that repeat with optional spacing/punctuation between.
     """
-    # Step 1: Split the text into sentences using punctuation as delimiters.
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    if not sentences:
-        return text
-
-    # Step 2: Remove adjacent duplicate words within each sentence.
-    cleaned_sentences = []
-    for sentence in sentences:
-        # Remove adjacent duplicate words within the sentence.
-        sentence_cleaned = re.sub(r'\b(\w+)(\s+)\1\b', r'\1', sentence, flags=re.IGNORECASE)
-        cleaned_sentences.append(sentence_cleaned)
-
-    # Step 3: Remove duplicate words that occur at sentence boundaries.
-    final_sentences = [cleaned_sentences[0]]
-    for i in range(1, len(cleaned_sentences)):
-        prev_sentence = final_sentences[-1].strip()
-        current_sentence = cleaned_sentences[i].strip()
-        if not prev_sentence or not current_sentence:
-            final_sentences.append(current_sentence)
-            continue
-
-        # Extract the last word of the previous sentence and the first word of the current sentence.
-        prev_words = re.findall(r'\w+', prev_sentence)
-        current_words = re.findall(r'\w+', current_sentence)
-        if prev_words and current_words:
-            last_word_prev = prev_words[-1].strip(string.punctuation).lower()
-            first_word_curr = current_words[0].strip(string.punctuation).lower()
-            # If they're identical and the previous sentence ends with a period, remove the duplicate
-            if last_word_prev == first_word_curr and prev_sentence[-1] == '.':
-                # This regex matches the first word, any punctuation following it, and any extra whitespace.
-                current_sentence = re.sub(r'^\b\w+\b[^\w\s]*\s*', '', current_sentence)
-        final_sentences.append(current_sentence)
-
-    return " ".join(final_sentences)
+    import re
+    # Find word sequences that repeat (with at least 2 words)
+    pattern = r'\b(\w+\s+\w+(?:\s+\w+){0,3})[.,;!?\s]*\1\b'
+    
+    while True:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            break
+        
+        # Replace the second occurrence with empty string
+        start, end = match.span()
+        phrase = match.group(1)
+        phrase_len = len(phrase)
+        duplicate_pos = text[start:end].lower().find(phrase.lower(), phrase_len)
+        if duplicate_pos > 0:
+            duplicate_pos += start
+            text = text[:duplicate_pos] + text[duplicate_pos + phrase_len:]
+    
+    return text
 
 
 @lru_cache(maxsize=1)
 def get_audio_duration(file_path):
     """Return the duration of the audio file in seconds."""
     audio = AudioSegment.from_file(file_path)  # Load audio using pydub
+
+    # Normalize volume
+    target_dBFS = -20.0
+    change_in_dBFS = target_dBFS - audio.dBFS
+    audio = audio.apply_gain(change_in_dBFS)
+
+    # Export to WAV for noise reduction
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
+        audio.export(tmp_wav.name, format="wav")
+        rate, data = wavfile.read(tmp_wav.name)
+
+    # Apply noise reduction only if noise is detected
+    noise_threshold = 0.015  # Empirical threshold for noise energy
+    noise_energy = np.mean(np.abs(data)) / 32768.0  # Normalize 16-bit PCM
+
+    if noise_energy > noise_threshold:
+        logger.info(f"Applying noise reduction (energy={noise_energy:.4f})")
+        reduced_noise = nr.reduce_noise(y=data, sr=rate, prop_decrease=0.8)
+        wavfile.write(tmp_wav.name, rate, reduced_noise)
+        audio = AudioSegment.from_wav(tmp_wav.name)
+    else:
+        logger.info(f"Skipping noise reduction (clean audio, energy={noise_energy:.4f})")
+    audio.export(file_path, format="mp3")
+
     return len(audio) / 1000.0  # Convert milliseconds to seconds
 
 def transcribe_audio(file_path, guid):
@@ -137,11 +142,11 @@ def transcribe_audio(file_path, guid):
 
     # Define transcription passes with different parameters.
     passes = [
-        {"temperature": 0.4, "patience": 3.5, "beam_size": 10},
-        {"temperature": 0.2, "patience": 3.4, "beam_size": 5},
-        {"temperature": 0.0, "patience": 3.4, "beam_size": 7},
-        {"temperature": 0.0, "patience": 3.0, "beam_size": 5},
-        {"temperature": 0.2, "patience": 3.5, "beam_size": 26}
+        {"temperature": 0.2, "patience": 3.0, "beam_size": 5},
+        {"temperature": 0.0, "patience": 2.8, "beam_size": 7},
+        {"temperature": 0.0, "patience": 2.5, "beam_size": 1},  # Greedy
+        {"temperature": 0.3, "patience": 3.2, "beam_size": 10},
+        {"temperature": 0.2, "patience": 3.5, "beam_size": 15, "condition_on_previous_text": False}
     ]
 
     transcriptions = []  # Store raw transcripts from each pass
@@ -180,6 +185,7 @@ def transcribe_audio(file_path, guid):
 
         return weighted_sum / total_duration if total_duration > 0 else 0.0  # Avoid division by zero
 
+
     def run_transcription_pass(params, pass_index):
         """
         Run a single transcription pass using the given parameters.
@@ -191,12 +197,13 @@ def transcribe_audio(file_path, guid):
             segments = list(model.transcribe(
                 file_path,
                 language="en",
-                vad_filter=False,
+                vad_filter=True,
+                vad_parameters={"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300},
                 beam_size=params["beam_size"],
                 temperature=params["temperature"],
                 word_timestamps="all",
                 suppress_tokens=[-1],
-                initial_prompt=None,
+                initial_prompt="This is a transcription of a Christian sermon delivered by a single speaker in clear English.",
                 condition_on_previous_text=True,
                 patience=params["patience"]
             )[0])
@@ -215,13 +222,33 @@ def transcribe_audio(file_path, guid):
         avg_confidence = calculate_weighted_confidence(segments)  # Compute confidence score
         pass_time = time.time() - pass_start_time
         logger.info(f"Pass {pass_index+1} completed in {pass_time:.2f}s with weighted confidence score: {avg_confidence:.4f}")
+        
+        # Normalize timestamps to ensure consistent format (float)
+        normalized_segments = []
+        for seg in segments:
+            if seg.text.strip():  # Only process non-empty segments
+                normalized_segments.append({
+                    "start": normalize_timestamp(seg.start),
+                    "end": normalize_timestamp(seg.end),
+                    "text": seg.text.strip(),
+                    "confidence": calculate_weighted_confidence([seg]),
+                    "original_segment": seg  # Keep original segment for later processing
+                })
+        
         return {
             "segments": segments,
             "transcript": transcript,
-            "confidence": avg_confidence
+            "confidence": avg_confidence,
+            "segment_confidences": normalized_segments
         }
 
     # Run each transcription pass sequentially.
+    transcriptions = []
+    all_segments = []
+    confidence_scores = []
+    word_counts = []
+    adjusted_confidences = []
+
     for i, params in enumerate(passes):
         result = run_transcription_pass(params, i)
         transcript = result["transcript"]
@@ -251,13 +278,37 @@ def transcribe_audio(file_path, guid):
 
     # Select the best pass based on the adjusted confidence scores.
     best_index = int(np.argmax(adjusted_confidences))  # Choose the best scoring pass
-    best_segments = all_segments[best_index]
-    final_transcript = " ".join(segment.text.strip() for segment in best_segments if segment.text.strip())
-    final_transcript = clean_transcript_duplicates(final_transcript)
+    best_result = {
+        "segments": all_segments[best_index],
+        "transcript": transcriptions[best_index],
+        "confidence": confidence_scores[best_index],
+        "segment_confidences": [
+            {
+                "start": normalize_timestamp(seg.start),
+                "end": normalize_timestamp(seg.end),
+                "text": seg.text.strip(),
+                "confidence": calculate_weighted_confidence([seg]),
+                "original_segment": seg
+            }
+            for seg in all_segments[best_index] if seg.text.strip()
+        ]
+    }
 
-    # Extract segment timings for storage.
-    # Extract start/end times and text for each segment
-    final_timings = [{"start": seg.start, "end": seg.end, "text": seg.text.strip()} for seg in best_segments if seg.text.strip()]
+    # Use the best pass segments directly without reprocessing low-confidence segments.
+    best_segments = best_result["segments"].copy()  # Create a copy to avoid modifying the original
+
+    final_transcript = " ".join(segment.text.strip() for segment in best_segments if segment.text.strip())
+    final_transcript = clean_boundary_duplicates(final_transcript)
+
+    # Extract segment timings for storage using normalized timestamps
+    final_timings = []
+    for seg in best_segments:
+        if seg.text.strip():
+            final_timings.append({
+                "start": normalize_timestamp(seg.start),
+                "end": normalize_timestamp(seg.end),
+                "text": seg.text.strip()
+            })
 
     # Save the transcript file (a single line) for MFA.
     transcript_output_path = os.path.join(upload_folder, f"{guid}.txt")

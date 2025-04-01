@@ -9,3 +9,4 @@ pydub
 numpy
 ctranslate2
 montreal-forced-aligner
+noisereduce

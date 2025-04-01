@@ -9,7 +9,7 @@ import subprocess
 from flask import Flask, request, jsonify  # Web framework and request handling
 from transcribe import transcribe_audio, load_whisper_model  # Custom transcription logic
 from pydub import AudioSegment  # Audio file manipulation
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging  # Logging for debugging and monitoring
 
 
@@ -288,7 +288,7 @@ def upload_audio():
         pending_times_sum = result[0] if result[0] is not None else 0
 
         total_processing_time_sec = pending_times_sum + processing_time_est_sec
-        estimated_completion_utc = datetime.utcnow() + timedelta(seconds=total_processing_time_sec)
+        estimated_completion_utc = datetime.now(timezone.utc) + timedelta(seconds=total_processing_time_sec)
 
         # **Insert into the database** - done in the same connection
         cursor.execute(
