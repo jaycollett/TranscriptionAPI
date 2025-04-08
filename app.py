@@ -5,6 +5,7 @@ import threading  # For background processing and thread-local DB connections
 import time
 import math
 import json
+import shutil
 import subprocess
 from flask import Flask, request, jsonify  # Web framework and request handling
 from transcribe import transcribe_audio, load_whisper_model  # Custom transcription logic
@@ -102,6 +103,16 @@ def init_db():
         
         app.logger.info("Database initialized successfully")
 init_db()
+
+def is_garbage_transcription(text, threshold=0.2, min_length=50):
+    """Determine if the transcription looks like garbage."""
+    preview = text[:1000]
+    total_chars = len(preview)
+    alnum_chars = sum(c.isalnum() for c in preview)
+    if alnum_chars < min_length:
+        return True
+    ratio = alnum_chars / total_chars if total_chars else 0
+    return ratio < threshold
 
 def run_forced_alignment(audio_path, whisper_segments, guid):
     # Use Montreal Forced Aligner to refine Whisper's segment timings
@@ -445,6 +456,15 @@ def transcription_worker():
                         result = transcribe_audio(file_path, guid)
                         transcription = result["transcription"]
                         whisper_segment_timings = result["timings"]
+
+                        # Check for garbage transcription
+                        if is_garbage_transcription(transcription):
+                            app.logger.warning(f"Garbage transcription detected for {guid}. Resetting to 'pending'.")
+                            cursor.execute(
+                                "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
+                                (guid,)
+                            )
+                            continue  # Skip to the next job — retry will happen on next loop
                     except Exception as e:
                         app.logger.error(f"Whisper transcription failed for {guid}: {e}")
                         # Update status to error
@@ -457,6 +477,16 @@ def transcription_worker():
                     # Step 2: Run Forced Alignment (MFA) if necessary
                     app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
                     refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
+
+                    # Garbage check again — just in case MFA corrupted it
+                    if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
+                        app.logger.warning(f"Post-alignment transcription/timing looks corrupted for {guid}. Resetting to 'pending'.")
+                        cursor.execute(
+                            "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
+                            (guid,)
+                        )
+                        continue
+
 
                     if refined_timings is None:
                         app.logger.error(f"Forced alignment failed for {guid}. Falling back to Whisper's timings.")
@@ -489,13 +519,26 @@ def transcription_worker():
                     
                     if old_records:
                         for guid, filename in old_records:
-                            file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}{os.path.splitext(filename)[-1]}")
-                            if os.path.exists(file_path):
+                            file_root, file_ext = os.path.splitext(filename)
+                            upload_folder = app.config['UPLOAD_FOLDER']
+
+                            paths_to_delete = [
+                                os.path.join(upload_folder, f"{guid}{file_ext}"),     # Original audio file
+                                os.path.join(upload_folder, f"{guid}.txt"),           # Transcript used by MFA
+                                os.path.join(upload_folder, f"{guid}_aligned"),       # MFA output
+                                os.path.join(upload_folder, f"{guid}_corpus")         # MFA working corpus
+                            ]
+
+                            for path in paths_to_delete:
                                 try:
-                                    os.remove(file_path)
-                                    app.logger.info(f"Deleted old audio file {file_path}")
+                                    if os.path.isfile(path):
+                                        os.remove(path)
+                                        app.logger.info(f"Deleted file: {path}")
+                                    elif os.path.isdir(path):
+                                        shutil.rmtree(path)
+                                        app.logger.info(f"Deleted directory: {path}")
                                 except Exception as file_err:
-                                    app.logger.error(f"Failed to delete file {file_path}: {file_err}")
+                                    app.logger.error(f"Failed to delete {path}: {file_err}")
                         
                         try:
                             cursor.execute("DELETE FROM transcriptions WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')")

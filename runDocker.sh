@@ -14,6 +14,7 @@ echo "Starting container..."
 docker run -dit \
   --name transcription-api \
   --gpus="device=0" \
+  --restart unless-stopped \
   -v ./tmp:/tmp \
   -p 5030:5000 \
   -e MODEL="large-v3-turbo" \
