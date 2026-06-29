@@ -1,0 +1,19 @@
+# Runtime data written by the container (owned by container user; breaks the
+# build context "permission denied" otherwise). Never needed in the image.
+tmp/
+models_cache/
+
+# VCS / Python / dev cruft
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+tests/
+
+# Logs, patches, secrets, local notes
+*.log
+*.patch
+.hf_token
+*.md
