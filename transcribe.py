@@ -48,13 +48,27 @@ def load_whisper_model():
             start_time = time.time()
             logger.info("Loading Faster-Whisper model...")
             model_name = os.environ.get("MODEL", "large-v3-turbo")
-            _whisper_model = WhisperModel(
-                model_name,
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=os.cpu_count(),
-                num_workers=2
-            )
+            # Try to load from local cache first
+            local_model_path = "/app/models/whisper"
+            if os.path.exists(local_model_path):
+                logger.info(f"Loading Whisper model from local cache: {local_model_path}")
+                _whisper_model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=os.cpu_count(),
+                    num_workers=2,
+                    download_root=local_model_path
+                )
+            else:
+                logger.info("Local Whisper model cache not found, downloading from internet")
+                _whisper_model = WhisperModel(
+                    model_name,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=os.cpu_count(),
+                    num_workers=2
+                )
             elapsed = time.time() - start_time
             logger.info(f"Faster-Whisper model '{model_name}' loaded successfully in {elapsed:.2f} seconds")
     return _whisper_model
@@ -91,9 +105,11 @@ def clean_boundary_duplicates(text):
     return text
 
 
-@lru_cache(maxsize=1)
-def get_audio_duration(file_path):
-    """Return the duration of the audio file in seconds."""
+def preprocess_audio_for_transcription(file_path):
+    """
+    Process audio file for optimal transcription quality.
+    Returns the path to the processed audio file.
+    """
     audio = AudioSegment.from_file(file_path)  # Load audio using pydub
 
     # Normalize volume
@@ -115,10 +131,28 @@ def get_audio_duration(file_path):
         reduced_noise = nr.reduce_noise(y=data, sr=rate, prop_decrease=0.8)
         wavfile.write(tmp_wav.name, rate, reduced_noise)
         audio = AudioSegment.from_wav(tmp_wav.name)
+        
+        # Create processed audio file, don't overwrite original
+        # Handle any audio format by using splitext
+        file_root, file_ext = os.path.splitext(file_path)
+        processed_file_path = f"{file_root}_processed.mp3"  # Always export as MP3
+        audio.export(processed_file_path, format="mp3")
+        
+        # Clean up temp file
+        os.unlink(tmp_wav.name)
+        
+        return processed_file_path
     else:
         logger.info(f"Skipping noise reduction (clean audio, energy={noise_energy:.4f})")
-    audio.export(file_path, format="mp3")
+        # Clean up temp file
+        os.unlink(tmp_wav.name)
+        # Return original file path if no processing needed
+        return file_path
 
+@lru_cache(maxsize=1)
+def get_audio_duration(file_path):
+    """Return the duration of the audio file in seconds without modifying it."""
+    audio = AudioSegment.from_file(file_path)
     return len(audio) / 1000.0  # Convert milliseconds to seconds
 
 def transcribe_audio(file_path, guid):
@@ -137,6 +171,10 @@ def transcribe_audio(file_path, guid):
     except Exception as e:
         logger.warning(f"Could not calculate estimated processing time: {e}")
         duration_sec = 0
+
+    # Preprocess audio for optimal transcription quality
+    processed_file_path = preprocess_audio_for_transcription(file_path)
+    logger.info(f"Using audio file for transcription: {processed_file_path}")
 
     model = load_whisper_model()  # Load the Whisper model (cached)
 
@@ -195,7 +233,7 @@ def transcribe_audio(file_path, guid):
         logger.info(f"Starting pass {pass_index+1} with patience={params['patience']}, temperature={params['temperature']}, and beam_size={params['beam_size']}")
         try:
             segments = list(model.transcribe(
-                file_path,
+                processed_file_path,
                 language="en",
                 vad_filter=True,
                 vad_parameters={"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300},

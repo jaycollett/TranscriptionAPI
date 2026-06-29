@@ -10,3 +10,4 @@ numpy
 ctranslate2
 montreal-forced-aligner
 noisereduce
+pyannote.audio

@@ -13,6 +13,14 @@ from pydub import AudioSegment  # Audio file manipulation
 from datetime import datetime, timedelta, timezone
 import logging  # Logging for debugging and monitoring
 
+# Optional import for speaker diarization (graceful fallback if not available)
+try:
+    from pyannote.audio import Pipeline
+    PYANNOTE_AVAILABLE = True
+except ImportError:
+    PYANNOTE_AVAILABLE = False
+    logging.getLogger(__name__).warning("pyannote.audio not available - speaker diarization will be disabled")
+
 
 # Configure logging
 logging.basicConfig(
@@ -200,6 +208,42 @@ def recover_stuck_jobs(cursor):
         app.logger.info("Startup recovery: no orphaned 'processing' jobs found.")
     return stuck
 
+def detect_speakers(audio_path):
+    """
+    Use pyannote-audio to detect the number of unique speakers in an audio file.
+    Returns the number of speakers detected.
+    """
+    if not PYANNOTE_AVAILABLE:
+        app.logger.warning("pyannote-audio not available, assuming single speaker")
+        return 1
+    
+    try:
+        # Load the speaker diarization pipeline from local models
+        # The model is downloaded to cache_dir during build, so use that location
+        local_model_cache = "/app/models/pyannote"
+        if os.path.exists(local_model_cache):
+            app.logger.info(f"Loading pyannote model from local cache: {local_model_cache}")
+            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", cache_dir=local_model_cache)
+        else:
+            app.logger.warning("Local pyannote model cache not found, falling back to downloading from HuggingFace")
+            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
+        
+        # Run speaker diarization
+        diarization = pipeline(audio_path)
+        
+        # Get unique speakers
+        speakers = set()
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            speakers.add(speaker)
+        
+        num_speakers = len(speakers)
+        app.logger.info(f"Speaker diarization detected {num_speakers} unique speakers in {audio_path}")
+        return num_speakers
+        
+    except Exception as e:
+        app.logger.warning(f"Speaker diarization failed: {e}, assuming single speaker")
+        return 1  # Assume single speaker if detection fails
+
 def run_forced_alignment(audio_path, whisper_segments, guid):
     # Use Montreal Forced Aligner to refine Whisper's segment timings
     """
@@ -211,28 +255,125 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
     aligned_output_dir = os.path.join(upload_folder, f"{guid}_aligned")
     alignment_json_path = os.path.join(aligned_output_dir, f"{guid}.json")
 
+    # Check for multi-speaker content before running/checking MFA
+    # Use proper speaker diarization to detect multiple speakers
+    num_speakers = detect_speakers(audio_path)
+    
+    if num_speakers > 1:
+        app.logger.warning(f"Multi-speaker content detected ({num_speakers} speakers). Skipping MFA alignment to maintain accuracy.")
+        app.logger.info("Using Whisper segments only for multi-speaker audio to ensure accurate timing alignment")
+        return whisper_segments  # Skip MFA entirely for multi-speaker content
+
     # If alignment already exists, avoid re-running MFA
     if os.path.exists(alignment_json_path):
         app.logger.info(f"MFA alignment already exists for {guid}. Skipping re-run.")
     else:
         try:
-            # Save transcript to a file for MFA (remove extra spaces)
+            # Verify the actual audio file exists and get its correct path
+            if not os.path.exists(audio_path):
+                app.logger.error(f"Audio file not found: {audio_path}")
+                return whisper_segments
+            
+            # Save transcript to a file for MFA (remove extra spaces and clean up text)
+            transcript_content = " ".join(seg["text"].strip() for seg in whisper_segments if seg["text"].strip())
+            
+            # Clean transcript for better MFA compatibility
+            import re
+            # Remove repeated words/phrases that might confuse alignment
+            transcript_content = re.sub(r'\b(\w+)\s+\1\s+\1\s+\1+', r'\1', transcript_content)
+            
             with open(transcript_path, "w") as f:
-                f.write(" ".join(seg["text"].strip() for seg in whisper_segments if seg["text"].strip()))  # Remove extra spaces
+                f.write(transcript_content)
+            
+            # Ensure transcript was written successfully
+            if not os.path.exists(transcript_path):
+                app.logger.error(f"Failed to create transcript file: {transcript_path}")
+                return whisper_segments
+            
+            # Add a small delay to ensure file is fully written
+            time.sleep(0.1)
 
             # Ensure output directory exists
             os.makedirs(aligned_output_dir, exist_ok=True)
+            
+            # Create a temporary directory with properly named files for MFA
+            temp_mfa_dir = os.path.join(upload_folder, f"{guid}_mfa_input")
+            os.makedirs(temp_mfa_dir, exist_ok=True)
+            
+            # Copy files with consistent naming for MFA
+            temp_audio_path = os.path.join(temp_mfa_dir, f"{guid}.wav")
+            temp_transcript_path = os.path.join(temp_mfa_dir, f"{guid}.txt")
+            
+            # Convert audio to WAV format for MFA compatibility
+            try:
+                audio = AudioSegment.from_file(audio_path)
+                audio.export(temp_audio_path, format="wav")
+                
+                # Copy transcript
+                shutil.copy2(transcript_path, temp_transcript_path)
+                
+                app.logger.info(f"Created MFA input files: {temp_audio_path}, {temp_transcript_path}")
+            except Exception as prep_error:
+                app.logger.error(f"Error preparing MFA input files: {prep_error}")
+                # Cleanup temp directory
+                if os.path.exists(temp_mfa_dir):
+                    shutil.rmtree(temp_mfa_dir)
+                return whisper_segments
 
-            # Run MFA command with additional flags to address warnings in the error logs
-            mfa_command = [
-                "mfa", "align",
-                upload_folder,  # Directory containing audio & transcript
-                "/mfa/pretrained_models/dictionary/english_mfa.dict",  # Pronunciation dictionary
-                "english_mfa",  # Acoustic model
-                aligned_output_dir, # Output directory
-                "--output_format", "json"
+            # Run MFA command with progressive beam sizes (fallback strategy)
+            beam_configs = [
+                {"beam": "40", "retry_beam": "100"},  # First try: moderate increase
+                {"beam": "100", "retry_beam": "400"}   # Fallback: large increase
             ]
-            result = subprocess.run(mfa_command, check=True, capture_output=True, text=True)
+            
+            mfa_success = False
+            for i, config in enumerate(beam_configs):
+                mfa_command = [
+                    "mfa", "align",
+                    temp_mfa_dir,  # Directory containing properly named audio & transcript
+                    "/mfa/pretrained_models/dictionary/english_mfa.dict",  # Pronunciation dictionary
+                    "english_mfa",  # Acoustic model
+                    aligned_output_dir, # Output directory
+                    "--output_format", "json",
+                    "--beam", config["beam"],
+                    "--retry_beam", config["retry_beam"]
+                ]
+                
+                try:
+                    app.logger.info(f"MFA attempt {i+1} with beam={config['beam']}, retry_beam={config['retry_beam']}")
+                    result = subprocess.run(mfa_command, check=True, capture_output=True, text=True, timeout=300)
+                    mfa_success = True
+                    break
+                except subprocess.TimeoutExpired:
+                    app.logger.warning(f"MFA attempt {i+1} timed out after 5 minutes")
+                    continue
+                except subprocess.CalledProcessError as e:
+                    app.logger.warning(f"MFA attempt {i+1} failed: {e.stderr}")
+                    if i == len(beam_configs) - 1:  # Last attempt
+                        raise  # Re-raise the exception to be handled by outer try-catch
+                    continue
+            
+            if not mfa_success:
+                raise subprocess.CalledProcessError(1, mfa_command, "All MFA attempts failed")
+            
+            # Cleanup temporary directory after MFA completes
+            try:
+                if os.path.exists(temp_mfa_dir):
+                    shutil.rmtree(temp_mfa_dir)
+            except Exception as cleanup_error:
+                app.logger.warning(f"Could not cleanup temp MFA directory: {cleanup_error}")
+            
+            # Log MFA command output for debugging
+            app.logger.info(f"MFA command stdout: {result.stdout}")
+            if result.stderr:
+                app.logger.warning(f"MFA command stderr: {result.stderr}")
+            
+            # Check what files were actually created in the output directory
+            if os.path.exists(aligned_output_dir):
+                output_files = os.listdir(aligned_output_dir)
+                app.logger.info(f"Files created in {aligned_output_dir}: {output_files}")
+            else:
+                app.logger.error(f"Output directory {aligned_output_dir} was not created")
             
             if not os.path.exists(alignment_json_path):
                 app.logger.error(f"MFA output file not found: {alignment_json_path}")
@@ -257,10 +398,24 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
                 except Exception as log_error:
                     app.logger.error(f"Error reading MFA logs: {log_error}")
             
+            # Cleanup temp directory on error
+            try:
+                if os.path.exists(temp_mfa_dir):
+                    shutil.rmtree(temp_mfa_dir)
+            except Exception as cleanup_error:
+                app.logger.warning(f"Could not cleanup temp MFA directory after error: {cleanup_error}")
+            
             return whisper_segments  # Fallback to Whisper segments
 
         except Exception as e:
             app.logger.error(f"Unexpected error running MFA: {str(e)}")
+            # Cleanup temp directory on error
+            try:
+                if os.path.exists(temp_mfa_dir):
+                    shutil.rmtree(temp_mfa_dir)
+            except Exception as cleanup_error:
+                app.logger.warning(f"Could not cleanup temp MFA directory after error: {cleanup_error}")
+            
             return whisper_segments  # Fallback to Whisper segments
 
     # Read MFA output file
@@ -349,7 +504,14 @@ def process_pending_job(cursor, guid, filename):
 
         # Step 2: Run Forced Alignment (MFA) if necessary
         app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
-        refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
+        # Check if a processed audio file exists (from noise reduction during
+        # transcription). Handle any audio format, not just MP3. Processed files are
+        # always written as MP3 by preprocess_audio_for_transcription.
+        file_root, _ = os.path.splitext(file_path)
+        processed_file_path = f"{file_root}_processed.mp3"
+        audio_file_for_mfa = processed_file_path if os.path.exists(processed_file_path) else file_path
+        app.logger.info(f"Using audio file for MFA: {audio_file_for_mfa}")
+        refined_timings = run_forced_alignment(audio_file_for_mfa, whisper_segment_timings, guid)
 
         # Garbage check again — just in case MFA corrupted it
         if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
@@ -625,9 +787,11 @@ def transcription_worker():
 
                             paths_to_delete = [
                                 os.path.join(upload_folder, f"{guid}{file_ext}"),     # Original audio file
+                                os.path.join(upload_folder, f"{guid}_processed.mp3"), # Processed audio file
                                 os.path.join(upload_folder, f"{guid}.txt"),           # Transcript used by MFA
                                 os.path.join(upload_folder, f"{guid}_aligned"),       # MFA output
-                                os.path.join(upload_folder, f"{guid}_corpus")         # MFA working corpus
+                                os.path.join(upload_folder, f"{guid}_corpus"),        # MFA working corpus
+                                os.path.join(upload_folder, f"{guid}_mfa_input")      # MFA input temp directory
                             ]
 
                             for path in paths_to_delete:

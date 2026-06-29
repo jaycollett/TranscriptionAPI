@@ -1,13 +1,26 @@
 #!/bin/bash
 
+# Hugging Face token, required at build time to download the pyannote model.
+# Provide it via the environment (do NOT hardcode secrets here):
+#   export HUGGINGFACE_TOKEN=hf_xxx   (or put it in ~/.hf_token)
+if [ -z "${HUGGINGFACE_TOKEN:-}" ] && [ -f "$HOME/.hf_token" ]; then
+    HUGGINGFACE_TOKEN="$(cat "$HOME/.hf_token")"
+fi
+export HUGGINGFACE_TOKEN
+
 # Stop any existing containers
 echo "Stopping existing containers..."
 docker stop transcription-api 2>/dev/null || true
 docker rm transcription-api 2>/dev/null || true
 
-# Build the Docker image
+# Build the Docker image with Hugging Face token
 echo "Building Docker image..."
-docker build -t transcription-api .
+if [ -z "$HUGGINGFACE_TOKEN" ]; then
+    echo "Error: HUGGINGFACE_TOKEN environment variable is required for building"
+    echo "Please set it with: export HUGGINGFACE_TOKEN=your_token_here"
+    exit 1
+fi
+docker build --build-arg HUGGINGFACE_TOKEN_BUILD="$HUGGINGFACE_TOKEN" -t transcription-api .
 
 # Run the Docker container with improved settings
 echo "Starting container..."
