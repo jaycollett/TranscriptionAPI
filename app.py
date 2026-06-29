@@ -27,8 +27,13 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # Database configuration
 
-db_file = 'transcriptions.db'
+db_file = os.getenv("DB_FILE", "transcriptions.db")
 db_connection_timeout = 30  # Connection timeout in seconds
+
+# Maximum number of consecutive garbage transcription results before a job is
+# quarantined (moved to a terminal state) instead of being requeued. This keeps a
+# single bad sermon from permanently blocking the head of the FIFO queue.
+max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
 
 # Ensure database file exists before initializing
 if not os.path.exists(db_file):
@@ -64,33 +69,56 @@ def close_db_connection():
         app.logger.debug(f"Closed database connection for thread {threading.current_thread().name}")
 
 # Initialize SQLite database with timings column included in the CREATE TABLE statement
+def column_exists(cursor, table, column):
+    # Check whether a column already exists on a table (used for safe migrations)
+    """Return True if the given column is present on the table."""
+    cursor.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cursor.fetchall())
+
+def ensure_schema(cursor):
+    # Create tables/indexes if missing and apply additive column migrations
+    """Create the transcriptions table, its indexes, and apply additive migrations.
+
+    Safe to call repeatedly: every statement is idempotent (CREATE ... IF NOT EXISTS
+    and a guarded ALTER TABLE), so existing databases are migrated in place without
+    touching existing rows.
+    """
+    # Create the main transcriptions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transcriptions (
+            guid TEXT PRIMARY KEY,
+            filename TEXT,
+            status TEXT DEFAULT 'pending',
+            transcription TEXT DEFAULT NULL,
+            timings TEXT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP DEFAULT NULL,
+            processing_time_est INTEGER DEFAULT 0,
+            attempt_count INTEGER DEFAULT 0
+        )
+    ''')
+
+    # Create index for status to optimize queue queries
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON transcriptions(status)')
+
+    # Create index for created_at to optimize cleanup queries
+    cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON transcriptions(created_at)')
+
+    # Migration: add attempt_count to pre-existing databases (defaults existing rows to 0)
+    if not column_exists(cursor, 'transcriptions', 'attempt_count'):
+        cursor.execute('ALTER TABLE transcriptions ADD COLUMN attempt_count INTEGER DEFAULT 0')
+        app.logger.info("Migrated transcriptions table: added 'attempt_count' column (existing rows default to 0)")
+
 def init_db():
     # Initialize the SQLite database schema and performance settings
     """Initialize the database with necessary tables."""
     # Use a temporary connection specifically for initialization to avoid impacting thread-local storage
     with sqlite3.connect(db_file, timeout=db_connection_timeout) as conn:
         cursor = conn.cursor()
-        
-        # Create the main transcriptions table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS transcriptions (
-                guid TEXT PRIMARY KEY,
-                filename TEXT,
-                status TEXT DEFAULT 'pending',
-                transcription TEXT DEFAULT NULL,
-                timings TEXT DEFAULT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP DEFAULT NULL,
-                processing_time_est INTEGER DEFAULT 0
-            )
-        ''')
-        
-        # Create index for status to optimize queue queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON transcriptions(status)')
-        
-        # Create index for created_at to optimize cleanup queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_created_at ON transcriptions(created_at)')
-        
+
+        # Create/migrate schema (tables, indexes, additive columns)
+        ensure_schema(cursor)
+
         # Enable performance optimizations
         cursor.execute('PRAGMA journal_mode = WAL')  # Use Write-Ahead Logging for better concurrency
         cursor.execute('PRAGMA synchronous = NORMAL')  # Slightly less durable but better performance
@@ -113,6 +141,64 @@ def is_garbage_transcription(text, threshold=0.2, min_length=50):
         return True
     ratio = alnum_chars / total_chars if total_chars else 0
     return ratio < threshold
+
+def handle_garbage_result(cursor, guid, reason):
+    # Count a garbage result and either requeue the job or quarantine it
+    """Increment the job's attempt counter, then requeue or quarantine it.
+
+    After max_garbage_retries consecutive garbage results the job is moved to the
+    terminal 'quarantined' status so it stops being the oldest 'pending' row and the
+    FIFO queue can advance to the next sermon. Returns the resulting status string
+    ('pending' or 'quarantined').
+    """
+    cursor.execute(
+        "UPDATE transcriptions SET attempt_count = attempt_count + 1 WHERE guid = ?",
+        (guid,)
+    )
+    cursor.execute("SELECT attempt_count FROM transcriptions WHERE guid = ?", (guid,))
+    row = cursor.fetchone()
+    attempt_count = row[0] if row else 0
+
+    if attempt_count >= max_garbage_retries:
+        cursor.execute(
+            "UPDATE transcriptions SET status = 'quarantined', completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
+            (guid,)
+        )
+        app.logger.error(
+            f"Quarantining transcription {guid} after {attempt_count} garbage result(s) "
+            f"({reason}). Moving to terminal 'quarantined' status so the queue can advance."
+        )
+        return 'quarantined'
+
+    cursor.execute(
+        "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
+        (guid,)
+    )
+    app.logger.warning(
+        f"Garbage transcription detected for {guid} ({reason}). Resetting to 'pending' "
+        f"(attempt {attempt_count} of {max_garbage_retries})."
+    )
+    return 'pending'
+
+def recover_stuck_jobs(cursor):
+    # Reset orphaned in-flight jobs left in 'processing' (e.g. after a container restart)
+    """Reset any rows stuck in 'processing' back to 'pending' and return the count.
+
+    The worker only ever selects 'pending' rows, so a job that was mid-transcription
+    when the process died would otherwise be stranded forever. Recovery is NOT counted
+    as a garbage retry (attempt_count is left untouched) since the job never produced a
+    result.
+    """
+    cursor.execute("SELECT COUNT(*) FROM transcriptions WHERE status = 'processing'")
+    stuck = cursor.fetchone()[0]
+    if stuck:
+        cursor.execute("UPDATE transcriptions SET status = 'pending' WHERE status = 'processing'")
+        app.logger.warning(
+            f"Startup recovery: reset {stuck} orphaned job(s) stuck in 'processing' back to 'pending'."
+        )
+    else:
+        app.logger.info("Startup recovery: no orphaned 'processing' jobs found.")
+    return stuck
 
 def run_forced_alignment(audio_path, whisper_segments, guid):
     # Use Montreal Forced Aligner to refine Whisper's segment timings
@@ -216,6 +302,80 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
     except Exception as e:
         app.logger.error(f"Error processing MFA output: {str(e)}")
         return whisper_segments  # Fallback to Whisper segments if JSON parsing fails
+
+
+def process_pending_job(cursor, guid, filename):
+    # Transcribe a single pending job end-to-end and update its row accordingly
+    """Process one pending transcription job and return its resulting status.
+
+    Encapsulates the per-job control flow so it can be unit tested in isolation:
+    missing-file handling, the garbage-detection retry/quarantine path, MFA, and the
+    successful-completion path (which clears attempt_count). Garbage results are routed
+    through handle_garbage_result so a repeatedly bad job is quarantined instead of
+    re-blocking the head of the queue.
+    """
+    try:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}{os.path.splitext(filename)[-1]}")
+
+        if not os.path.exists(file_path):
+            app.logger.error(f"File {file_path} not found. Skipping.")
+            cursor.execute(
+                "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
+                (guid,)
+            )
+            return 'error'
+
+        # Mark transcription as 'processing' to prevent duplicate execution
+        cursor.execute("UPDATE transcriptions SET status = 'processing' WHERE guid = ?", (guid,))
+
+        app.logger.info(f"Processing transcription for {filename} (GUID: {guid})...")
+
+        try:
+            # Step 1: Transcribe with Whisper
+            result = transcribe_audio(file_path, guid)
+            transcription = result["transcription"]
+            whisper_segment_timings = result["timings"]
+
+            # Check for garbage transcription
+            if is_garbage_transcription(transcription):
+                return handle_garbage_result(cursor, guid, "garbage transcription detected")
+        except Exception as e:
+            app.logger.error(f"Whisper transcription failed for {guid}: {e}")
+            cursor.execute(
+                "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
+                (guid,)
+            )
+            return 'error'
+
+        # Step 2: Run Forced Alignment (MFA) if necessary
+        app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
+        refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
+
+        # Garbage check again — just in case MFA corrupted it
+        if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
+            return handle_garbage_result(cursor, guid, "post-alignment transcription/timing looks corrupted")
+
+        if refined_timings is None:
+            app.logger.error(f"Forced alignment failed for {guid}. Falling back to Whisper's timings.")
+            refined_timings = whisper_segment_timings
+
+        # Step 3: Update database with refined timings. Clear attempt_count so a job that
+        # succeeds after earlier garbage retries is never wrongly quarantined later.
+        cursor.execute(
+            "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', attempt_count = 0, completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
+            (transcription, json.dumps(refined_timings), guid)
+        )
+        app.logger.info(f"Transcription completed for {filename} (GUID: {guid})")
+        return 'completed'
+
+    except Exception as e:
+        app.logger.error(f"Error processing transcription for {guid}: {e}")
+        # Ensure we mark the job as error if anything goes wrong
+        cursor.execute(
+            "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
+            (guid,)
+        )
+        return 'error'
 
 
 @app.route('/transcriptions', methods=['GET'])
@@ -359,8 +519,10 @@ def get_transcription(guid):
             'timings': json.loads(timings) if timings else []  # Return timings as a list
         }), 200
     
-    # Handle error status
-    if status == 'error':
+    # Handle error / quarantined status (both terminal failures). 'quarantined' means the
+    # job repeatedly produced garbage and was removed from the queue; report it as an error
+    # so existing clients treat it as a terminal failure rather than polling forever.
+    if status == 'error' or status == 'quarantined':
         return jsonify({
             'status': 'error',
             'message': 'Transcription failed'
@@ -407,6 +569,16 @@ def transcription_worker():
     """Background worker that processes pending audio files every N seconds."""
     app.logger.info("Transcription worker started. Checking for pending transcriptions every 30 seconds.")
 
+    # Crash recovery: before the processing loop begins, requeue any job left in
+    # 'processing' by a previous run that died mid-transcription (e.g. a container
+    # restart). The worker only selects 'pending' rows, so these would otherwise be
+    # stranded forever. This does NOT count as a garbage retry.
+    try:
+        recovery_conn = get_db_connection()
+        recover_stuck_jobs(recovery_conn.cursor())
+    except Exception as e:
+        app.logger.error(f"Startup recovery failed: {e}")
+
     while True:
         app.logger.info("Worker sleeping for 30 seconds...")
         time.sleep(30)  # Sleep interval between polling cycles
@@ -434,85 +606,14 @@ def transcription_worker():
 
             # Process one file at a time - the oldest pending first
             for guid, filename in records:
-                try:
-                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}{os.path.splitext(filename)[-1]}")
+                process_pending_job(cursor, guid, filename)
 
-                    if not os.path.exists(file_path):
-                        app.logger.error(f"File {file_path} not found. Skipping.")
-                        # Update status to error
-                        cursor.execute(
-                            "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?", 
-                            (guid,)
-                        )
-                        continue
-
-                    # Mark transcription as 'processing' to prevent duplicate execution
-                    cursor.execute("UPDATE transcriptions SET status = 'processing' WHERE guid = ?", (guid,))
-                    
-                    app.logger.info(f"Processing transcription for {filename} (GUID: {guid})...")
-
-                    try:
-                        # Step 1: Transcribe with Whisper
-                        result = transcribe_audio(file_path, guid)
-                        transcription = result["transcription"]
-                        whisper_segment_timings = result["timings"]
-
-                        # Check for garbage transcription
-                        if is_garbage_transcription(transcription):
-                            app.logger.warning(f"Garbage transcription detected for {guid}. Resetting to 'pending'.")
-                            cursor.execute(
-                                "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
-                                (guid,)
-                            )
-                            continue  # Skip to the next job — retry will happen on next loop
-                    except Exception as e:
-                        app.logger.error(f"Whisper transcription failed for {guid}: {e}")
-                        # Update status to error
-                        cursor.execute(
-                            "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?", 
-                            (guid,)
-                        )
-                        continue
-
-                    # Step 2: Run Forced Alignment (MFA) if necessary
-                    app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
-                    refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
-
-                    # Garbage check again — just in case MFA corrupted it
-                    if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
-                        app.logger.warning(f"Post-alignment transcription/timing looks corrupted for {guid}. Resetting to 'pending'.")
-                        cursor.execute(
-                            "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
-                            (guid,)
-                        )
-                        continue
-
-
-                    if refined_timings is None:
-                        app.logger.error(f"Forced alignment failed for {guid}. Falling back to Whisper's timings.")
-                        refined_timings = whisper_segment_timings
-
-                    # Step 3: Update database with refined timings
-                    cursor.execute(
-                        "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
-                        (transcription, json.dumps(refined_timings), guid)
-                    )
-                    app.logger.info(f"Transcription completed for {filename} (GUID: {guid})")
-                    
-                except Exception as e:
-                    app.logger.error(f"Error processing transcription for {guid}: {e}")
-                    # Ensure we mark the job as error if anything goes wrong
-                    cursor.execute(
-                        "UPDATE transcriptions SET status = 'error', completed_at = CURRENT_TIMESTAMP WHERE guid = ?", 
-                        (guid,)
-                    )
-            
             # Cleanup transcriptions older than 24 hours (once per hour)
             if int(time.time()) % 3600 < 30:  # Run cleanup roughly every hour
                 try:
                     cursor.execute("""
                         SELECT guid, filename FROM transcriptions 
-                        WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')
+                        WHERE status IN ('completed', 'error', 'quarantined') AND created_at <= datetime('now', '-1 day')
                     LIMIT 20
                     """)
                     old_records = cursor.fetchall()
@@ -541,7 +642,7 @@ def transcription_worker():
                                     app.logger.error(f"Failed to delete {path}: {file_err}")
                         
                         try:
-                            cursor.execute("DELETE FROM transcriptions WHERE status IN ('completed', 'error') AND created_at <= datetime('now', '-1 day')")
+                            cursor.execute("DELETE FROM transcriptions WHERE status IN ('completed', 'error', 'quarantined') AND created_at <= datetime('now', '-1 day')")
                             app.logger.info("Old completed transcriptions deleted")
                         except Exception as db_cleanup_err:
                             app.logger.error(f"Failed to delete old DB records: {db_cleanup_err}")
