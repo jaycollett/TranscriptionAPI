@@ -328,3 +328,32 @@ timings, MFA aligned on the first attempt, torch CUDA available and ctranslate2
 seeing one device. Five Whisper passes took 106 s against 139 to 145 s on 0.4.0,
 0.5.0 and 0.5.1, so the synchronous-launch setting had been costing roughly a
 quarter of the decode time. End to end 138 s against 170 to 180 s.
+
+## 2026-09-07 - 0.5.3: CI model download rate limit
+
+The 0.5.1 and 0.5.2 release runs (34099157643, 34099726604) failed in the
+Dockerfile's `mfa model download` step with MFA's ModelsConnectionError:
+"Current hourly rate limit (60 per hour) has been exceeded for the GitHub
+API". `mfa model download` resolves models through the GitHub releases API of
+MontrealCorpusTools/mfa-models; unauthenticated that API allows 60 requests
+per hour per source address, and the shared GitHub Actions runner pool
+exhausts it, while the same build on the GPU host succeeds because it is the
+only caller from its address.
+
+Fix: the workflow passes `${{ secrets.GITHUB_TOKEN }}` to build-push-action as
+a BuildKit secret (`secrets: github_token=...`), and the Dockerfile mounts it
+with `RUN --mount=type=secret,id=github_token` and appends `--github_token` to
+both `mfa model download` calls only when `/run/secrets/github_token` is
+present. A local build supplies no secret and downloads unauthenticated as
+before. GITHUB_TOKEN is rate limited at 1,000 requests per hour per repository
+and needs no scope for public releases. Secret mounts are not layers, so the
+token is not in the image or its history (the concern that closed service
+item 4 in 0.4.0). No `# syntax=` directive is needed: `RUN --mount` is in the
+stable Dockerfile reference and BuildKit has been the default builder since
+Docker 23.0; `runDocker.sh` exports `DOCKER_BUILDKIT=1` anyway so a stray
+`DOCKER_BUILDKIT=0` in the calling shell cannot select the legacy builder.
+
+Release-run history since 0.4.0: 0.5.0 was the only run whose image build
+completed (0.5.1 and 0.5.2 died at the MFA download). The 0.4.0 and 0.5.0 runs
+pushed their images and failed only at the Trivy gate, on the base-image and
+cuda-toolkit findings that 0.5.2's cuda-libraries change addresses.

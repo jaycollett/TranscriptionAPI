@@ -100,6 +100,11 @@ rebuild failed at that layer. Production confirmed it: the running image was a
 locally built `transcription-api:0.3.0-decode-fix`, not a ghcr.io tag. The
 overlay's `docker history` also showed the token in `ARG` and `ENV` layers.
 Status: Resolved in 0.4.0 (speaker diarization removed; the build no longer needs a Hugging Face token)
+Note (0.5.3): the token-in-history concern is closed by 0.4.0. The CI build
+still failed on 0.5.1 and 0.5.2, but at a different layer: `mfa model download`
+hit the unauthenticated GitHub API limit (60/hour) from the shared runner pool.
+0.5.3 passes the workflow's GITHUB_TOKEN as a BuildKit secret mount, which is
+not a layer, so `docker history` stays clean. See `docs/SESSION_KNOWLEDGE.md`.
 
 **5. Audio files survive redeploys but their DB rows do not, so they are never cleaned**
 `runDocker.sh` (`-v ./tmp:/tmp`), `app.py:transcription_worker` cleanup. The
