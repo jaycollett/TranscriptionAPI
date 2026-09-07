@@ -363,22 +363,35 @@ ranking four noisy variants of a single beam decode. The single pass agrees
 retuned on a running container; the defaults are the measured configuration and
 changing one invalidates the harness baseline.
 
-**The VAD threshold has to depend on the file's level.** The conservative C4
-settings (threshold 0.5, `min_silence_duration_ms` 1000, `speech_pad_ms` 300)
-cut seams 3-4x and were the best-aligning decode of any config on the 755 s
-file. On the one quiet file in the 655-file archive they are a disaster: at
--28.6 dBFS the 0.5 threshold fragments speech into 2171 segments averaging
-1.4 s (against 435 at 7.7 s), mean log-probability falls from -0.056 to -0.141,
-290 words are lost and wall time rises 30 percent. So the threshold is chosen
-per file from an `ffmpeg -af volumedetect` measurement: 0.5 at or above
--26 dBFS, 0.35 below it. The cutover sits between the quietest file that worked
-at 0.5 (-24.5 dBFS) and the one that failed (-28.6 dBFS). An unmeasurable level
-takes the 0.35 branch, because fragmenting quiet speech loses words while
-cutting extra seams on loud speech does not. The measurement costs a full decode
-of the audio, a few seconds on a sermon, and the level and the branch taken are
-logged on every job. `hallucination_silence_threshold` is 0.5, not the 2.0 the
+**The file's level selects a whole VAD profile, not a threshold.** The
+conservative C4 settings (threshold 0.5, `min_silence_duration_ms` 1000,
+`speech_pad_ms` 300) cut seams 3-4x and were the best-aligning decode of any
+config on the 755 s file. On the one quiet file in the 655-file archive they are
+a disaster: at -28.4 dBFS they fragment speech into 1157 segments and lose 3.0
+percent of the words, and mean log-probability falls from -0.056 to -0.162.
+
+Relaxing only the threshold to 0.35 does not fix it and makes it worse: measured
+on that file, threshold 0.35 with C4's 1000 ms silence and 300 ms padding gives
+4693 segments and 8407 words, a 5.6 percent loss. The BASE/C1 profile entire
+(threshold 0.35, 300 ms silence, 400 ms padding, no hallucination filter) gives
+435 segments and 8904 words and reproduces C1 exactly. **The long minimum silence
+is what shreds quiet audio, not the threshold and not the hallucination filter.**
+That is the non-obvious part and it is why the level picks a profile rather than
+a number:
+
+  loud  (at or above -26 dBFS): 0.5 / 250 / 1000 / 300, hallucination filter 0.5.
+  quiet (below -26 dBFS): 0.35 / 250 / 300 / 400, no hallucination filter.
+
+The cutover sits between the quietest file that worked on the loud profile
+(-24.4 dBFS) and the one that failed (-28.4 dBFS). An unmeasurable level takes
+the quiet profile, because fragmenting quiet speech loses words while cutting
+extra seams on loud speech does not. The level comes from `ffmpeg -af
+volumedetect`, costs a full decode of the audio (a few seconds on a sermon), and
+the level, the profile and the parameters are logged on every job.
+`hallucination_silence_threshold` is 0.5 on the loud profile, not the 2.0 the
 punchlist proposed: the VAD pads every gap by 300 ms each side, so a 2.0 s
-threshold can never fire.
+threshold can never fire. It is off on the quiet profile, whose 400 ms padding
+puts 800 ms of silence in every gap and which was measured without it.
 
 **The anomaly score replaces the duration-weighted word probability.** The old
 metric weighted each word's probability by its duration, which up-weights
@@ -417,6 +430,17 @@ two changes rather than to noise. Selection is on the anomaly score: lower
 `avg_logprob`, with an exact tie keeping the primary. Word count is the first
 tie-break precisely because every disagreement the retired confidence rule got
 wrong was one where it preferred the shorter transcript.
+
+That tie-break is not sufficient on its own, and the validation run proved it. A
+rescue is only eligible at all if it keeps at least `RESCUE_MIN_WORD_RETENTION`
+(0.99) of the primary's words. Measured on `tcf.20240319b` with the trigger
+forced on: the primary scored one anomalous segment out of 323 with 3599 words
+and the rescue scored none with 3525, so on the anomaly score alone the service
+would have published 74 fewer words to remove a single flagged segment. Any
+metric that counts defects prefers the transcript with less content to be
+defective about; that is the retired rule's failure wearing a new hat, and every
+such rule in this service needs a content floor beside it. A discarded rescue is
+logged with both word counts and both scores.
 
 The order is primary, maybe rescue, select, then gate. The quarantine thresholds
 (`ANOMALY_WINDOWS_MAX` 2, `ANOMALY_SEGMENTS_MAX` 5) see the selected result, so a
@@ -482,8 +506,10 @@ found, and it is the only reason word count is trusted as a tie-break.
 `WHISPER_HALLUCINATION_SILENCE_THRESHOLD`, `WHISPER_NUM_WORKERS`,
 `WHISPER_LANGUAGE`. VAD: `VAD_THRESHOLD`, `VAD_THRESHOLD_QUIET`,
 `VAD_LEVEL_CUTOVER_DBFS`, `VAD_MIN_SPEECH_DURATION_MS`,
-`VAD_MIN_SILENCE_DURATION_MS`, `VAD_SPEECH_PAD_MS`. Rescue: `RESCUE_ENABLED`,
-`RESCUE_ANOMALY_SEGMENTS`, `RESCUE_ANOMALY_WINDOWS`, `RESCUE_TEMPERATURE_BASE`.
+`VAD_MIN_SILENCE_DURATION_MS`, `VAD_SPEECH_PAD_MS`,
+`VAD_MIN_SILENCE_DURATION_MS_QUIET`, `VAD_SPEECH_PAD_MS_QUIET`. Rescue:
+`RESCUE_ENABLED`, `RESCUE_ANOMALY_SEGMENTS`, `RESCUE_ANOMALY_WINDOWS`,
+`RESCUE_TEMPERATURE_BASE`, `RESCUE_MIN_WORD_RETENTION`.
 Gate: `ANOMALY_WINDOWS_MAX`, `ANOMALY_SEGMENTS_MAX`. Alignment:
 `MFA_UTTERANCE_GAP_SEC`, `MFA_UTTERANCE_PAD_SEC`, `MFA_UTTERANCE_MIN_SEC`,
 `MFA_UTTERANCE_MAX_SEC`, `MFA_TIMEOUT_FLOOR_SEC`, `MFA_TIMEOUT_BASE_SEC`,
@@ -519,3 +545,48 @@ should be rare; if it fires on most jobs the trigger is too tight, and if it
 fires and `rescue_selected` is always false the rescue is not earning its
 runtime. A flagged segment that is a real loop, or a normal recording requeued by
 the window check, is a threshold to revisit before 0.6.1.
+
+## 2026-09-07 - 0.6.0 harness validation on devmachine
+
+The candidate was run through `tools/quality_harness` on the GPU host inside
+`transcription-api:0.5.4` on all six reference files, as `RC060` (decode plus the
+production post-stage) and `RC060_RESCUE` (the same plus the rescue), with the
+alignment stage on `RC060` through the `i1` path and the `i2` rule. Three things
+came out of it that were not visible from the Mac.
+
+**The quiet VAD branch had to be a whole profile.** Covered in the 0.6.0 entry
+above; the first run lost 3.0 percent of the retreat file's words and the fix was
+measured, not guessed.
+
+**The rescue can lose more than it fixes, and now cannot.** With the trigger
+forced on, `tcf.20240319b` produced a primary pass with one anomalous segment out
+of 323 and 3599 words, and a rescue with none and 3525. The anomaly score alone
+selects the rescue and publishes 74 fewer words. A second forced run gave 2
+against 0 and 3601 against 3518. `RESCUE_MIN_WORD_RETENTION` (0.99) now makes a
+rescue ineligible if it drops more than 1 percent of the primary's words, and the
+discard is logged with both word counts and both anomaly scores. The lesson
+generalises beyond the rescue: any metric that counts defects prefers the
+transcript with less content to be defective about, so every such rule in this
+service needs a content floor beside it.
+
+**On the loud files the alignment change is exactly neutral, and the decode is
+what moved.** `agree250` for RC060 came out below the 2026-09-07 C1 row on three
+files, which looks like an alignment regression and is not one. Aligning the
+baseline's own C4 decodes through the same path gives agree250 identical to
+RC060's on four files and within 0.0023 on the fifth, so RC060's alignment
+reproduces the baseline's C4 alignment exactly and every difference from the C1
+row is the C4 VAD, not the I1/I2 work. The C4 VAD helps alignment on two files
+(755 s +0.089, class +0.067) and hurts on three (1463 s -0.057, 2783 s -0.006,
+1369 s -0.001), net positive but not uniform. Comparing a candidate's alignment
+against a baseline built on a different decode measures the decode; the
+like-for-like row is the one to read.
+
+Two smaller observations. The decode is not bit-reproducible on the longer files:
+two runs of the identical configuration on `tcf.20240319b` gave 3599 and 3598
+words (323 and 322 segments), while the 755 s file reproduced exactly, matching
+the 2026-09-07 C1/C1_REPEAT determinism check. That is enough to move a file
+across the rescue trigger, which is why the trigger had to be measured with the
+threshold forced rather than by waiting for it to fire. And RC060's pre-dedupe
+word count equals C4's exactly on all five loud files, which is the cleanest
+evidence that the decode is unchanged from the measured configuration and only
+the boundary de-duplication differs.

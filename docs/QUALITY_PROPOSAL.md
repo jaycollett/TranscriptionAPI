@@ -268,6 +268,17 @@ anomaly) sits far below the quarantine gate (5 anomalous segments or 2 low
 windows) deliberately: a second opinion costs one decode and a requeue costs a
 whole job plus a queue slot.
 
+One guard sits above that ordering, added after the validation run measured the
+rule failing. A rescue is ineligible unless it keeps at least
+`RESCUE_MIN_WORD_RETENTION` (0.99) of the primary pass's words. On
+`tcf.20240319b` with the trigger forced on, the primary scored one anomalous
+segment out of 323 with 3599 words and the rescue scored none with 3525; the
+anomaly score alone publishes the pass with 74 fewer words, which is exactly the
+2.2 failure in new clothes. A rule that counts defects prefers the transcript
+with less content to be defective about, so the content floor is not optional.
+Within the retention band the ordering above decides; outside it the primary is
+kept and the discard is logged with both word counts and both scores.
+
 `rescue_attempted` and `rescue_selected` are returned by `transcribe_audio`,
 stored, and exposed on `/status` and `/transcriptions`, so the firing rate and
 the hit rate are observable in production rather than assumed. The harness config
@@ -286,17 +297,28 @@ computed over `speech_seconds` when available, and also requeues when
 `low_windows` is non-zero, so a partial collapse is caught where the
 whole-file rate is not [22]. Both numbers go to the success log line.
 
-**VAD (`transcribe.py`).** `vad_parameters` becomes
-`{"threshold": T, "min_speech_duration_ms": 250, "min_silence_duration_ms": 1000, "speech_pad_ms": 300}`
-with `hallucination_silence_threshold=0.5`. `T` is level-aware: measure the
-file's mean level once with `ffmpeg -af volumedetect` (or the equivalent RMS
-in dBFS from the decoded samples), use `T=0.5` when the mean is at or above
--26 dBFS and `T=0.35` below it. The -26 dBFS cut sits between the loudest
-file that worked at 0.5 (-24.5 dBFS) and the one that failed (-28.6 dBFS);
-it is a starting point, and the 0.35 branch has not been measured with the
-1000 ms and 300 ms values. It must be tuned on `women_retreat_2025_session3`
-before release, with the acceptance test that its word count and agreement
-against C1 stay within the section 4 thresholds.
+**VAD (`transcribe.py`).** The file's mean level, measured once with
+`ffmpeg -af volumedetect`, selects one of two whole profiles:
+
+- loud, at or above -26 dBFS: `{"threshold": 0.5, "min_speech_duration_ms": 250, "min_silence_duration_ms": 1000, "speech_pad_ms": 300}` with `hallucination_silence_threshold=0.5`. This is C4, measured on the five files at -17.3 to -24.4 dBFS.
+- quiet, below -26 dBFS: `{"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300, "speech_pad_ms": 400}` with `hallucination_silence_threshold=None`. This is BASE/C1, the only profile ever measured on quiet material.
+
+The -26 dBFS cut sits between the quietest file that worked on the loud
+profile (-24.4 dBFS) and the one that failed (-28.4 dBFS). The original form
+of this proposal varied only `T` and left the rest of C4 in place; that was
+tuned on `women_retreat_2025_session3` before release, as required, and the
+measurement rejected it. Three configurations on that file:
+
+| profile | threshold | min silence | pad | halluc. | segments | words | agreement with C1 |
+|---|---|---|---|---|---|---|---|
+| C4 (loud) | 0.5 | 1000 | 300 | 0.5 | 1157 | 8639 | 0.979 |
+| threshold only | 0.35 | 1000 | 300 | none | 4693 | 8407 | 0.965 |
+| BASE/C1 (quiet) | 0.35 | 300 | 400 | none | 435 | 8904 | 1.000 |
+
+So the long minimum silence is what shreds quiet audio, not the threshold and
+not the hallucination filter, and the quiet branch has to be the whole
+profile. An unmeasurable level takes the quiet profile: fragmenting quiet
+speech loses words, cutting a few extra seams on loud speech does not.
 
 **Text and timings (`transcribe.py`).** Remove `clean_boundary_duplicates`
 and the `re.sub` in `run_forced_alignment`. De-duplicate per segment: where
@@ -360,8 +382,8 @@ Beyond the standard release-candidate recipe in `docs/SESSION_KNOWLEDGE.md`:
    - Wall time under 60 s end to end for the 755 s file.
    - `" ".join(timings[].text) == transcription`, zero non-monotonic and zero
      overlapping timings on every file.
-   - The retreat file's word count within 1 percent of C1 with the level-aware
-     threshold taking the 0.35 branch, and the other five files taking 0.5.
+   - The retreat file's word count within 1 percent of C1 with the level rule
+     taking the quiet profile, and the other five files taking the loud one.
 3. Run the candidate twice on the 755 s file; text and segments must be
    identical.
 4. First week in production: for every completed job, log and review
