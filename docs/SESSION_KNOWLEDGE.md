@@ -800,3 +800,74 @@ should key on sample rate and bit rate first, both of which are free from the
 container header and need no audio analysis at all. Any level term that survives
 has to be two-sided, selecting the quiet profile at both ends rather than below a
 line. Left alone for 0.6.0 so the sweep's numbers stay interpretable.
+
+
+## 2026-09-07 - 0.6.0: the read-aloud omission, and why the fallback never fired
+
+What 0.6.0 lost, and the sweep found, was read-aloud passages: scripture read from
+the text, a quoted book, formal reading rather than preaching. Six cases across five
+files, including both word-count regressions, all recovered when the same audio is
+decoded in isolation. One coherent defect, not five scattered ones.
+
+**It is not a misconfigured parameter.** Four different single-parameter changes each
+recover a different subset of the passages and no two recover the same pair; between
+them they cover all four. That is a deterministic decode landing in a bad path, which
+is consistent with five of five repeat submissions coming back byte-identical. The
+strongest single lever is starting the temperature ladder at 0.2, which recovers four
+of four, and what that actually does is stop beam-searching: faster-whisper
+beam-searches only at temperature 0.0 and samples at every rung above it. The
+passages are lost by the beam search specifically.
+
+**The real defect is that the fallback never fires.** The model drops these passages
+*confidently*. Neither the compression-ratio nor the log-probability threshold is
+crossed, so no rung above the first is ever attempted and five rungs of the ladder go
+unused. Every per-segment guard the decode has looks at how sure the model was, and
+the model was sure. A silent, confident omission is invisible to all of them.
+
+That leaves exactly one signal that can see it: a stretch of speech carrying almost
+no words. Hence three changes.
+
+`ANOMALY_WINDOW_MIN_WPS` goes from 1.2 to 1.5. Measured per 60 s window over the
+omitted stretches the control scores 0.42, 0.38, 0.82 and 1.20 words/sec, so the old
+floor caught three of four and missed the fourth by exactly nothing. Against a corpus
+median of 2.65 over speech and a healthy minimum of 2.37 across the six reference
+files, 1.5 keeps 0.87 of headroom. Re-checked after the change: no reference file
+trips it and no false rescue fires.
+
+**The signal is wired to the remedy, not only to the punishment.** A single low-rate
+window fires the rescue pass, which decodes with previous-text conditioning off and
+its ladder starting at 0.2. Those are precisely the two most effective variants
+combined, which is a coincidence worth naming: the rescue was designed for repetition
+loops and happens to be the right treatment for confident omission as well, because
+both are failures of the primary decode's path rather than of its parameters.
+
+**A low-rate window never requeues, however many there are.** The decode is
+deterministic, so a requeue re-runs the identical decode and burns three attempts
+into the same quarantine. That is exactly what happened to tcf.20150424: 510 s of GPU
+to publish nothing against a legacy transcript of 8292 words. Only the per-segment
+anomaly count can requeue now. The window count fires the rescue, the better pass is
+selected on the existing rules and published, and the count is stored on the row with
+a log line so the job can be found and reviewed.
+
+The selection works in the right direction here without any special case. When the
+rescue recovers a passage its low-window count falls, so it wins on anomaly total;
+and because it *gains* words rather than losing them, neither the retention floor nor
+the 40 word cap can block it. Those guards exist to stop a rescue that clears a flag
+by deleting content, which is the opposite case.
+
+**Deferred to 0.6.1, recorded not done: whether the primary pass should sample rather
+than beam-search.** Starting the ladder at 0.2 recovers all four passages, which is
+the best result of any single change. It is not in 0.6.0 because it changes the core
+decode for every file on the evidence of seven passages rather than a corpus, and
+because beam search is the reference Whisper configuration and the thing the 0.5.x
+five-pass design was measured against. It deserves its own release with its own
+sweep, not a late amendment to this one.
+
+Two of the six cases are not expected to recover and should not. The two
+question-and-answer stretches in tcf.20241105 are an audience member off microphone:
+the audio is not there to transcribe, and the surrounding conversation holds those
+windows at 2.1 to 2.5 words/sec so they do not trip the floor either. One correction
+to the earlier record: the C.S. Lewis quotation in tcf.20210604 was never lost. It
+scores 0.938 under the current configuration and its coverage gap was a timing
+artifact. Confirmed omissions are three, plus the two partial question-and-answer
+cases.

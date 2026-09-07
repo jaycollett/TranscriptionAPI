@@ -435,6 +435,34 @@ on six files:
   48 kHz). The selector should key on fidelity first, and any surviving level term
   must be two-sided.
 
+## 4.2 The read-aloud omission
+
+The sweep's word-count regressions turned out to be one defect: read-aloud passages,
+scripture or quoted text read formally rather than preached, dropped silently. Four
+single-parameter changes each recover a different subset and no two recover the same
+pair, so it is a deterministic decode landing in a bad path rather than a
+misconfigured knob. The strongest lever is starting the ladder at 0.2, which stops
+the beam search (faster-whisper beam-searches only at temperature 0.0), and recovers
+four of four.
+
+The decode's own guards cannot see it: the model drops these passages without
+crossing the compression-ratio or log-probability thresholds, so no rung above the
+first is attempted and five rungs go unused. The only signal that registers is a
+stretch of speech carrying almost no words, so:
+
+- `ANOMALY_WINDOW_MIN_WPS` rises 1.2 to 1.5. The omitted stretches score 0.42, 0.38,
+  0.82 and 1.20 words/sec per 60 s window; the corpus median is 2.65 over speech and
+  the healthy minimum across the reference files is 2.37.
+- A low-rate window fires the rescue pass, which already decodes with
+  `condition_on_previous_text=False` and its ladder at 0.2, the two most effective
+  variants combined.
+- A low-rate window never requeues. The decode is deterministic, so requeueing
+  re-derives the same result; only the per-segment anomaly count can quarantine.
+
+Deferred to 0.6.1: whether the primary pass should sample rather than beam-search. It
+recovers all four passages but changes the core decode for every file on the evidence
+of seven passages, so it needs its own measured release.
+
 ## 5. Deferred and rejected
 
 - C8 batched pipeline: deferred; 2-3x faster than C1 but loses 1-4 percent of

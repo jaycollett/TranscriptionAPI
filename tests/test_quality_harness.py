@@ -408,10 +408,10 @@ def test_harness_rescue_path_uses_the_production_rule(monkeypatch, transcribe_mo
 
     monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
 
-    clean = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying")
-             for i in range(20)]
-    dirty = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying",
-                 temp=0.8 if i in (2, 5) else 0.0)
+    body = ("and so the word of the Lord came to him once again saying "
+            "behold I will send my messenger before your face to prepare the way")
+    clean = [seg(i * 10.0, i * 10.0 + 10.0, body) for i in range(20)]
+    dirty = [seg(i * 10.0, i * 10.0 + 10.0, body, temp=0.8 if i in (2, 5) else 0.0)
              for i in range(20)]
 
     runs = []
@@ -446,8 +446,9 @@ def test_harness_rescue_path_skips_a_clean_primary(monkeypatch, transcribe_modul
     import decode as decode_mod
 
     monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
-    clean = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying")
-             for i in range(20)]
+    body = ("and so the word of the Lord came to him once again saying "
+            "behold I will send my messenger before your face to prepare the way")
+    clean = [seg(i * 10.0, i * 10.0 + 10.0, body) for i in range(20)]
     runs = []
 
     def fake_run_sequential(model, audio, kwargs):

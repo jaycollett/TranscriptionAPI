@@ -99,11 +99,7 @@ def test_truncation_is_caught_by_the_window_check(transcribe_module):
     The whole-file rate would still be 1.9 words/sec here, over the MIN_WORDS_PER_SEC
     floor, which is exactly the case the window check exists for.
     """
-    segments = []
-    # 300 s of normal speech at about 2.7 words/sec.
-    for i in range(30):
-        segments.append(_segment(i * 10.0, i * 10.0 + 10.0,
-                                 "and so the word of the Lord came to him once again saying"))
+    segments = list(_dense(30))  # 300 s at the healthy rate
     # 130 s of near-silence: speech spans continue, words do not.
     for i in range(13):
         segments.append(_segment(300.0 + i * 10.0, 300.0 + i * 10.0 + 10.0, "yes"))
@@ -114,9 +110,8 @@ def test_truncation_is_caught_by_the_window_check(transcribe_module):
 
 
 def test_a_clean_file_trips_no_windows(transcribe_module):
-    segments = [_segment(i * 10.0, i * 10.0 + 10.0,
-                         "and so the word of the Lord came to him once again saying")
-                for i in range(30)]
+    """At the measured healthy rate, not at the floor: real material is 2.4-2.9."""
+    segments = _dense(30)
     _windows, low = transcribe_module.low_speech_windows(segments, 300.0)
     assert low == 0
 
@@ -124,8 +119,8 @@ def test_a_clean_file_trips_no_windows(transcribe_module):
 def test_windows_use_speech_time_not_file_time(transcribe_module):
     """A ten minute break between segments must not read as ten minutes of collapse."""
     segments = [
-        _segment(0.0, 60.0, " ".join(["word"] * 180)),
-        _segment(660.0, 720.0, " ".join(["word"] * 180)),
+        _segment(0.0, 60.0, " ".join(["word"] * 200)),
+        _segment(660.0, 720.0, " ".join(["word"] * 200)),
     ]
     _windows, low = transcribe_module.low_speech_windows(segments, 720.0)
     assert low == 0
@@ -477,8 +472,9 @@ def test_transcribe_audio_returns_the_diagnostic_keys(transcribe_module, monkeyp
 # --------------------------------------------------------------------------------------
 # Coverage: bounded by the speech it is measured against, by construction
 # --------------------------------------------------------------------------------------
-NORMAL_RATE_BODY = " ".join(
-    ["and so the word of the Lord came to him once again saying"] * 2
+NORMAL_RATE_BODY = (
+    "and so the word of the Lord came to him once again saying "
+    "behold I will send my messenger before your face to prepare the way"
 )  # 26 words per 10 s segment, i.e. 2.6 words/sec, the measured healthy rate
 
 
@@ -695,9 +691,7 @@ def test_the_omission_reaches_the_returned_counts(transcribe_module, monkeypatch
                 for i, t in enumerate(tokens)
             ]
 
-    raw = [_Seg(i * 10.0, i * 10.0 + 10.0,
-                "and so the word of the Lord came to him once again saying")
-           for i in range(240)]
+    raw = [_Seg(i * 10.0, i * 10.0 + 10.0, NORMAL_RATE_BODY) for i in range(240)]
 
     class _FakeModel:
         def transcribe(self, audio, **kwargs):

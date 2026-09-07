@@ -33,10 +33,16 @@ class _Seg:
         ]
 
 
+# 26 words per 10 s segment, i.e. 2.6 words/sec, the measured healthy rate. The floor
+# is 1.5, so a fixture at the old 1.3 would read as an omission.
+NORMAL_RATE_BODY = (
+    "and so the word of the Lord came to him once again saying "
+    "behold I will send my messenger before your face to prepare the way"
+)
+
+
 def _clean(n=20):
-    return [_Seg(i * 10.0, i * 10.0 + 10.0,
-                 "and so the word of the Lord came to him once again saying")
-            for i in range(n)]
+    return [_Seg(i * 10.0, i * 10.0 + 10.0, NORMAL_RATE_BODY) for i in range(n)]
 
 
 def _anomalous(n=20):
@@ -117,7 +123,17 @@ def test_the_rescue_can_be_switched_off(transcribe_module, monkeypatch):
 def test_the_trigger_is_far_below_the_quarantine_gate(transcribe_module, app_module):
     """A second opinion is cheap and a requeue is not, so the rescue must fire first."""
     assert transcribe_module.RESCUE_ANOMALY_SEGMENTS < app_module.ANOMALY_SEGMENTS_MAX
-    assert transcribe_module.RESCUE_ANOMALY_WINDOWS < app_module.ANOMALY_WINDOWS_MAX
+
+
+def test_a_single_low_window_is_enough_to_fire_the_rescue(transcribe_module):
+    """It is the only signal that can see a confident omission, so it must reach the fix.
+
+    The model drops read-aloud passages without crossing the compression-ratio or
+    log-probability thresholds, so no segment looks anomalous and no temperature rung
+    above the first is ever tried. A stretch of speech carrying almost no words is the
+    whole of the evidence, and the rescue is the remedy.
+    """
+    assert transcribe_module.should_attempt_rescue(0, 1) is True
 
 
 # --------------------------------------------------------------------------------------
@@ -206,10 +222,64 @@ def test_an_empty_rescue_never_wins(transcribe_module):
 
 def test_the_returned_counts_describe_the_selected_pass(two_pass):
     """The rescue fixes the anomalies; the reported score must be the fixed one."""
-    _calls, result = two_pass([_anomalous(), _clean()])
+    _calls, result = two_pass([_anomalous(), _clean(21)])
     assert result["rescue_selected"] is True
     assert result["anomaly_count"] == 0
     assert result["flagged_segments"] == []
+
+
+def _with_dropped_passage(n=20):
+    """A clean decode with one 60 s stretch the model silently declined to transcribe.
+
+    Nothing about the segments looks wrong: normal temperature, normal compression
+    ratio, normal log-probability. Only the word rate over that stretch shows it.
+    """
+    segments = _clean(n)
+    for i in (8, 9, 10, 11, 12, 13):
+        segments[i] = _Seg(i * 10.0, i * 10.0 + 10.0, "and then")
+    return segments
+
+
+def test_a_dropped_passage_fires_the_rescue_and_the_recovery_is_published(two_pass):
+    """The whole read-aloud path, end to end.
+
+    The primary silently drops a passage, which shows up only as a low-rate window.
+    That fires the rescue, the rescue recovers the passage, and the selection rules
+    have to prefer it: its low-window count falls so it wins on anomaly total, and it
+    gains words rather than losing them so neither the retention floor nor the 40 word
+    cap can block it.
+    """
+    calls, result = two_pass([_with_dropped_passage(), _clean()])
+
+    assert len(calls) == 2, "the low-rate window must fire the rescue"
+    assert result["rescue_attempted"] is True
+    assert result["rescue_selected"] is True, "the recovery must be the published pass"
+    assert result["anomaly_windows"] == 0, "the recovered pass has no low window left"
+    assert len(result["transcription"].split()) > 400
+    assert " ".join(t["text"] for t in result["timings"]) == result["transcription"]
+
+
+def test_the_recovery_is_not_blocked_by_the_retention_floor(transcribe_module):
+    """A rescue that gains words is always eligible; the floor only stops losses."""
+    primary = _record("primary", anomaly_windows=2, words=3900)
+    rescue = _record("rescue", anomaly_windows=0, words=4180)
+    assert transcribe_module.retains_enough_words(primary, rescue) is True
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "rescue"
+
+
+def test_a_rescue_that_does_not_recover_leaves_the_primary(two_pass):
+    """The two question-and-answer stretches: audience audio that is simply not there.
+
+    Nothing recovers those, and the rescue must not be able to make things worse by
+    firing on them.
+    """
+    dropped = _with_dropped_passage()
+    calls, result = two_pass([dropped, _with_dropped_passage()])
+
+    assert len(calls) == 2
+    assert result["rescue_attempted"] is True
+    assert result["rescue_selected"] is False, "an equal rescue never displaces the primary"
+    assert result["anomaly_windows"] >= 1, "and the window count is still reported"
 
 
 def test_a_worse_rescue_is_discarded(two_pass):

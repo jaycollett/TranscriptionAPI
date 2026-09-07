@@ -139,7 +139,19 @@ WHISPER_HALLUCINATION_SILENCE_THRESHOLD = _env_float("WHISPER_HALLUCINATION_SILE
 ANOMALY_TEMPERATURE = _env_float("ANOMALY_TEMPERATURE", 0.5)
 ANOMALY_NO_SPEECH_PROB = _env_float("ANOMALY_NO_SPEECH_PROB", 0.5)
 ANOMALY_WINDOW_SEC = _env_float("ANOMALY_WINDOW_SEC", 60.0)
-ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.2)
+# 1.5, raised from 1.2 on the read-aloud diagnosis. Measured per 60 s window over the
+# four omitted passages, the control scores 0.42, 0.38, 0.82 and 1.20 words/sec: the
+# 1.2 floor caught three and missed the fourth by exactly nothing. Against a corpus
+# median of 2.65 over speech and a measured healthy minimum of 2.37 across the six
+# reference files, 1.5 keeps 0.87 of headroom, so this buys the fourth passage without
+# spending the margin.
+#
+# This is the only signal that can see a confident omission. The model drops
+# read-aloud passages without crossing the compression-ratio or log-probability
+# thresholds, so no temperature rung above the first is ever attempted and five rungs
+# of fallback go unused; nothing in the per-segment fields registers anything wrong.
+# A stretch of speech carrying almost no words is the whole of the evidence.
+ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.5)
 # A window shorter than this is not scored: a 12 s tail is not evidence of collapse.
 ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
 # Share of speech a healthy decode is allowed to leave uncovered before any of it
@@ -1061,7 +1073,14 @@ def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=No
 
 
 def should_attempt_rescue(anomaly_count, anomaly_windows):
-    """True when the primary pass looks bad enough to be worth a second opinion."""
+    """True when the primary pass looks bad enough to be worth a second opinion.
+
+    A low-rate window is deliberately enough on its own. It is the only signal that
+    can see a confident omission, and the rescue is the remedy for one: it decodes
+    with previous-text conditioning off and its ladder starting at 0.2, which are the
+    two changes measured to recover the lost read-aloud passages. A signal wired only
+    to the quarantine gate would punish the file without ever trying the fix.
+    """
     if not RESCUE_ENABLED:
         return False
     return anomaly_count >= RESCUE_ANOMALY_SEGMENTS or anomaly_windows >= RESCUE_ANOMALY_WINDOWS

@@ -83,27 +83,43 @@ def test_anomalies_below_the_thresholds_still_complete(app_module, db, upload_di
                                                        monkeypatch):
     """Four flagged segments and one low window is noise, not a collapse."""
     monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
-    monkeypatch.setattr(app_module, "ANOMALY_WINDOWS_MAX", 2)
     stub_decode(anomaly_count=4, anomaly_windows=1)
     guid, status = _run(app_module, db, upload_dir)
     assert status == "completed"
     assert get_row(db, guid)["anomaly_count"] == 4
 
 
-def test_too_many_low_windows_requeues_the_job(app_module, db, upload_dir, stub_decode,
-                                               monkeypatch):
+@pytest.mark.parametrize("windows", [1, 2, 9])
+def test_low_windows_never_requeue_however_many(app_module, db, upload_dir, stub_decode,
+                                                monkeypatch, windows):
+    """The decode is deterministic, so requeueing on this signal cannot help.
+
+    tcf.20150424 spent three attempts and 510 s of GPU re-deriving the identical
+    result and published nothing. A low-rate window now fires the rescue upstream and
+    the better pass is published; the count is stored so the job can still be found.
+    """
     monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    monkeypatch.setattr(app_module, "ANOMALY_WINDOWS_MAX", 2)
-    stub_decode(anomaly_count=0, anomaly_windows=2)
+    stub_decode(anomaly_count=0, anomaly_windows=windows)
 
     guid, status = _run(app_module, db, upload_dir)
 
-    assert status == "pending"
+    assert status == "completed"
     row = get_row(db, guid)
-    assert row["attempt_count"] == 1
-    assert row["transcription"] is None
-    # The diagnostics of the rejected attempt are cleared with its transcript.
-    assert row["anomaly_count"] is None
+    assert row["attempt_count"] == 0
+    assert row["transcription"] is not None
+    assert row["anomaly_windows"] == windows
+
+
+def test_a_published_low_window_is_logged_for_review(app_module, db, upload_dir,
+                                                     stub_decode, caplog):
+    import logging
+
+    stub_decode(anomaly_count=0, anomaly_windows=2)
+    with caplog.at_level(logging.WARNING):
+        _run(app_module, db, upload_dir)
+
+    assert "2 low speech window(s)" in caplog.text
+    assert "Review the transcript for a dropped passage" in caplog.text
 
 
 def test_too_many_flagged_segments_requeues_the_job(app_module, db, upload_dir, stub_decode,
@@ -118,8 +134,8 @@ def test_too_many_flagged_segments_requeues_the_job(app_module, db, upload_dir, 
     assert get_row(db, guid)["attempt_count"] == 1
 
 
-def test_the_gate_reason_names_both_counts(app_module, db, upload_dir, stub_decode, monkeypatch,
-                                           caplog):
+def test_the_gate_reason_names_the_segment_count(app_module, db, upload_dir, stub_decode,
+                                                 monkeypatch, caplog):
     """The log line is the only record of why a good-looking transcript was thrown away."""
     import logging
 
@@ -129,7 +145,6 @@ def test_the_gate_reason_names_both_counts(app_module, db, upload_dir, stub_deco
         _run(app_module, db, upload_dir)
     assert "anomaly gate" in caplog.text
     assert "7 flagged segments" in caplog.text
-    assert "3 low speech windows" in caplog.text
 
 
 def test_an_identical_redecode_is_published_not_quarantined(app_module, db, upload_dir,

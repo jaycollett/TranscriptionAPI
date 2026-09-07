@@ -60,12 +60,15 @@ max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
 # alphanumeric-ratio check alone is blind to coherent prose at half length.
 MIN_WORDS_PER_SEC = float(os.getenv("MIN_WORDS_PER_SEC", "1.0"))
 
-# Anomaly gate (0.6.0). The decode hands back a count of segments that tripped one of
-# faster-whisper's own quality signals and a count of 60 s speech windows under 1.2
-# words/sec. On the six reference files a healthy decode scored zero on both, so
-# these are set just above the noise floor rather than at a measured failure point;
-# docs/QUALITY_PROPOSAL.md section 4 makes revisiting them a first-week task.
-ANOMALY_WINDOWS_MAX = int(os.getenv("ANOMALY_WINDOWS_MAX", "2"))
+# Anomaly gate (0.6.0). Only the per-segment count can requeue a job.
+#
+# The low-rate window count deliberately does not, however high it goes. The decode is
+# deterministic, so requeueing on it re-runs the identical decode and burns three
+# attempts into the same quarantine: that is precisely what happened to tcf.20150424,
+# which spent 510 s of GPU to publish nothing against a legacy transcript of 8292
+# words. A low-rate window instead fires the rescue pass in transcribe.py, which is
+# the actual remedy for the omission it detects; the better pass is selected and
+# published, with the window count stored on the row so the job can still be found.
 ANOMALY_SEGMENTS_MAX = int(os.getenv("ANOMALY_SEGMENTS_MAX", "5"))
 # Two decodes are "the same result" when the word counts match and the mean
 # log-probabilities agree to this. The decode is deterministic on most material, so a
@@ -909,18 +912,23 @@ def process_pending_job(cursor, guid, filename):
                 f"{'speech' if speech_seconds else 'audio'} below floor {MIN_WORDS_PER_SEC}"
             )
 
-        # Anomaly gate: the whole-file word rate is blind to a partial collapse, so a
-        # file that transcribes normally for forty minutes and produces nothing for
-        # ten still clears the floor above. The window count catches that, and the
-        # segment count catches a decode that fell back to high temperatures or
-        # tripped faster-whisper's own compression and log-probability thresholds
-        # repeatedly.
-        if ((anomaly_windows or 0) >= ANOMALY_WINDOWS_MAX
-                or (anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX):
+        # Anomaly gate. Only the per-segment count reaches this: a decode that fell
+        # back to high temperatures or repeatedly tripped faster-whisper's own
+        # compression and log-probability thresholds has produced something suspect
+        # everywhere, and a retry may genuinely differ. The low-rate window count is
+        # handled upstream by the rescue pass instead, because requeueing a
+        # deterministic decode cannot change its verdict.
+        if (anomaly_windows or 0) > 0:
+            app.logger.warning(
+                f"{guid} has {anomaly_windows} low speech window(s); the rescue "
+                f"{'ran' if rescue_attempted else 'did not run'} and the "
+                f"{'rescue' if rescue_selected else 'primary'} pass was published. "
+                f"Review the transcript for a dropped passage."
+            )
+        if (anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX:
             reason = (
                 f"anomaly gate: {anomaly_count} flagged segments "
-                f"(max {ANOMALY_SEGMENTS_MAX - 1}), {anomaly_windows} low speech windows "
-                f"(max {ANOMALY_WINDOWS_MAX - 1})"
+                f"(max {ANOMALY_SEGMENTS_MAX - 1})"
             )
             fingerprint = anomaly_fingerprint(len(transcription.split()),
                                               result.get("mean_logprob"))
