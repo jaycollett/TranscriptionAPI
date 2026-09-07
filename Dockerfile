@@ -29,7 +29,7 @@
 # 2026-09-07: speaker diarization (pyannote) was removed, and with it the
 # HUGGINGFACE_TOKEN_BUILD build arg and the gated-model download. The build
 # now needs no secret at all, so CI can rebuild the image unattended.
-FROM mmcauliffe/montreal-forced-aligner:v3.4.1
+FROM mmcauliffe/montreal-forced-aligner:v3.4.2
 
 # Switch to root to install packages
 USER root

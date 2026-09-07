@@ -297,3 +297,19 @@ job; corrupt and wrong-extension uploads returned 400; a duplicate GUID returned
 409 in both lower and upper case; no worker sleep/wake lines in the log. The
 upstream client resubmitted its in-flight jobs within minutes of the container
 swap, as the stateless design intends.
+
+## 2026-09-07 - 0.5.1: base image v3.4.2
+
+Dependabot PR #8 applied by hand (the Dockerfile had moved too far for a clean
+merge). The first candidate died at import: pydub needs the audioop module that
+Python 3.13 removed, and the v3.4.1 base had carried the audioop-lts backport as a
+side effect while v3.4.2 does not. audioop-lts==0.2.2 is now declared in
+requirements.txt. Lesson: anything the service imports must be pinned in
+requirements.txt, never inherited from the base's conda environment.
+
+Validation of 0.5.1-rc2 on the reference file: 2086 words, 2.762 words/sec, 187
+timings, MFA aligned on the first attempt, 139 s for the five Whisper passes,
+170 s end to end, zero MFA working directories left, Docker healthy. Image
+environment: Python 3.13.15, torch 2.12.1+cu130 with CUDA available, ctranslate2
+4.8.0 seeing one device, numpy 2.5.2, MFA 3.4.3.dev0 (what the v3.4.2 tag ships),
+Ubuntu 20.04.5.
