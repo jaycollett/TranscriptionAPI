@@ -164,31 +164,57 @@ def test_hallucination_threshold_can_actually_fire(decode_calls):
 @pytest.mark.parametrize(
     "mean_dbfs, expected",
     [
-        (-23.1, 0.5),    # the 755 s reference file
-        (-18.0, 0.5),
-        (-24.5, 0.5),    # quietest file that worked at 0.5
-        (-26.0, 0.5),    # the cutover itself is the loud branch
-        (-26.1, 0.35),
-        (-28.6, 0.35),   # the retreat file, which loses 290 words at 0.5
+        (-23.1, "loud"),    # the 755 s reference file
+        (-18.0, "loud"),
+        (-24.5, "loud"),    # quietest file that worked on the loud profile
+        (-26.0, "loud"),    # the cutover itself is the loud branch
+        (-26.1, "quiet"),
+        (-28.4, "quiet"),   # the retreat file, which loses 3.0 percent of its words
     ],
 )
-def test_threshold_follows_the_level(transcribe_module, mean_dbfs, expected):
-    threshold, why = transcribe_module.choose_vad_threshold(mean_dbfs)
-    assert threshold == pytest.approx(expected)
-    assert str(mean_dbfs) in why or f"{mean_dbfs:.1f}" in why
+def test_profile_follows_the_level(transcribe_module, mean_dbfs, expected):
+    profile, why = transcribe_module.choose_vad_profile(mean_dbfs)
+    assert profile == expected
+    assert f"{mean_dbfs:.1f}" in why
 
 
-def test_unmeasurable_level_takes_the_cautious_threshold(transcribe_module):
+def test_the_two_profiles_are_the_measured_ones(transcribe_module):
+    """A softer threshold alone is not enough: the quiet branch needs the whole profile.
+
+    Measured 2026-09-07 on the retreat file: the loud profile gives 1157 segments and
+    8639 words, the loud profile at threshold 0.35 gives 4693 segments and 8407 words,
+    and this profile gives 435 segments and 8904 words, reproducing C1 exactly.
+    """
+    loud = transcribe_module.vad_parameters("loud")
+    quiet = transcribe_module.vad_parameters("quiet")
+
+    assert loud == {"threshold": 0.5, "min_speech_duration_ms": 250,
+                    "min_silence_duration_ms": 1000, "speech_pad_ms": 300}
+    assert quiet == {"threshold": 0.35, "min_speech_duration_ms": 250,
+                     "min_silence_duration_ms": 300, "speech_pad_ms": 400}
+    # The long minimum silence is what shreds quiet audio, so it must differ.
+    assert quiet["min_silence_duration_ms"] < loud["min_silence_duration_ms"]
+    assert quiet["speech_pad_ms"] > loud["speech_pad_ms"]
+
+
+def test_the_hallucination_filter_is_off_on_the_quiet_profile(transcribe_module):
+    """The quiet profile's 800 ms of padded silence was measured without the filter."""
+    assert transcribe_module.hallucination_threshold("loud") == pytest.approx(0.5)
+    assert transcribe_module.hallucination_threshold("quiet") is None
+
+
+def test_unmeasurable_level_takes_the_cautious_profile(transcribe_module):
     """Fragmenting quiet speech loses words; cutting extra seams on loud speech does not."""
-    threshold, why = transcribe_module.choose_vad_threshold(None)
-    assert threshold == pytest.approx(0.35)
+    profile, why = transcribe_module.choose_vad_profile(None)
+    assert profile == "quiet"
     assert "unknown" in why
 
 
-@pytest.mark.parametrize("mean_dbfs, expected", [(-23.1, 0.5), (-28.6, 0.35)])
+@pytest.mark.parametrize("mean_dbfs, expected, profile", [(-23.1, 0.5, "loud"),
+                                                          (-28.4, 0.35, "quiet")])
 def test_measured_level_reaches_the_decode_call(transcribe_module, monkeypatch, tmp_path,
-                                                mean_dbfs, expected):
-    """End to end: the level measured for the file is the threshold Whisper is given."""
+                                                mean_dbfs, expected, profile):
+    """End to end: the level measured for the file picks the profile Whisper is given."""
     calls = []
 
     class _FakeModel:
@@ -204,8 +230,12 @@ def test_measured_level_reaches_the_decode_call(transcribe_module, monkeypatch, 
 
     result = transcribe_module.transcribe_audio(str(audio_path), "guid")
 
+    assert calls[0]["vad_parameters"] == transcribe_module.vad_parameters(profile)
     assert calls[0]["vad_parameters"]["threshold"] == pytest.approx(expected)
+    assert calls[0]["hallucination_silence_threshold"] == \
+        transcribe_module.hallucination_threshold(profile)
     assert result["vad_threshold"] == pytest.approx(expected)
+    assert result["vad_profile"] == profile
     assert result["mean_dbfs"] == pytest.approx(mean_dbfs)
 
 
@@ -213,7 +243,7 @@ def test_mean_dbfs_is_parsed_from_volumedetect(transcribe_module, monkeypatch, t
     """ffmpeg reports mean_volume on stderr; the last match is the audio stream's."""
     stderr = (
         "[Parsed_volumedetect_0 @ 0x1] n_samples: 54263040\n"
-        "[Parsed_volumedetect_0 @ 0x1] mean_volume: -28.6 dB\n"
+        "[Parsed_volumedetect_0 @ 0x1] mean_volume: -28.4 dB\n"
         "[Parsed_volumedetect_0 @ 0x1] max_volume: -3.2 dB\n"
     )
 
@@ -223,7 +253,7 @@ def test_mean_dbfs_is_parsed_from_volumedetect(transcribe_module, monkeypatch, t
 
     _Completed.stderr = stderr
     monkeypatch.setattr(transcribe_module.subprocess, "run", lambda *a, **k: _Completed())
-    assert transcribe_module.measure_mean_dbfs(str(tmp_path / "a.mp3"), 3388.0) == pytest.approx(-28.6)
+    assert transcribe_module.measure_mean_dbfs(str(tmp_path / "a.mp3"), 3388.0) == pytest.approx(-28.4)
 
 
 def test_mean_dbfs_is_none_when_nothing_can_measure_it(transcribe_module, monkeypatch, tmp_path):

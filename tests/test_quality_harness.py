@@ -337,11 +337,10 @@ def test_rc060_mirrors_the_production_decode(transcribe_module):
     assert cfg["model"]["num_workers"] == transcribe_module.WHISPER_NUM_WORKERS
 
 
-def test_rc060_vad_matches_production_at_the_loud_threshold(transcribe_module):
-    """The stored threshold is a placeholder; decode.py replaces it per file."""
+def test_rc060_vad_matches_the_production_loud_profile(transcribe_module):
+    """The stored profile is a placeholder; decode.py replaces it per file."""
     vad = configs.get_config("RC060")["transcribe"]["vad_parameters"]
-    loud, _why = transcribe_module.choose_vad_threshold(-23.1)
-    assert vad == transcribe_module.vad_parameters(loud)
+    assert vad == transcribe_module.vad_parameters("loud")
 
 
 def test_rc060_asks_for_the_level_rule_and_the_production_post_stage():
@@ -380,8 +379,13 @@ def test_level_aware_vad_uses_the_production_rule(monkeypatch, transcribe_module
     result = {}
     kwargs = apply_level_aware_vad(kwargs, "/audio/retreat.mp3", 3388.0, result)
 
+    # The whole profile is replaced, not just the threshold: a softer threshold with
+    # the loud profile's 1000 ms silence still lost 5.6 percent of the words.
+    assert kwargs["vad_parameters"] == transcribe_module.vad_parameters("quiet")
     assert kwargs["vad_parameters"]["threshold"] == pytest.approx(0.35)
-    assert kwargs["vad_parameters"]["min_silence_duration_ms"] == 1000
+    assert kwargs["vad_parameters"]["min_silence_duration_ms"] == 300
+    assert kwargs["hallucination_silence_threshold"] is None
+    assert result["level"]["profile"] == "quiet"
     assert result["level"]["mean_dbfs"] == pytest.approx(-28.6)
 
 

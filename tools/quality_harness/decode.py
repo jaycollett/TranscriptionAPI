@@ -227,19 +227,28 @@ def run_shared_clips(model, audio, cfg):
 
 
 def apply_level_aware_vad(kwargs, audio_path, duration, result):
-    """Set the VAD threshold from the file's level using transcribe.py's own rule.
+    """Take the whole VAD profile from the file's level using transcribe.py's own rule.
 
     Imported rather than copied: a config named after the release candidate has to
     make the same decision the release makes, and a second implementation of the
-    -26 dBFS cutover would be free to drift.
+    -26 dBFS cutover would be free to drift. The profile carries the threshold, the
+    minimum silence, the padding and the hallucination filter, because the quiet
+    branch needs all four (a softer threshold alone still loses 5.6 percent of the
+    words on the retreat file).
     """
-    from transcribe import choose_vad_threshold, measure_mean_dbfs
+    from transcribe import choose_vad_profile, hallucination_threshold, measure_mean_dbfs, vad_parameters
 
     mean_dbfs = measure_mean_dbfs(audio_path, duration)
-    threshold, why = choose_vad_threshold(mean_dbfs)
-    kwargs["vad_parameters"] = dict(kwargs["vad_parameters"], threshold=threshold)
-    result["level"] = {"mean_dbfs": mean_dbfs, "threshold": threshold, "why": why}
-    log.info("level %s dBFS -> VAD threshold %s (%s)", mean_dbfs, threshold, why)
+    profile, why = choose_vad_profile(mean_dbfs)
+    kwargs["vad_parameters"] = vad_parameters(profile)
+    kwargs["hallucination_silence_threshold"] = hallucination_threshold(profile)
+    result["level"] = {
+        "mean_dbfs": mean_dbfs,
+        "profile": profile,
+        "threshold": kwargs["vad_parameters"]["threshold"],
+        "why": why,
+    }
+    log.info("level %s dBFS -> VAD profile %s %s (%s)", mean_dbfs, profile, kwargs["vad_parameters"], why)
     return kwargs
 
 

@@ -93,20 +93,38 @@ WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
 # only ever doubled the resident model.
 WHISPER_NUM_WORKERS = _env_int("WHISPER_NUM_WORKERS", 1)
 
-# VAD (harness C4). The threshold is the one parameter that cannot be a constant:
-# at 0.5 the -28.6 dBFS retreat recording fragments into 2171 segments and loses
-# 290 words, and at 0.35 the louder files cut a seam at every pause over 0.8 s.
-VAD_THRESHOLD = _env_float("VAD_THRESHOLD", 0.5)
-VAD_THRESHOLD_QUIET = _env_float("VAD_THRESHOLD_QUIET", 0.35)
-# The cutover sits between the quietest file that worked at 0.5 (-24.5 dBFS) and the
-# one that failed (-28.6 dBFS).
+# VAD. The level chooses between two whole profiles, not just a threshold. Both were
+# measured on the reference set and neither works on the other's material:
+#
+#   loud  (harness C4): seams drop 3-4x and removed audio stays under 6 percent on the
+#         five files at -17 to -24.5 dBFS, and it is the best-aligning decode of any
+#         config on the 755 s file.
+#   quiet (harness BASE, the C1 profile): on the -28.4 dBFS retreat recording the loud
+#         profile produces 1157 segments and loses 3.0 percent of the words, and
+#         relaxing only its threshold to 0.35 is not enough. Measured 2026-09-07:
+#         threshold 0.35 with the loud profile's 1000 ms silence and 300 ms padding
+#         gives 4693 segments and 8407 words; this profile gives 435 segments and 8904
+#         words, reproducing C1 exactly. The long minimum silence is what shreds quiet
+#         audio, not the threshold and not the hallucination filter.
+#
+# The cutover sits between the quietest file that worked on the loud profile
+# (-24.5 dBFS) and the one that failed (-28.4 dBFS).
 VAD_LEVEL_CUTOVER_DBFS = _env_float("VAD_LEVEL_CUTOVER_DBFS", -26.0)
 VAD_MIN_SPEECH_MS = _env_int("VAD_MIN_SPEECH_DURATION_MS", 250)
+
+VAD_THRESHOLD = _env_float("VAD_THRESHOLD", 0.5)
 VAD_MIN_SILENCE_MS = _env_int("VAD_MIN_SILENCE_DURATION_MS", 1000)
 VAD_SPEECH_PAD_MS = _env_int("VAD_SPEECH_PAD_MS", 300)
+
+VAD_THRESHOLD_QUIET = _env_float("VAD_THRESHOLD_QUIET", 0.35)
+VAD_MIN_SILENCE_MS_QUIET = _env_int("VAD_MIN_SILENCE_DURATION_MS_QUIET", 300)
+VAD_SPEECH_PAD_MS_QUIET = _env_int("VAD_SPEECH_PAD_MS_QUIET", 400)
+
 # Drop text the model produced over silence longer than this. It has to be under the
 # 2 x speech_pad_ms of silence the VAD leaves around each chunk or it can never fire,
-# which is why the 2.0 the service used to carry was dead weight.
+# which is why the 2.0 the service used to carry was dead weight. Off on the quiet
+# profile, whose 400 ms padding puts 800 ms of deliberate silence in every gap, and
+# which was measured without it.
 WHISPER_HALLUCINATION_SILENCE_THRESHOLD = _env_float("WHISPER_HALLUCINATION_SILENCE_THRESHOLD", 0.5)
 
 # Anomaly score (harness C2) and the loop flagger (C7).
@@ -308,29 +326,47 @@ def measure_mean_dbfs(file_path, duration_sec=0):
     return None
 
 
-def choose_vad_threshold(mean_dbfs):
-    """Pick the Silero threshold for a file at `mean_dbfs`; returns (threshold, why).
-
-    Quiet material is the failure case: at the 0.5 threshold the -28.6 dBFS retreat
-    recording fragmented into 1.4 s segments and lost 290 words. An unmeasurable
-    level therefore takes the cautious 0.35 branch, which is what 0.5.x used on
-    every file.
-    """
-    if mean_dbfs is None:
-        return VAD_THRESHOLD_QUIET, "level unknown, using the quiet-file threshold"
-    if mean_dbfs >= VAD_LEVEL_CUTOVER_DBFS:
-        return VAD_THRESHOLD, f"{mean_dbfs:.1f} dBFS at or above the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
-    return VAD_THRESHOLD_QUIET, f"{mean_dbfs:.1f} dBFS below the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
+LOUD_PROFILE = "loud"
+QUIET_PROFILE = "quiet"
 
 
-def vad_parameters(threshold):
-    """The VAD settings the decode runs with, at the given threshold."""
+def vad_parameters(profile):
+    """The VAD settings for the named profile."""
+    if profile == QUIET_PROFILE:
+        return {
+            "threshold": VAD_THRESHOLD_QUIET,
+            "min_speech_duration_ms": VAD_MIN_SPEECH_MS,
+            "min_silence_duration_ms": VAD_MIN_SILENCE_MS_QUIET,
+            "speech_pad_ms": VAD_SPEECH_PAD_MS_QUIET,
+        }
     return {
-        "threshold": threshold,
+        "threshold": VAD_THRESHOLD,
         "min_speech_duration_ms": VAD_MIN_SPEECH_MS,
         "min_silence_duration_ms": VAD_MIN_SILENCE_MS,
         "speech_pad_ms": VAD_SPEECH_PAD_MS,
     }
+
+
+def hallucination_threshold(profile):
+    """The hallucination filter for the named profile; None disables it."""
+    return None if profile == QUIET_PROFILE else WHISPER_HALLUCINATION_SILENCE_THRESHOLD
+
+
+def choose_vad_profile(mean_dbfs):
+    """Pick the VAD profile for a file at `mean_dbfs`; returns (profile, why).
+
+    Quiet material is the failure case and it needs the whole profile, not a softer
+    threshold: on the -28.4 dBFS retreat recording the loud profile loses 3.0 percent
+    of the words, and the loud profile with only its threshold relaxed to 0.35 loses
+    5.6 percent. An unmeasurable level therefore takes the quiet profile, which is
+    what 0.5.x used on every file: fragmenting quiet speech loses words, while cutting
+    a few extra seams on loud speech does not.
+    """
+    if mean_dbfs is None:
+        return QUIET_PROFILE, "level unknown, using the quiet profile"
+    if mean_dbfs >= VAD_LEVEL_CUTOVER_DBFS:
+        return LOUD_PROFILE, f"{mean_dbfs:.1f} dBFS at or above the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
+    return QUIET_PROFILE, f"{mean_dbfs:.1f} dBFS below the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
 
 
 # ---------------------------------------------------------------------------------
@@ -746,9 +782,11 @@ def transcribe_audio(file_path, guid):
     logger.info(f"Using audio file for transcription: {file_path}")
 
     mean_dbfs = measure_mean_dbfs(file_path, duration_sec)
-    threshold, why = choose_vad_threshold(mean_dbfs)
+    profile, why = choose_vad_profile(mean_dbfs)
+    vad = vad_parameters(profile)
     logger.info(f"Audio level for {guid}: {'unknown' if mean_dbfs is None else f'{mean_dbfs:.1f} dBFS'}; "
-                f"VAD threshold {threshold} ({why})")
+                f"VAD profile '{profile}' ({why}): {vad}, "
+                f"hallucination_silence_threshold={hallucination_threshold(profile)}")
 
     model = load_whisper_model()  # Load the Whisper model (cached)
 
@@ -766,8 +804,8 @@ def transcribe_audio(file_path, guid):
         "prompt_reset_on_temperature": WHISPER_PROMPT_RESET_ON_TEMPERATURE,
         "word_timestamps": True,
         "vad_filter": True,
-        "vad_parameters": vad_parameters(threshold),
-        "hallucination_silence_threshold": WHISPER_HALLUCINATION_SILENCE_THRESHOLD,
+        "vad_parameters": vad,
+        "hallucination_silence_threshold": hallucination_threshold(profile),
         # No initial_prompt and no hotwords. The old prompt asserted "a single
         # speaker", which is false for these multi-voice class and Q&A recordings,
         # and a prompt is prepended as previous-text context, so it primes the
@@ -857,7 +895,8 @@ def transcribe_audio(file_path, guid):
         "rescue_selected": rescue_selected,
         "speech_seconds": speech_seconds,
         "mean_dbfs": mean_dbfs,
-        "vad_threshold": threshold,
+        "vad_profile": profile,
+        "vad_threshold": vad["threshold"],
     }
 
 

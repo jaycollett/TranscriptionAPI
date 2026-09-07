@@ -129,6 +129,31 @@ CONFIGS = {
         level_aware_vad=True,
         production_postprocess=True,
     ),
+    # Probes for the quiet branch of the level rule, run on women_retreat_2025_session3
+    # only. RC060's first run lost 3.0 percent of C1's words on that file at threshold
+    # 0.35 with the C4 silence and padding, so the two candidate causes are separated:
+    # QUIET_A keeps the C4 silence and padding and only drops the hallucination filter,
+    # QUIET_B is the BASE/C1 VAD profile entire.
+    "QUIET_A": _delta(
+        "QUIET_A",
+        "quiet branch probe: threshold 0.35 with the C4 silence and padding, no hallucination filter",
+        {
+            "vad_parameters": {
+                "threshold": 0.35,
+                "min_speech_duration_ms": 250,
+                "min_silence_duration_ms": 1000,
+                "speech_pad_ms": 300,
+            },
+            "hallucination_silence_threshold": None,
+        },
+        production_postprocess=True,
+    ),
+    "QUIET_B": _delta(
+        "QUIET_B",
+        "quiet branch probe: the BASE/C1 VAD profile, which measured 8904 words on the retreat file",
+        {"hallucination_silence_threshold": None},
+        production_postprocess=True,
+    ),
     # RC060 plus the anomaly-triggered rescue pass. Run alongside RC060 so the cost
     # of the rescue (how often it fires) and its benefit (whether it is selected, and
     # what it changes) are both measured rather than assumed.

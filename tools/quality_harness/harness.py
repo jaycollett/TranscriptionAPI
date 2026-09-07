@@ -121,6 +121,7 @@ def cmd_run(args):
             if result.get("level"):
                 metrics["mean_dbfs"] = result["level"]["mean_dbfs"]
                 metrics["vad_threshold"] = result["level"]["threshold"]
+                metrics["vad_profile"] = result["level"].get("profile")
             if result.get("production"):
                 production = result["production"]
                 metrics["anomaly_count"] = production["anomaly_count"]
