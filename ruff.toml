@@ -1,0 +1,10 @@
+# Lint configuration for `ruff check .`, used by CI and locally.
+#
+# The rule set is pinned explicitly: ruff's default selection has changed between
+# releases, and requirements-dev.txt only sets a floor on the ruff version, so
+# without this file a routine tool upgrade could turn the CI lint step red with
+# no code change. Widen the selection deliberately, not by accident.
+target-version = "py312"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]

@@ -21,9 +21,15 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-# transcribe.py carries the fix; the others are copied so the image source always
-# matches the repo working tree it was built from.
-COPY app.py transcribe.py checkQueue.py requirements.txt ./
+# Only what the service runs. checkQueue.py is host-side tooling and is excluded
+# by .dockerignore, so listing it here would fail the build.
+COPY app.py transcribe.py requirements.txt ./
 
 EXPOSE 5000
+
+# Liveness, identical to the main Dockerfile so the overlay image reports
+# health the same way. The retained base images carry wget but no curl.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost:5000/health || exit 1
+
 CMD ["python", "app.py"]

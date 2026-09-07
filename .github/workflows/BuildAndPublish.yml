@@ -9,12 +9,20 @@ on:
     - cron: '10 5 * * 5'
   workflow_dispatch:
 jobs:
+  # The image is only built and pushed on a green test suite and lint run.
+  # On the weekly schedule (and workflow_dispatch) this job checks out and
+  # tests the default branch, while push_to_registry rebuilds the newest
+  # release tag; the gate is on the branch, not on the exact tag rebuilt.
+  test:
+    uses: ./.github/workflows/Test.yml
+
   push_to_registry:
     name: Push Docker image to GitHub Packages
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space@main
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # main, 2026-09
         with:
           tool-cache: true
           android: true
@@ -49,6 +57,9 @@ jobs:
             # the newest release tag and rebuild that exact revision. This
             # refreshes the published version on a current base image rather
             # than publishing whatever happens to be on the default branch.
+            # "Newest" is by version sort, the same rule the release run uses
+            # for :latest, so a hotfix published on an older release line is
+            # neither retagged :latest here nor picked up by this rebuild.
             TAG_NAME="$(git tag --sort=-v:refname | awk 'NR==1')"
             if [ -z "${TAG_NAME}" ]; then
               echo "::error::No git tags found to rebuild."

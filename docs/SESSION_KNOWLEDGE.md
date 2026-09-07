@@ -127,6 +127,112 @@ dependency pins, or the base image, before the image replaces production.
   `torch.cuda.is_available()` is `True` and `ctranslate2.get_cuda_device_count()`
   is at least 1. A CPU fallback runs, slowly, and looks like a decode problem.
 
+## 2026-09-07 - 0.5.0: service hardening, no decode changes
+
+`docs/PUNCHLIST.md` is the merged service and pipeline review; 0.5.0 closes
+the service items that a Mac unit test can verify and leaves every pipeline
+item open. Nothing in the decode call, the Dockerfile CUDA lines or the base
+image changed, so the 0.4.0 validation numbers still apply to this release.
+The contract of `/upload`, `/status` and `/transcriptions` is unchanged;
+`GET /health` and four per-job metric fields (`processing_seconds`,
+`words_per_second`, `attempt_count`, `mfa_applied`) are additive.
+
+What changed, in one place:
+
+- Cleanup is `cleanup_old_jobs()`, runs on the first wake and then hourly on
+  a monotonic clock whether or not the queue is empty, and deletes files and
+  rows for the same GUID set. Rows are aged by `COALESCE(completed_at,
+  created_at)`, so a job that waited a day in the queue and finished minutes
+  ago is not deleted from under a polling client. `sweep_orphaned_files()` removes GUID-named
+  entries in `UPLOAD_FOLDER` older than two days with no pending or
+  processing row; that folder is a host bind mount and outlives the
+  container-layer database, so it is the only way pre-redeploy files go away.
+- `recover_stuck_jobs()` runs at the top of every worker cycle. With a single
+  synchronous worker any 'processing' row seen there is orphaned by
+  definition.
+- Exceptions from transcription go through the attempt counter like garbage
+  results: requeued below `MAX_GARBAGE_RETRIES`, 'error' at it. A completed
+  row now keeps its `attempt_count` as the retry history instead of being
+  reset to 0; nothing re-reads it once the job is terminal. The outer
+  handler in `process_pending_job` only counts a failure if the row is still
+  'processing', so an inner handler that raised after writing cannot cause a
+  double count.
+- The worker loops straight into the next job after a terminal outcome and
+  sleeps `POLL_INTERVAL_SEC` when the queue is empty or when the job it just
+  ran was requeued; without that spacing an instantaneous failure (OOM,
+  unreadable file) burned all three attempts in under a second. The idle
+  transition is logged once; wake/sleep lines are DEBUG.
+- `/health` returns 503 when the worker thread is dead or an idle worker has
+  not polled in five minutes. A worker mid-job is reported `worker_busy` and
+  is exempt from the staleness rule, otherwise a 46 minute file would mark
+  the container unhealthy. Both Dockerfiles carry a `HEALTHCHECK` using
+  `wget` (the image has no curl) with a 180 s start period for the model load.
+- `/upload` holds a lock across check, insert and save, in that order: the
+  row is claimed before any bytes are written so a duplicate never overwrites
+  the winner's file, a failed save deletes the row and returns 500, and an
+  undecodable file removes both file and row and returns 400. The duplicate
+  check is case-insensitive (`lower(guid)`), matching the orphan sweep. The
+  worker takes the same lock around its pending-row SELECT so it cannot pick
+  up a row whose file has not been saved yet. GUIDs must be in canonical
+  hyphenated form (uppercase hex is accepted and echoed as sent), extensions
+  are allowlisted and lowercased on disk, bodies are capped at 1 GiB.
+  Werkzeug's 413 is an `HTTPException`; the handler's broad
+  `except Exception` has to re-raise it or it becomes a 500.
+- `Dockerfile.release` copies only `app.py`, `transcribe.py` and
+  `requirements.txt`; `checkQueue.py` is host tooling and is excluded by
+  `.dockerignore`, so listing it in the COPY fails the overlay build.
+- Duration comes from ffprobe via `pydub.utils.mediainfo`, with a full decode
+  only when the header has no duration. `estimate_processing_seconds()` is the
+  one copy of the `ceil(d / 15.1) * 5 + 45` formula. `/upload` and `/status`
+  both count pending and processing jobs, and `/status` never reports an ETA
+  in the past.
+- `run_forced_alignment` returns `(segments, mfa_applied)`, passes `--clean`,
+  and removes both its input directory and MFA's working tree under
+  `MFA_ROOT_DIR` (default `/mfa`) in a `finally`. Empty alignment output falls
+  back to Whisper timings without spending a retry. `transcribe.py` no longer
+  writes the MFA transcript file.
+- CI: `Test.yml` runs ruff and pytest on push and pull request and is called
+  by the publish workflow, which `needs` it. `ruff.toml` pins the rule
+  selection because ruff 0.16 ships a different default rule set from 0.15
+  and `requirements-dev.txt` only sets a version floor; without the file the
+  lint step went from clean to 37 findings on a tool upgrade alone.
+- `runDocker.sh` builds into a `git describe` tag before stopping anything,
+  retags the serving image `transcription-api:rollback`, and polls `/health`
+  for up to three minutes after starting the new container.
+
+CI note: the 0.4.0 release run pushed the image but failed the Trivy gate on
+base-image and cuda-toolkit findings; 64 of the 80 were in the Nsight Systems
+Go binary that `cuda-toolkit-12-2` installs and the service never runs. That
+is exactly what the deferred `cuda-toolkit-12-2` to `cuda-runtime-12-2` change
+in the Dockerfile header (service item 29) addresses, and it stays gated on
+GPU validation.
+
+Test suite: 127 tests, under half a second, `app.py` at 92% line coverage (was 42%).
+The routes are exercised with Flask's test client against a per-test SQLite
+file; the worker loop is tested through `worker_cycle()` and a `time.sleep`
+stub that raises to break the loop. One test-client limitation: a filename
+containing a newline is dropped by Werkzeug's multipart encoder before the
+server sees it, so the extension allowlist test uses `a.mp3.sh` instead.
+
+### Still needs GPU verification (devmachine)
+
+None of these can be observed on the Mac; check them on the first 0.5.0
+deploy before calling the release done.
+
+- Service item 3: after a job, `ls /mfa` inside the container should show
+  only `pretrained_models`. If MFA 3.4 names its working directory
+  differently from `<corpus basename>`, the `finally` removes nothing and the
+  `--clean` flag is the only thing keeping the tree bounded.
+- Service item 15: `docker inspect --format '{{.State.Health.Status}}'
+  transcription-api` should read `healthy` once the model has loaded, and
+  `/health` should stay 200 through a long job (the `worker_busy` exemption).
+- Service item 17: run `runDocker.sh` once end to end; confirm the
+  `transcription-api:rollback` tag exists afterwards and that the health poll
+  reports the JSON body rather than timing out.
+- `get_audio_duration` now shells out to `ffprobe`; confirm the upload log
+  line shows a sensible `Duration:` for an MP3 and that a corrupt upload gets
+  a 400 rather than a 500.
+
 ## 2026-09-07 - Speaker diarization removed
 
 pyannote speaker diarization and the multi-speaker MFA-skip branch in
@@ -176,3 +282,18 @@ comments?" with timings spanning 0 to 754.7 s. Environment inside the image:
 Python 3.13.14, torch 2.12.1+cu130 with CUDA available on the RTX 3060,
 ctranslate2 4.8.0 seeing one device, MFA 3.4.2.dev0 (what the v3.4.1 image tag
 actually ships), Ubuntu 20.04.5. Whole job about 3.5 minutes end to end.
+
+## 2026-09-07 - 0.5.0 validation record
+
+0.5.0-rc1, from-scratch build on the same v3.4.1 base and pins as 0.4.0, on the
+reference file tcf.20240213b.mp3: 2081 words, 2.756 words/sec, 127 timings, MFA
+aligned on the first attempt, 145 s for the five Whisper passes and 180 s end to
+end. The completed status body and the /transcriptions row both carried the
+additive fields (processing_seconds 180.0, words_per_second 2.756, attempt_count
+0, mfa_applied true). GPU-only checks: /health returned 200 six seconds after
+start and Docker reported healthy; /health showed worker_busy true with status ok
+while a job ran; zero <guid>_mfa_input directories remained under /mfa after the
+job; corrupt and wrong-extension uploads returned 400; a duplicate GUID returned
+409 in both lower and upper case; no worker sleep/wake lines in the log. The
+upstream client resubmitted its in-flight jobs within minutes of the container
+swap, as the stateless design intends.

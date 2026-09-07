@@ -45,4 +45,4 @@ def test_run_forced_alignment_always_invokes_mfa_and_falls_back_on_failure(
     result = app_module.run_forced_alignment(str(audio_path), whisper_segments, str(uuid.uuid4()))
 
     assert mfa_calls, "run_forced_alignment should always reach the MFA invocation"
-    assert result == whisper_segments
+    assert result == (whisper_segments, False)

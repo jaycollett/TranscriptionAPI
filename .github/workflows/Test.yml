@@ -1,0 +1,31 @@
+name: Test
+on:
+  push:
+  pull_request:
+  # Called by BuildAndPublish.yml so the image build depends on a green suite.
+  workflow_call:
+jobs:
+  test:
+    name: Unit tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.13"
+
+      # The tests stub torch, faster-whisper and pydub, so only the host-side
+      # tooling is installed; the GPU stack never touches the runner.
+      - name: Install dev requirements
+        run: |
+          uv venv .venv
+          uv pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: .venv/bin/ruff check .
+
+      - name: Unit tests
+        run: .venv/bin/python -m pytest tests/ -q --cov=. --cov-report=term

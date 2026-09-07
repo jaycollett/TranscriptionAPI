@@ -7,6 +7,7 @@ Covers the two production failure modes:
      forever (fixed by startup recovery).
 """
 
+import json
 import os
 import sqlite3
 import uuid
@@ -155,27 +156,21 @@ def test_recover_stuck_jobs_noop_when_none(app_module, db):
 # --------------------------------------------------------------------------------------
 # Full per-job flow via process_pending_job
 # --------------------------------------------------------------------------------------
-@pytest.fixture
-def upload_dir(tmp_path, app_module, monkeypatch):
-    """Point UPLOAD_FOLDER at a temp dir for process_pending_job file checks."""
-    monkeypatch.setitem(app_module.app.config, "UPLOAD_FOLDER", str(tmp_path))
-    return tmp_path
-
-
 def _make_audio(upload_dir, guid, filename="sermon.mp3"):
     ext = os.path.splitext(filename)[-1]
     (upload_dir / f"{guid}{ext}").write_bytes(b"fake audio")
     return filename
 
 
-def test_good_transcription_completes_and_clears_counter(app_module, db, upload_dir, monkeypatch):
-    """A successful transcription completes and resets attempt_count to 0 (never quarantined)."""
+def test_good_transcription_completes_and_keeps_attempt_history(app_module, db, upload_dir, monkeypatch):
+    """A successful transcription completes; attempt_count is kept as the retry history
+    (a completed row is terminal, so the counter can never trigger a quarantine)."""
     monkeypatch.setattr(app_module, "max_garbage_retries", 3)
     monkeypatch.setattr(
         app_module, "transcribe_audio",
         lambda path, guid: {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS},
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: GOOD_TIMINGS)
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
 
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
@@ -187,7 +182,7 @@ def test_good_transcription_completes_and_clears_counter(app_module, db, upload_
     assert status == "completed"
     row = get_row(db, guid)
     assert row["status"] == "completed"
-    assert row["attempt_count"] == 0
+    assert row["attempt_count"] == 2
     assert row["transcription"] == GOOD_TEXT
     assert row["timings"] is not None
     assert row["completed_at"] is not None
@@ -223,8 +218,36 @@ def test_process_missing_file_marks_error(app_module, db, upload_dir, monkeypatc
     assert get_row(db, guid)["status"] == "error"
 
 
-def test_process_whisper_exception_marks_error(app_module, db, upload_dir, monkeypatch):
-    """A transcription exception marks the job 'error' (does not loop forever)."""
+def test_process_whisper_exception_retries_then_succeeds(app_module, db, upload_dir, monkeypatch):
+    """A transient exception (CUDA OOM) requeues the job; a later run can still complete it."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    calls = []
+
+    def flaky(path, guid):
+        calls.append(guid)
+        if len(calls) <= 2:
+            raise RuntimeError("CUDA out of memory")
+        return {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS}
+
+    monkeypatch.setattr(app_module, "transcribe_audio", flaky)
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+    cur = db.cursor()
+
+    assert app_module.process_pending_job(cur, guid, filename) == "pending"
+    assert get_row(db, guid)["attempt_count"] == 1
+    assert app_module.process_pending_job(cur, guid, filename) == "pending"
+    assert get_row(db, guid)["attempt_count"] == 2
+    assert app_module.process_pending_job(cur, guid, filename) == "completed"
+    assert get_row(db, guid)["status"] == "completed"
+
+
+def test_process_whisper_exception_marks_error_after_cap(app_module, db, upload_dir, monkeypatch):
+    """A deterministic crash still terminates: 'error' once the retry cap is reached."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+
     def boom(path, guid):
         raise RuntimeError("CUDA out of memory")
 
@@ -232,8 +255,90 @@ def test_process_whisper_exception_marks_error(app_module, db, upload_dir, monke
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
     insert_job(db, guid, filename=filename, status="pending")
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "error"
-    assert get_row(db, guid)["status"] == "error"
+    cur = db.cursor()
+
+    assert app_module.process_pending_job(cur, guid, filename) == "pending"
+    assert app_module.process_pending_job(cur, guid, filename) == "pending"
+    assert app_module.process_pending_job(cur, guid, filename) == "error"
+    row = get_row(db, guid)
+    assert row["status"] == "error"
+    assert row["attempt_count"] == 3
+    assert row["completed_at"] is not None
+
+
+def test_failure_is_counted_once_when_the_inner_handler_raises(app_module, db, upload_dir, monkeypatch):
+    """If the inner handler moved the row on and then raised, the outer handler
+    must not count the same failure a second time."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    real_handler = app_module.handle_transient_failure
+
+    def handler_that_raises_after_writing(cursor, guid, reason):
+        real_handler(cursor, guid, reason)
+        raise RuntimeError("database hiccup after the update")
+
+    monkeypatch.setattr(app_module, "handle_transient_failure", handler_that_raises_after_writing)
+
+    def boom(path, guid):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(app_module, "transcribe_audio", boom)
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert get_row(db, guid)["attempt_count"] == 1
+
+
+def test_empty_alignment_falls_back_to_whisper_timings(app_module, db, upload_dir, monkeypatch):
+    """An alignment that returns nothing is not a garbage attempt: the job completes on
+    Whisper's own timings and attempt_count is untouched."""
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {"transcription": _prose(250), "timings": GOOD_TIMINGS, "duration_sec": 100.0},
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: ([], False))
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending", attempt_count=0)
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    row = get_row(db, guid)
+    assert row["attempt_count"] == 0
+    assert json.loads(row["timings"]) == GOOD_TIMINGS
+    assert row["mfa_applied"] == 0
+
+
+def test_completed_row_records_metrics(app_module, db, upload_dir, monkeypatch):
+    """processing_seconds, words_per_second and mfa_applied are stored on completion."""
+    words = int(100 * 2.5)
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {"transcription": _prose(words), "timings": GOOD_TIMINGS, "duration_sec": 100.0},
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    row = get_row(db, guid)
+    assert row["words_per_second"] == pytest.approx(2.5)
+    assert row["processing_seconds"] is not None and row["processing_seconds"] >= 0
+    assert row["mfa_applied"] == 1
+
+
+def test_uppercase_extension_is_found_on_disk(app_module, db, upload_dir, monkeypatch):
+    """The upload saves <guid><ext lowercased>; the worker must look for the same name."""
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS},
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    guid = str(uuid.uuid4())
+    (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
+    insert_job(db, guid, filename="Sermon.MP3", status="pending")
+    assert app_module.process_pending_job(db.cursor(), guid, "Sermon.MP3") == "completed"
 
 
 # --------------------------------------------------------------------------------------
@@ -253,7 +358,7 @@ def _stub_transcription(app_module, monkeypatch, word_count, duration_sec):
             "duration_sec": duration_sec,
         },
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: GOOD_TIMINGS)
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
 
 
 def test_low_word_rate_on_long_file_is_requeued(app_module, db, upload_dir, monkeypatch):

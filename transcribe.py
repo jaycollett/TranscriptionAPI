@@ -1,16 +1,16 @@
 import os
 import logging
 import warnings
+import threading
 import torch # type: ignore
 import math
 import numpy as np  # type: ignore
 import json
 import re
-import string
 from faster_whisper import WhisperModel # type: ignore
 from pydub import AudioSegment # type: ignore
+from pydub.utils import mediainfo # type: ignore
 import time
-from functools import lru_cache
 
 # Set audio file location from environment variable or default to /tmp/audio_files
 upload_folder = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
@@ -33,9 +33,26 @@ compute_type = "float16" if device == "cuda" else "float32"
 logger.info(f"Running Faster-Whisper on {device.upper()} with compute type {compute_type}")
 
 # Sentinel variable to ensure the model is loaded only once and reused
-import threading
 _whisper_model = None
 _model_lock = threading.Lock()
+
+# Processing speed factor: seconds of audio per unit of the estimate formula.
+# Calibrated to the five-pass decode; see docs/PUNCHLIST.md (pipeline item 16).
+PROCESSING_SPEED_FACTOR = 15.1
+
+
+def whisper_model_loaded():
+    """True once load_whisper_model() has completed; used by the /health endpoint."""
+    return _whisper_model is not None
+
+
+def estimate_processing_seconds(duration_sec):
+    """Estimated wall-clock seconds to transcribe duration_sec of audio.
+
+    One formula shared by /upload (the ETA the client is given) and the
+    transcription log line, so the two can never drift apart.
+    """
+    return math.ceil(float(duration_sec) / PROCESSING_SPEED_FACTOR) * 5 + 45
 
 def load_whisper_model():
     """Load the Faster-Whisper model once and reuse it."""
@@ -81,7 +98,6 @@ def clean_boundary_duplicates(text):
     Remove duplicated phrases that might occur at segment boundaries.
     Finds word sequences (2+ words) that repeat with optional spacing/punctuation between.
     """
-    import re
     # Find word sequences that repeat (with at least 2 words)
     pattern = r'\b(\w+\s+\w+(?:\s+\w+){0,3})[.,;!?\s]*\1\b'
     
@@ -140,9 +156,23 @@ def temperature_ladder(base, step=0.2):
     return tuple(steps)
 
 
-@lru_cache(maxsize=1)
 def get_audio_duration(file_path):
-    """Return the duration of the audio file in seconds without modifying it."""
+    """Return the duration of the audio file in seconds without modifying it.
+
+    Reads the container header through ffprobe (pydub's mediainfo), which is
+    instant and allocates nothing; decoding a 46 minute stereo MP3 to PCM just to
+    measure it costs roughly 490 MB. The full decode is kept only as a fallback
+    for files whose header carries no duration, and it raises on undecodable
+    input so callers can reject the file.
+    """
+    try:
+        info = mediainfo(file_path) or {}
+        duration = info.get("duration")
+        if duration not in (None, "", "N/A"):
+            return float(duration)
+        logger.warning(f"ffprobe reported no duration for {file_path}; decoding to measure it")
+    except Exception as e:
+        logger.warning(f"ffprobe duration lookup failed for {file_path}: {e}; decoding to measure it")
     audio = AudioSegment.from_file(file_path)
     return len(audio) / 1000.0  # Convert milliseconds to seconds
 
@@ -156,8 +186,7 @@ def transcribe_audio(file_path, guid):
 
     try:
         duration_sec = get_audio_duration(file_path)
-        psf = 15.1  # Processing speed factor
-        estimated_processing_time = math.ceil(duration_sec / psf) * 5 + 45
+        estimated_processing_time = estimate_processing_seconds(duration_sec)
         logger.info(f"Audio duration: {duration_sec:.2f} seconds. Estimated processing time: ~{estimated_processing_time/60:.2f} min")
     except Exception as e:
         logger.warning(f"Could not calculate estimated processing time: {e}")
@@ -345,15 +374,8 @@ def transcribe_audio(file_path, guid):
                 "text": seg.text.strip()
             })
 
-    # Save the transcript file (a single line) for MFA.
-    transcript_output_path = os.path.join(upload_folder, f"{guid}.txt")
-    try:
-        with open(transcript_output_path, "w") as transcript_file:
-            transcript_file.write(final_transcript)
-    except Exception as e:
-        logger.error(f"Failed to write transcript to {transcript_output_path}: {e}")
-        return {"transcription": "", "timings": [], "duration_sec": duration_sec}
-
+    # The MFA transcript file is written by app.run_forced_alignment from the
+    # returned timings; nothing here needs to touch the upload folder.
     total_time = time.time() - start_time
     logger.info(f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds")
 
