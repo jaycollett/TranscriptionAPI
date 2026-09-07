@@ -21,7 +21,21 @@ PORT=5031
 SWEEP_ROOT=/home/jay/sweep
 SERVICE_DIR="${SWEEP_ROOT}/service"
 OUT_DIR="${SWEEP_ROOT}/run"
+REPEAT_DIR="${SWEEP_ROOT}/repeat"
 AUDIO_DIR=/home/jay/SourceCode/SermonPreprocessorAPI/data/audiofiles
+
+# Determinism probe. The decode is not bit-reproducible on longer files, and the rescue
+# trigger is a threshold on anomaly counts, so a run-to-run flip could change whether a
+# file takes the rescue path. These five span 238 s to 3388 s and include the 1369 s file
+# the engineer measured and the quiet file on the 0.35 VAD branch. Each is submitted once
+# more here; the pair is the main run's result against this one.
+REPEAT_FILES=(
+    tcf.20240301a.mp3
+    tcf.20240213b.mp3
+    tcf.20240319b.mp3
+    tcf.20240116.mp3
+    women_retreat_2025_session3.mp3
+)
 MIN_GPU_FREE_MIB=4096
 MIN_DISK_FREE_GB=8
 HEALTH_TIMEOUT_SEC=300
@@ -51,7 +65,7 @@ if [ "${free_gb}" -lt "${MIN_DISK_FREE_GB}" ]; then
 fi
 echo "GPU 0 free: ${free_mib} MiB. Disk free: ${free_gb} GB."
 
-mkdir -p "${SERVICE_DIR}/uploads" "${OUT_DIR}"
+mkdir -p "${SERVICE_DIR}/uploads" "${OUT_DIR}" "${REPEAT_DIR}"
 
 # A private MFA_ROOT_DIR has to be seeded with the image's pretrained models. MFA
 # resolves `english_mfa` under $MFA_ROOT_DIR/pretrained_models, so an empty root makes
@@ -108,6 +122,21 @@ python3 "${HERE}/runner.py" \
     --poll-interval 10 \
     --scratch-dir "${SERVICE_DIR}/uploads" \
     --scratch-dir "${SERVICE_DIR}/mfa_root"
+
+repeat_args=()
+for name in "${REPEAT_FILES[@]}"; do
+    repeat_args+=(--only "${name}")
+done
+python3 "${HERE}/runner.py" \
+    --file-list "${HERE}/file_list.json" \
+    --audio-dir "${AUDIO_DIR}" \
+    --base-url "http://127.0.0.1:${PORT}" \
+    --out-dir "${REPEAT_DIR}" \
+    --poll-interval 10 \
+    --no-supplementary \
+    --scratch-dir "${SERVICE_DIR}/uploads" \
+    --scratch-dir "${SERVICE_DIR}/mfa_root" \
+    "${repeat_args[@]}"
 
 python3 "${HERE}/analyze.py" \
     --results "${OUT_DIR}/state.json" \

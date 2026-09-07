@@ -20,6 +20,8 @@ if SWEEP_DIR not in sys.path:
     sys.path.insert(0, SWEEP_DIR)
 
 import analyze  # noqa: E402
+import determinism  # noqa: E402
+import legacy_eras  # noqa: E402
 import runner  # noqa: E402
 import select_files  # noqa: E402
 import strata  # noqa: E402
@@ -377,8 +379,11 @@ def test_multipart_body_carries_the_guid_and_the_file():
 
 
 def test_timing_stats_detect_overlap_and_regression_in_order():
-    good = [{"start": 0.0, "end": 1.0, "text": "a"}, {"start": 1.0, "end": 2.0, "text": "b"}]
-    assert runner.timing_stats(good) == {"count": 2, "non_monotonic": 0, "overlaps": 0}
+    good = [{"start": 0.0, "end": 1.0, "text": "a"}, {"start": 1.0, "end": 3.0, "text": "b"}]
+    stats = runner.timing_stats(good)
+    assert stats["count"] == 2 and stats["non_monotonic"] == 0 and stats["overlaps"] == 0
+    assert stats["seg_mean_s"] == pytest.approx(1.5)
+    assert stats["seg_max_s"] == pytest.approx(2.0)
     bad = [{"start": 0.0, "end": 2.0, "text": "a"}, {"start": 1.0, "end": 3.0, "text": "b"},
            {"start": 0.5, "end": 4.0, "text": "c"}]
     stats = runner.timing_stats(bad)
@@ -430,3 +435,196 @@ def test_scratch_sweep_is_a_no_op_without_scratch_dirs(tmp_path):
     out.mkdir()
     r = runner.Runner("http://127.0.0.1:1", str(tmp_path), str(out))
     assert r.sweep_scratch("any-guid") == 0
+
+
+# --- rescue, level table and the cutover view --------------------------------------------
+
+
+def test_rescue_detail_lists_selected_files_with_their_delta():
+    rows = analyze.build_rows(fixture_state(), fixture_baseline(), fixture_file_list())
+    detail = analyze.rescue_detail(rows)
+    assert detail["attempted"] == ["drop.mp3", "quiet.mp3"]
+    assert [r["file"] for r in detail["selected"]] == ["drop.mp3"]
+    assert detail["selected"][0]["word_delta"] == -100
+    assert detail["selected"][0]["word_delta_pct"] == pytest.approx(-0.10)
+
+
+def test_rescue_detail_is_empty_when_the_field_is_absent():
+    state = {"files": {"a.mp3": {"file": "a.mp3", "outcome": "completed", "duration_s": 10,
+                                 "payload": {}, "derived": {"words": 10, "wps": 1.0,
+                                                            "timings": {}}}}}
+    baseline = {"a.mp3": {"words": 10, "wps": 1.0, "transcription_finished_at": "2025-03-06"}}
+    file_list = {"files": [{"file": "a.mp3", "duration_s": 10, "mean_dbfs": -20.0,
+                            "level_bucket": "normal", "duration_bucket": "short",
+                            "legacy_era": "E1_0.1.5", "reasons": [], "multi_voice": False}],
+                 "supplementary": []}
+    rows = analyze.build_rows(state, baseline, file_list)
+    detail = analyze.rescue_detail(rows)
+    assert detail["attempted"] == [] and detail["selected"] == []
+
+
+def test_level_table_carries_segment_geometry():
+    state = fixture_state()
+    state["files"]["quiet.mp3"]["derived"]["timings"] = {
+        "count": 900, "non_monotonic": 0, "overlaps": 0, "text_matches": True,
+        "seg_mean_s": 1.2, "seg_max_s": 4.0,
+    }
+    rows = analyze.build_rows(state, fixture_baseline(), fixture_file_list())
+    table = {(e["dbfs_lo"], e["dbfs_hi"]): e for e in analyze.level_table(rows)}
+    quiet = table[(-29, -28)]
+    assert quiet["segments_median"] == 900
+    assert quiet["seg_mean_s_median"] == pytest.approx(1.2)
+    assert quiet["words_total"] == 1400
+
+
+def test_cutover_view_splits_on_the_edge_and_the_straddling_band():
+    rows = analyze.build_rows(fixture_state(), fixture_baseline(), fixture_file_list())
+    # Move two files into the band straddling the edge, one each side.
+    rows[0]["mean_dbfs"] = -25.0
+    rows[1]["mean_dbfs"] = -27.0
+    view = analyze.cutover_view(rows)
+    assert view["edge_dbfs"] == -26.0
+    below, above = view["arms"]
+    assert below["files"] == 2  # quiet.mp3 at -29 and the file moved to -27
+    assert above["files"] == 2
+    band_below, band_above = view["straddling_band"]
+    assert band_below["files"] == 1  # -27 is inside -28 to -26; -29 is not
+    assert band_above["files"] == 1  # -25 is inside -26 to -24; -20 is not
+
+
+def test_cutover_view_ignores_files_with_no_level():
+    rows = analyze.build_rows(fixture_state(), fixture_baseline(), fixture_file_list())
+    for row in rows:
+        row["mean_dbfs"] = None
+    view = analyze.cutover_view(rows)
+    assert view["arms"][0]["files"] == 0 and view["arms"][1]["files"] == 0
+
+
+# --- determinism -------------------------------------------------------------------------
+
+
+def det_record(name, words, anomaly, rescue_attempted, rescue_selected, duration=1000,
+               segments=100):
+    return {
+        "file": name,
+        "duration_s": duration,
+        "outcome": "completed",
+        "payload": {
+            "anomaly_count": anomaly,
+            "attempt_count": 1,
+            "processing_seconds": 50.0,
+            "rescue_attempted": rescue_attempted,
+            "rescue_selected": rescue_selected,
+            "mfa_applied": True,
+        },
+        "derived": {"words": words, "wps": words / duration,
+                    "timings": {"count": segments, "seg_mean_s": 6.0}},
+    }
+
+
+def test_pair_reports_spreads_and_no_flip_when_the_runs_agree():
+    row = determinism.pair(
+        det_record("a.mp3", 3599, 0, False, False),
+        det_record("a.mp3", 3598, 0, False, False),
+    )
+    assert row["word_spread"] == -1
+    assert row["word_spread_pct"] == pytest.approx(-1 / 3599, abs=1e-5)
+    assert row["anomaly_count_spread"] == 0
+    assert row["rescue_decision_changed"] is False
+
+
+def test_pair_flags_a_changed_rescue_decision():
+    row = determinism.pair(
+        det_record("a.mp3", 3599, 1, True, True),
+        det_record("a.mp3", 3560, 0, False, False),
+    )
+    assert row["rescue_attempted_flipped"] is True
+    assert row["rescue_selected_flipped"] is True
+    assert row["rescue_decision_changed"] is True
+    assert row["anomaly_count_spread"] == -1
+
+
+def test_pair_leaves_flip_unknown_when_a_field_is_absent():
+    a = det_record("a.mp3", 10, 0, False, False)
+    b = det_record("a.mp3", 10, 0, False, False)
+    del a["payload"]["rescue_attempted"]
+    row = determinism.pair(a, b)
+    assert row["rescue_attempted_flipped"] is None
+    assert row["rescue_decision_changed"] is False
+
+
+def test_compare_summarises_over_the_shared_files():
+    state_a = {"files": {
+        "a.mp3": det_record("a.mp3", 1000, 0, False, False, duration=500),
+        "b.mp3": det_record("b.mp3", 3599, 2, True, True, duration=1369),
+        "only_a.mp3": det_record("only_a.mp3", 10, 0, False, False),
+    }}
+    state_b = {"files": {
+        "a.mp3": det_record("a.mp3", 1000, 0, False, False, duration=500),
+        "b.mp3": det_record("b.mp3", 3585, 0, False, False, duration=1369),
+    }}
+    result = determinism.compare(state_a, state_b)
+    assert result["pairs"] == 2
+    assert result["max_abs_word_spread"] == 14
+    assert result["max_abs_anomaly_spread"] == 2
+    assert result["rescue_decision_changed"] == 1
+    text = determinism.render_markdown(result)
+    assert "b.mp3" in text and "only_a.mp3" not in text
+
+
+def test_text_digest_reads_the_transcript_when_present(tmp_path):
+    directory = tmp_path / "transcripts"
+    directory.mkdir()
+    (directory / "a.txt").write_text("Hello, there!")
+    (directory / "b.txt").write_text("hello there")
+    first = determinism.text_digest(str(directory), "a.mp3")
+    second = determinism.text_digest(str(directory), "b.mp3")
+    assert first == second  # normalisation makes punctuation and case irrelevant
+    assert determinism.text_digest(str(directory), "missing.mp3") is None
+    assert determinism.text_digest(None, "a.mp3") is None
+
+
+# --- legacy era comparison ----------------------------------------------------------------
+
+
+def era_rows():
+    rows = []
+    for i in range(6):
+        rows.append(make_row(f"e1_{i}.mp3", 1000, -20.0, era_ts="2025-03-06", wps=2.8))
+    for i in range(6):
+        rows.append(make_row(f"e2_{i}.mp3", 1000, -20.0, era_ts="2025-06-01", wps=2.6))
+    for i in range(2):
+        rows.append(make_row(f"e4_{i}.mp3", 1000, -20.0, era_ts="2026-09-07", wps=3.0))
+    return rows
+
+
+def test_arms_drop_every_era_that_is_not_being_compared():
+    single, multi = legacy_eras.arms(era_rows())
+    assert len(single) == 6 and len(multi) == 6
+    assert all(r["legacy_era"] == "E1_0.1.5" for r in single)
+
+
+def test_raw_comparison_reports_the_median_difference_and_the_covariates():
+    raw = legacy_eras.raw_comparison(era_rows())
+    assert raw["single_pass"]["n"] == 6 and raw["multi_pass"]["n"] == 6
+    assert raw["median_difference"] == pytest.approx(0.2, abs=1e-3)
+    assert raw["covariates"]["single_pass_duration_median"] == 1000
+
+
+def test_stratified_comparison_pools_only_cells_with_both_arms():
+    rows = era_rows()
+    # A cell with one multi-pass file must not contribute.
+    rows.append(make_row("lonely.mp3", 3000, -29.0, era_ts="2025-06-01", wps=1.0))
+    result = legacy_eras.stratified_comparison(rows)
+    assert result["usable_cells"] == 1
+    assert result["pooled_difference"] == pytest.approx(0.2, abs=1e-3)
+    assert result["cells_favouring_single_pass"] == 1
+    lonely = [c for c in result["cells"] if c["duration_bucket"] == "very_long"][0]
+    assert lonely["usable"] is False and lonely["difference"] is None
+
+
+def test_stratified_comparison_handles_no_usable_cells():
+    rows = [make_row("a.mp3", 1000, -20.0, era_ts="2025-03-06")]
+    result = legacy_eras.stratified_comparison(rows)
+    assert result["usable_cells"] == 0
+    assert result["pooled_difference"] is None

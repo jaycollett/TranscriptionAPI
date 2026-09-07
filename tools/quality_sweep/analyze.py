@@ -167,6 +167,8 @@ def build_rows(state, baseline, file_list):
             "wall_s": record.get("wall_s"),
             "vad_branch_expected": vad_branch(entry.get("mean_dbfs")),
             "timings": derived.get("timings") or {},
+            "segments": (derived.get("timings") or {}).get("count"),
+            "seg_mean_s": (derived.get("timings") or {}).get("seg_mean_s"),
         }
         for field in ADDITIVE_FIELDS:
             row[field] = payload.get(field, None)
@@ -192,6 +194,35 @@ def regressions(rows, tolerance=REGRESSION_TOLERANCE):
     ]
     out.sort(key=lambda r: r["word_delta_pct"])
     return out
+
+
+def rescue_detail(rows):
+    """Every file the rescue pass was selected on, with the word delta it produced.
+
+    The rescue re-decodes once with previous-text conditioning off and is kept only if it
+    retains at least 99 percent of the primary's words, so a selected rescue should never
+    cost more than one percent. The delta reported here is against the legacy baseline,
+    which is what the reader can act on; `words` is the absolute count for tracing.
+    """
+    attempted = [r for r in rows if r.get("rescue_attempted_present") and r.get("rescue_attempted")]
+    selected = [r for r in rows if r.get("rescue_selected_present") and r.get("rescue_selected")]
+    return {
+        "attempted": [r["file"] for r in attempted],
+        "selected": [
+            {
+                "file": r["file"],
+                "duration_s": r["duration_s"],
+                "mean_dbfs": r["mean_dbfs"],
+                "anomaly_count": r.get("anomaly_count"),
+                "legacy_words": r["legacy_words"],
+                "words": r["new_words"],
+                "word_delta": r["word_delta"],
+                "word_delta_pct": r["word_delta_pct"],
+            }
+            for r in sorted(selected, key=lambda r: (r["word_delta_pct"] is None,
+                                                     r["word_delta_pct"] or 0))
+        ],
+    }
 
 
 def rate(rows, field):
@@ -262,6 +293,9 @@ def summarise_population(rows):
         },
         "rescue_attempted": rate(rows, "rescue_attempted"),
         "rescue_selected": rate(rows, "rescue_selected"),
+        "rescue_detail": rescue_detail(rows),
+        "segments": distribution([r.get("segments") for r in completed(rows)], digits=1),
+        "seg_mean_s": distribution([r.get("seg_mean_s") for r in completed(rows)]),
         "mfa_applied": rate(rows, "mfa_applied"),
         "attempt_count": counter_of(rows, "attempt_count"),
         "anomaly_count": counter_of(rows, "anomaly_count"),
@@ -301,6 +335,13 @@ def level_table(rows, lo=LEVEL_TABLE_LO, hi=LEVEL_TABLE_HI):
             "legacy_wps_median": percentile([r["legacy_wps"] for r in comp], 50),
             "new_wps_median": percentile([r["new_wps"] for r in comp], 50),
             "word_delta_pct_median": percentile([r["word_delta_pct"] for r in comp], 50),
+            "words_total": sum(r["new_words"] or 0 for r in completed(members)),
+            "segments_median": percentile(
+                [r.get("segments") for r in completed(members)], 50
+            ),
+            "seg_mean_s_median": percentile(
+                [r.get("seg_mean_s") for r in completed(members)], 50
+            ),
             "regressions": len(regressions(members)),
             "anomaly_count_mean": (
                 round(sum(r["anomaly_count"] or 0 for r in members
@@ -313,6 +354,51 @@ def level_table(rows, lo=LEVEL_TABLE_LO, hi=LEVEL_TABLE_HI):
     if buckets.get("unknown"):
         table.append({"dbfs_lo": None, "dbfs_hi": None, "files": len(buckets["unknown"])})
     return table
+
+
+def cutover_view(rows, edge=VAD_CUTOVER_DBFS, band=2.0):
+    """Aggregates either side of the VAD cutover, and in the band straddling it.
+
+    The question the sweep exists to answer is whether -26 dBFS is in the right place.
+    The two arms say whether the profiles behave differently at all; the two halves of
+    the straddling band say whether the edge is drawn where the behaviour changes. A
+    profile that shreds quiet audio shows up as a collapse in `seg_mean_s_median` and a
+    jump in `segments_median`, which is exactly what the 0.5 threshold did on the
+    retreat file before the level-selected profile existed.
+    """
+    def summarise(members, label):
+        comp = comparable(members)
+        return {
+            "label": label,
+            "files": len(members),
+            "completed": len(completed(members)),
+            "word_delta_pct_median": percentile([r["word_delta_pct"] for r in comp], 50),
+            "new_wps_median": percentile([r["new_wps"] for r in comp], 50),
+            "segments_median": percentile([r.get("segments") for r in completed(members)], 50),
+            "seg_mean_s_median": percentile([r.get("seg_mean_s") for r in completed(members)], 50),
+            "anomaly_count_median": percentile(
+                [r["anomaly_count"] for r in members if r.get("anomaly_count_present")], 50
+            ),
+            "rescue_attempted_rate": rate(members, "rescue_attempted")["rate"],
+            "regressions": len(regressions(members)),
+        }
+
+    known = [r for r in rows if r.get("mean_dbfs") is not None]
+    below = [r for r in known if r["mean_dbfs"] < edge]
+    at_or_above = [r for r in known if r["mean_dbfs"] >= edge]
+    band_below = [r for r in below if r["mean_dbfs"] >= edge - band]
+    band_above = [r for r in at_or_above if r["mean_dbfs"] < edge + band]
+    return {
+        "edge_dbfs": edge,
+        "arms": [
+            summarise(below, f"below {edge} dBFS (quiet profile)"),
+            summarise(at_or_above, f"at or above {edge} dBFS (loud profile)"),
+        ],
+        "straddling_band": [
+            summarise(band_below, f"{edge - band} to {edge} dBFS (quiet profile)"),
+            summarise(band_above, f"{edge} to {edge + band} dBFS (loud profile)"),
+        ],
+    }
 
 
 def analyse(state, baseline, file_list):
@@ -351,6 +437,7 @@ def analyse(state, baseline, file_list):
         "legacy_wps_split": split,
         "populations": populations,
         "level_table": level_table(rows),
+        "cutover": cutover_view(rows),
         "duration_buckets": {
             bucket: summarise_population([r for r in rows if r["duration_bucket"] == bucket])
             for bucket in sorted({r["duration_bucket"] for r in rows if r["duration_bucket"]})
@@ -440,28 +527,82 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     )
     out.append("")
     headers = [
-        "dBFS", "branch", "files", "completed", "legacy wps", "new wps",
-        "delta pct", "regressions", "anomaly mean", "flagged",
+        "dBFS", "profile", "files", "done", "words", "legacy wps", "new wps",
+        "delta pct", "segments", "seg mean s", "anomaly mean", "regr", "flagged",
     ]
     body = []
     for entry in analysis["level_table"]:
         if entry.get("dbfs_lo") is None:
-            body.append(["unknown", "-", str(entry["files"]), "-", "-", "-", "-", "-", "-", "-"])
+            body.append(["unknown", "-", str(entry["files"])] + ["-"] * 10)
             continue
         body.append([
             f"{entry['dbfs_lo']} to {entry['dbfs_hi']}",
-            _fmt(entry["vad_branch_expected"], 2),
+            "quiet" if not entry["at_or_above_cutover"] else "loud",
             str(entry["files"]),
             str(entry["completed"]),
+            str(entry["words_total"]),
             _fmt(entry["legacy_wps_median"]),
             _fmt(entry["new_wps_median"]),
             _fmt(entry["word_delta_pct_median"], 4),
-            str(entry["regressions"]),
+            _fmt(entry["segments_median"], 0),
+            _fmt(entry["seg_mean_s_median"], 2),
             _fmt(entry["anomaly_count_mean"]),
+            str(entry["regressions"]),
             str(entry["files_flagged"]),
         ])
     out.append(_table(headers, body))
     out.append("")
+
+    out.append("### Either side of the cutover")
+    out.append("")
+    headers = [
+        "arm", "files", "done", "delta pct", "new wps", "segments", "seg mean s",
+        "anomaly", "rescue rate", "regr",
+    ]
+    body = []
+    for group in ("arms", "straddling_band"):
+        for arm in analysis["cutover"][group]:
+            body.append([
+                arm["label"],
+                str(arm["files"]),
+                str(arm["completed"]),
+                _fmt(arm["word_delta_pct_median"], 4),
+                _fmt(arm["new_wps_median"]),
+                _fmt(arm["segments_median"], 0),
+                _fmt(arm["seg_mean_s_median"], 2),
+                _fmt(arm["anomaly_count_median"], 1),
+                _fmt(arm["rescue_attempted_rate"]),
+                str(arm["regressions"]),
+            ])
+    out.append(_table(headers, body))
+    out.append("")
+
+    detail = analysis["populations"]["overall"]["rescue_detail"]
+    out.append("## Rescue pass")
+    out.append("")
+    out.append(
+        f"Attempted on {len(detail['attempted'])} files, selected on "
+        f"{len(detail['selected'])}."
+    )
+    out.append("")
+    if detail["selected"]:
+        headers = ["file", "dur s", "dBFS", "anomaly", "legacy words", "words",
+                   "delta", "delta pct"]
+        body = [
+            [
+                row["file"],
+                _fmt(row["duration_s"], 0),
+                _fmt(row["mean_dbfs"], 1),
+                _fmt(row["anomaly_count"], 0),
+                _fmt(row["legacy_words"], 0),
+                _fmt(row["words"], 0),
+                _fmt(row["word_delta"], 0),
+                _fmt(row["word_delta_pct"], 4),
+            ]
+            for row in detail["selected"]
+        ]
+        out.append(_table(headers, body))
+        out.append("")
 
     regressed = analysis["populations"]["overall"]["regressions"]["files"]
     out.append("## Regressions to read by hand")
@@ -479,7 +620,8 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     out.append("")
     headers = [
         "file", "outcome", "dur s", "dBFS", "era", "legacy words", "new words",
-        "delta pct", "legacy wps", "new wps", "wall s", "anomaly", "flags", "mfa", "attempts",
+        "delta pct", "legacy wps", "new wps", "segs", "seg mean s", "wall s", "anomaly",
+        "resc a/s", "flags", "mfa", "attempts",
     ]
     body = []
     for row in sorted(analysis["rows"], key=lambda r: (r["word_delta_pct"] is None,
@@ -496,8 +638,11 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
             _fmt(row["word_delta_pct"], 4),
             _fmt(row["legacy_wps"]),
             _fmt(row["new_wps"]),
+            _fmt(row.get("segments"), 0),
+            _fmt(row.get("seg_mean_s"), 2),
             _fmt(row["wall_s"], 1),
             _fmt(row["anomaly_count"], 0),
+            f"{row.get('rescue_attempted')}/{row.get('rescue_selected')}",
             str(len(flags)) if isinstance(flags, list) else "-",
             _fmt(row["mfa_applied"], 0),
             _fmt(row["attempt_count"], 0),

@@ -121,15 +121,27 @@ def request_json(url, data=None, content_type=None, timeout=120):
 
 
 def timing_stats(timings):
-    """Structural checks on the timings list that do not need the audio."""
+    """Structural checks and segment geometry, neither of which needs the audio.
+
+    Segment count and mean length are what tell the level table whether a VAD profile
+    shredded a quiet file: the 2026-09-07 harness saw threshold 0.5 with a 1000 ms
+    minimum silence turn 435 segments of 7.7 s mean into 2171 of 1.4 s on the retreat
+    file, and that is the failure the level-selected profile exists to avoid.
+    """
     if not isinstance(timings, list) or not timings:
-        return {"count": 0, "non_monotonic": None, "overlaps": None, "text_matches": None}
+        return {"count": 0, "non_monotonic": None, "overlaps": None, "text_matches": None,
+                "seg_mean_s": None, "seg_max_s": None}
     starts, ends = [], []
     for entry in timings:
         if not isinstance(entry, dict):
             continue
         starts.append(entry.get("start"))
         ends.append(entry.get("end"))
+    spans = [
+        end - start
+        for start, end in zip(starts, ends)
+        if start is not None and end is not None and end >= start
+    ]
     non_monotonic = sum(
         1
         for i in range(1, len(starts))
@@ -140,7 +152,13 @@ def timing_stats(timings):
         for i in range(1, len(starts))
         if starts[i] is not None and ends[i - 1] is not None and starts[i] < ends[i - 1]
     )
-    return {"count": len(timings), "non_monotonic": non_monotonic, "overlaps": overlaps}
+    return {
+        "count": len(timings),
+        "non_monotonic": non_monotonic,
+        "overlaps": overlaps,
+        "seg_mean_s": round(sum(spans) / len(spans), 3) if spans else None,
+        "seg_max_s": round(max(spans), 3) if spans else None,
+    }
 
 
 def summarise(payload, duration_s):
