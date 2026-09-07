@@ -3,7 +3,7 @@ import logging
 import warnings
 import torch # type: ignore
 import math
-import numpy as np # type: ignore # type: ignore
+import numpy as np  # type: ignore
 import json
 import re
 import string
@@ -127,10 +127,11 @@ def temperature_ladder(base, step=0.2):
     collapse this service was producing. Above 0.5 faster-whisper also resets the
     previous-text prompt, which breaks any repetition loop already under way.
 
-    The ladder runs from `base` up to 1.0 inclusive.
+    The ladder runs from `base` up to 1.0 inclusive; `base` is clamped to [0.0, 1.0].
     """
+    base = min(max(float(base), 0.0), 1.0)
     steps = []
-    t = float(base)
+    t = base
     while t < 1.0 + 1e-9:
         steps.append(round(t, 2))
         t += step

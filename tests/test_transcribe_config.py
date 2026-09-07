@@ -82,6 +82,15 @@ def test_temperature_ladder_at_ceiling_is_not_empty(transcribe_module):
     assert transcribe_module.temperature_ladder(1.0) == (1.0,)
 
 
+def test_temperature_ladder_clamps_out_of_range_base(transcribe_module):
+    """Whisper temperatures live in [0, 1]; a bad base must not produce a bad ladder."""
+    assert transcribe_module.temperature_ladder(1.2) == (1.0,)
+    low = transcribe_module.temperature_ladder(-0.2)
+    assert low[0] == pytest.approx(0.0)
+    assert low[-1] == pytest.approx(1.0)
+    assert all(0.0 <= t <= 1.0 for t in low)
+
+
 # --------------------------------------------------------------------------------------
 # Defects 1 and 2: what actually reaches model.transcribe()
 # --------------------------------------------------------------------------------------
