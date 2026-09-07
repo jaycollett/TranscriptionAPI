@@ -694,3 +694,75 @@ threshold forced rather than by waiting for it to fire. And RC060's pre-dedupe
 word count equals C4's exactly on all five loud files, which is the cleanest
 evidence that the decode is unchanged from the measured configuration and only
 the boundary de-duplication differs.
+
+
+## 2026-09-07 - 0.6.0: the 100-file corpus sweep
+
+The six reference files chose the design; the sweep is what tested it. Headline
+results across the corpus: **median word delta +0.18 percent** against the legacy
+transcripts over 99 files, with two regressions, both above 2.5 words per second
+over speech and neither related to a trim. The legacy low-rate tail, the material
+the whole rewrite was for, improved by 1.46 percent. Alignment applied on **100
+percent** of files, every one on the first attempt, against a legacy path that
+failed outright on one of six reference files. The rescue fired on 5 percent of
+files and was kept on 4 percent. Five of five repeat submissions came back
+byte-identical, including the file that varied between runs during reference
+testing.
+
+Four things the sweep found that six files could not.
+
+**A quality gate must never be able to deliver nothing.** `tcf.20150424` failed
+the anomaly gate three times, re-decoding *identically* each time, the same word
+count and the same mean log-probability to fifteen digits. It burned 510 seconds
+of GPU and ended quarantined with nothing published, against a legacy transcript
+of 8292 words. The decode is deterministic, so a retry cannot clear a gate the
+first attempt failed; the loop was pure cost with a guaranteed outcome, and the
+outcome was worse than publishing. `process_pending_job` now fingerprints the
+rejected result (word count plus mean log-probability) and, when a re-decode
+reproduces it, publishes with the anomaly fields and flags set instead of
+requeueing. Quarantine is reserved for results that are actually unusable, which
+means the garbage check and the word-rate floor. The general lesson is worth more
+than the fix: a signal that says "this looks wrong" must degrade to publishing
+with a marker, never to silence, because a wrong transcript can be corrected and a
+missing one cannot.
+
+**The uncovered-speech total is contaminated; the largest contiguous stretch is
+not.** The sweep measured both over 101 files. The two speech detectors, ours and
+the one inside the decode, disagree by 0.81 to 1.27 times, so the files with the
+highest uncovered fraction are largely the ones where the detectors disagree about
+what counts as speech, not files missing words. Any threshold on a total inherits
+that sensitivity, which is why the tolerance kept having to move (0.10, then 0.15)
+as the measurement improved rather than converging on a value. The largest
+contiguous gap has no such problem: it is local, so a global offset between the
+detectors shifts every boundary slightly without creating a long stretch out of
+nothing. Its distribution separates cleanly, median 2.13 s, p95 17.1 s, max 46.8 s,
+with a distinct tail. The gate now reads that, defaulting to 20 s, and the total
+survives only as a loose backstop at 0.25 for an omission smeared across many
+medium gaps. Both numbers are logged per job. The six reference files agree with
+the sweep: their uncovered totals reach 9.0 percent while no single stretch exceeds
+3.92 s.
+
+**The boundary de-duplication is off by default.** Across 64 trims on 32 files the
+sweep found zero plausible decoder artifacts, roughly 38 clear false positives
+including the four consecutive dropped segments on the 1 Kings 18:39 acclamation,
+and 22 ambiguous sentence restarts. Thirty-one trims measured as sequential. Of
+the ten that measured as overlapping, two overlap by 3.7 to 11.7 seconds against a
+phrase lasting 1.4 seconds, which is physically impossible for a double decode and
+marks them as measurement artifacts rather than evidence. So the expected benefit
+is indistinguishable from zero and the demonstrated harm is deleted scripture.
+`BOUNDARY_DEDUPE_ENABLED` defaults to off. The temporal implementation and its
+tests are kept intact: this is disabled on evidence, not removed, and one variable
+turns it back on if a real artifact is ever observed. The reference set says the
+same thing in miniature: the single trim the word-count rule made there measures
+as 0.86 s sequential, so even that apparent true positive was repetition.
+
+**The profile selector is keyed on the wrong signal (0.6.1 investigation, do not
+fix now).** The eight most fragmented recordings in the sweep all took the loud
+profile, the worst at 0.88 seconds per segment on one of the loudest files in the
+set, and the quiet profile's worst case is better than the loud profile's. Level
+does not predict fragmentation. That makes the position of the -26 dBFS cutover
+the wrong question: moving it cannot fix a selector keyed on a signal that does not
+carry the information. Whatever replaces it should be keyed on something that does,
+most likely a measurement of fragmentation itself, which would mean deciding after
+a cheap first look at the audio rather than before. Left alone for 0.6.0 so the
+sweep's numbers stay interpretable.

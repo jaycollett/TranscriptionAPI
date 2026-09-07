@@ -165,6 +165,23 @@ def test_short_segments_have_no_ngram_rate(transcribe_module):
 # --------------------------------------------------------------------------------------
 # Boundary de-duplication: the test is temporal, not lexical
 # --------------------------------------------------------------------------------------
+@pytest.fixture
+def dedupe_on(transcribe_module, monkeypatch):
+    """The step ships disabled; these tests exercise the implementation behind it."""
+    monkeypatch.setattr(transcribe_module, "BOUNDARY_DEDUPE_ENABLED", True)
+
+
+def test_the_step_ships_disabled(transcribe_module):
+    """Off by default on the sweep's evidence: 64 trims, zero plausible artifacts."""
+    assert transcribe_module.BOUNDARY_DEDUPE_ENABLED is False
+
+
+def test_nothing_is_trimmed_with_the_shipped_default(transcribe_module):
+    first, second = _artifact_pair()
+    result = transcribe_module.deduplicate_segment_boundaries([first, second])
+    assert result[1]["text"] == "the Lord is good and his mercy endures"
+
+
 def _timed(pairs, **fields):
     """A segment built from explicit (start, end, word) triples.
 
@@ -217,7 +234,7 @@ def _repetition_pair():
     return _timed(tail), _timed(head)
 
 
-def test_a_true_seam_artifact_is_trimmed(transcribe_module):
+def test_a_true_seam_artifact_is_trimmed(transcribe_module, dedupe_on):
     """Overlapping spans mean the decoder produced the same audio twice."""
     first, second = _artifact_pair()
     result = transcribe_module.deduplicate_segment_boundaries([first, second])
@@ -226,7 +243,7 @@ def test_a_true_seam_artifact_is_trimmed(transcribe_module):
     assert result[1]["start"] == pytest.approx(result[1]["words"][0]["start"])
 
 
-def test_the_same_words_said_twice_are_kept(transcribe_module):
+def test_the_same_words_said_twice_are_kept(transcribe_module, dedupe_on):
     """Identical text, identical word count; only the timestamps differ."""
     first, second = _repetition_pair()
     result = transcribe_module.deduplicate_segment_boundaries([first, second])
@@ -234,7 +251,7 @@ def test_the_same_words_said_twice_are_kept(transcribe_module):
     assert result[1]["text"] == "the Lord is good and his mercy endures"
 
 
-def test_the_1_kings_acclamation_survives(transcribe_module):
+def test_the_1_kings_acclamation_survives(transcribe_module, dedupe_on):
     """1 Kings 18:39. The sweep found four consecutive segments of this deleted.
 
     "The LORD, he is God; the LORD, he is God" is an acclamation whose entire force
@@ -250,7 +267,7 @@ def test_the_1_kings_acclamation_survives(transcribe_module):
     assert result[1]["text"] == "the LORD, he is God."
 
 
-def test_anaphora_survives(transcribe_module):
+def test_anaphora_survives(transcribe_module, dedupe_on):
     """"I want to love" repeated as a rhetorical opener; two emptied segments."""
     first = _timed(_run(4.0, ["I", "want", "to", "love", "him"]))
     second = _timed(_run(6.6, ["I", "want", "to", "love", "you"]))
@@ -261,7 +278,7 @@ def test_anaphora_survives(transcribe_module):
     assert result[1]["text"] == "I want to love you"
 
 
-def test_a_trim_never_empties_a_segment(transcribe_module):
+def test_a_trim_never_empties_a_segment(transcribe_module, dedupe_on):
     """Even a true overlap must not delete a segment whole.
 
     Dropping segments whole is how the scripture passage vanished, so when the
@@ -278,7 +295,7 @@ def test_a_trim_never_empties_a_segment(transcribe_module):
     assert result[1]["text"] == "the Lord is good"
 
 
-def test_declining_to_empty_a_segment_is_logged(transcribe_module, caplog):
+def test_declining_to_empty_a_segment_is_logged(transcribe_module, caplog, dedupe_on):
     import logging
 
     tail = _timed(_run(8.0, ["glory", "to", "God"] + SEAM_WORDS))
@@ -288,7 +305,7 @@ def test_declining_to_empty_a_segment_is_logged(transcribe_module, caplog):
     assert "declined to trim" in caplog.text
 
 
-def test_a_short_overlapping_run_is_below_the_minimum(transcribe_module):
+def test_a_short_overlapping_run_is_below_the_minimum(transcribe_module, dedupe_on):
     """Four words stays a secondary condition; three overlapping words are ignored."""
     tail = _timed(_run(8.0, ["and", "he", "said", "the", "Lord"]))
     head = _timed(_run(8.8, ["the", "Lord", "be", "with", "you"]))
@@ -296,7 +313,7 @@ def test_a_short_overlapping_run_is_below_the_minimum(transcribe_module):
     assert result[1]["text"] == "the Lord be with you"
 
 
-def test_without_word_timestamps_nothing_is_trimmed(transcribe_module):
+def test_without_word_timestamps_nothing_is_trimmed(transcribe_module, dedupe_on):
     """No timestamps means no way to tell an artifact from repetition; publish both."""
     first = {"start": 0.0, "end": 3.0, "text": "the Lord is good", "words": None}
     second = {"start": 3.0, "end": 6.0, "text": "the Lord is good to me", "words": None}
@@ -312,7 +329,7 @@ def test_the_step_can_be_switched_off(transcribe_module, monkeypatch):
     assert result[1]["text"] == "the Lord is good and his mercy endures"
 
 
-def test_the_overlap_is_on_the_log_line(transcribe_module, caplog):
+def test_the_overlap_is_on_the_log_line(transcribe_module, caplog, dedupe_on):
     """The sweep scores the rule from these, so the measurement has to be in them."""
     import logging
 
@@ -326,7 +343,7 @@ def test_the_overlap_is_on_the_log_line(transcribe_module, caplog):
     assert "the Lord is good" in caplog.text
 
 
-def test_a_kept_run_is_also_logged_with_its_overlap(transcribe_module, caplog):
+def test_a_kept_run_is_also_logged_with_its_overlap(transcribe_module, caplog, dedupe_on):
     import logging
 
     first, second = _repetition_pair()
@@ -360,14 +377,14 @@ def test_legitimate_repetition_is_never_touched(transcribe_module, text):
     assert result[0]["text"] == text
 
 
-def test_dedupe_does_not_mutate_its_input(transcribe_module):
+def test_dedupe_does_not_mutate_its_input(transcribe_module, dedupe_on):
     first, second = _artifact_pair()
     original = second["text"]
     transcribe_module.deduplicate_segment_boundaries([first, second])
     assert second["text"] == original
 
 
-def test_the_longest_overlapping_run_wins(transcribe_module):
+def test_the_longest_overlapping_run_wins(transcribe_module, dedupe_on):
     """Trimming a shorter match first would leave the tail of the repeat stranded."""
     long_run = ["the", "Lord", "at", "all", "times"]
     tail = _timed(_run(8.0, ["and", "I", "will", "bless"] + long_run))
@@ -379,7 +396,8 @@ def test_the_longest_overlapping_run_wins(transcribe_module):
 # --------------------------------------------------------------------------------------
 # The API invariant
 # --------------------------------------------------------------------------------------
-def test_transcription_equals_the_joined_timings(transcribe_module, monkeypatch, tmp_path):
+def test_transcription_equals_the_joined_timings(transcribe_module, monkeypatch, tmp_path,
+                                                dedupe_on):
     """The one invariant 0.5.x broke on every job.
 
     `clean_boundary_duplicates` edited the transcript string and not the timings, so
@@ -535,31 +553,46 @@ def test_overlapping_segments_do_not_hide_an_omission(transcribe_module):
 
 
 # --------------------------------------------------------------------------------------
-# The omission case: the failure the window check exists for
+# The omission case: one long contiguous stretch, not a total
 # --------------------------------------------------------------------------------------
-def test_an_omission_is_counted_from_uncovered_speech(transcribe_module):
-    """40 minutes transcribed, 10 minutes emitted nothing at all.
+def _with_gaps(total_covered, gap, n_gaps, span=10.0):
+    """Segments covering `total_covered` s, separated by `n_gaps` gaps of `gap` s.
 
-    This is the shape the window check exists for and the shape it used to miss: the
-    decoder produces no segment for the dropped audio, so it contributes no span, and
-    a clock built only from the segments shrinks to fit the words that survived. The
-    remaining 40 minutes look perfectly healthy at 2.6 words/sec.
+    This is the shape of a healthy decode: the uncovered time is real but it is
+    scattered across every breath the speaker takes, never pooled in one place.
     """
-    segments = _dense(240)  # 2400 s covered
+    segments = []
+    cursor = 0.0
+    remaining = total_covered
+    i = 0
+    while remaining > 0:
+        length = min(span, remaining)
+        segments.append(_segment(cursor, cursor + length,
+                                 "and so the word of the Lord came to him once again saying"))
+        cursor += length
+        remaining -= length
+        if i < n_gaps:
+            cursor += gap
+            i += 1
+    return segments, cursor
+
+
+def test_an_omission_is_counted_from_one_long_stretch(transcribe_module):
+    """40 minutes transcribed, then 10 minutes with nothing decoded over it."""
+    segments = _dense(240)  # 2400 s covered, contiguous
     speech = [(0.0, 3000.0)]
 
     _windows, blind = transcribe_module.low_speech_windows(segments, 3600.0)
     assert blind == 0, "the segment-span clock cannot see an omission; that is the bug"
 
     _windows, low = transcribe_module.low_speech_windows(segments, 3600.0, speech)
-    # 600 s uncovered, 450 s inside the 15 percent tolerance, 150 s charged.
-    assert low == 2
+    assert low == 10, "a 600 s hole is ten windows and must trip decisively"
 
 
 def test_a_total_omission_is_counted(transcribe_module):
-    """No segments at all: every second of speech is uncovered."""
+    """No segments at all: the whole speech region is one uncovered stretch."""
     _windows, low = transcribe_module.low_speech_windows([], 3600.0, [(0.0, 600.0)])
-    assert low == 8, "600 s uncovered less the 90 s tolerance is eight windows"
+    assert low == 10
 
 
 def test_full_coverage_charges_nothing(transcribe_module):
@@ -568,49 +601,64 @@ def test_full_coverage_charges_nothing(transcribe_module):
     assert low == 0
 
 
-def test_a_small_coverage_shortfall_is_not_charged(transcribe_module):
-    """Sub-second pauses between segments sum to minutes over a sermon."""
-    segments = _dense(30)
-    _windows, low = transcribe_module.low_speech_windows(segments, 400.0, [(0.0, 355.0)])
-    assert low == 0, "55 s of breath pauses is not a missing minute"
-
-
-@pytest.mark.parametrize("stem, speech_total, covered_frac", [
-    ("tcf.20240213b", 734.9, 675.6 / 734.9),      # 8.1 percent uncovered
-    ("tcf.20240319b", 1259.4, 1145.9 / 1259.4),   # 9.0 percent, the worst measured
-    ("tcf.20240416", 1381.8, 1366.9 / 1381.8),    # 1.1 percent, the best
-    ("tcf.20240213a", 1438.9, 1329.8 / 1438.9),   # 7.6 percent
-    ("tcf.20240116", 2659.7, 2606.5 / 2659.7),    # 2.0 percent
-    ("women_retreat", 3231.0, 3184.9 / 3231.0),   # 1.4 percent
+@pytest.mark.parametrize("stem, speech_total, uncovered, max_gap", [
+    ("tcf.20240213b", 734.9, 59.3, 2.32),
+    ("tcf.20240319b", 1259.4, 113.5, 3.92),   # 9.0 percent uncovered in total
+    ("tcf.20240416", 1381.8, 14.8, 2.10),
+    ("tcf.20240213a", 1438.9, 109.1, 1.89),
+    ("tcf.20240116", 2659.7, 53.3, 1.96),
+    ("women_retreat", 3231.0, 46.1, 1.78),
 ])
 def test_healthy_files_are_not_charged_an_omission(transcribe_module, stem, speech_total,
-                                                   covered_frac):
-    """The real coverage of all six reference decodes, intersected, must score zero.
+                                                   uncovered, max_gap):
+    """The real coverage shape of all six reference decodes must score zero.
 
-    These are the numbers the tolerance is set from, so they are pinned here: a change
-    to the formula or the constant has to confront six measured healthy files. The
-    worst, tcf.20240319b at 9.0 percent, is what rules out a 10 percent tolerance.
+    These are the measured numbers, and the point of the pair is the contrast: the
+    uncovered *total* runs as high as 9.0 percent, while the largest contiguous
+    stretch never exceeds 3.92 s. The sweep found the same across 101 files, which is
+    why the gate reads the stretch and the total is only a loose backstop.
     """
-    covered = speech_total * covered_frac
-    segments = [_segment(0.0, covered, " ".join(["word"] * int(covered * 2.6)))]
+    n_gaps = max(1, int(uncovered / max_gap))
+    segments, end = _with_gaps(speech_total - uncovered, max_gap, n_gaps)
     _windows, low = transcribe_module.low_speech_windows(
-        segments, speech_total * 1.4, [(0.0, speech_total)]
+        segments, speech_total * 1.4, [(0.0, max(end, speech_total))]
     )
     assert low == 0, f"{stem} is healthy and must not be charged an omission"
 
 
-@pytest.mark.parametrize("speech_total, covered_s, expected", [
-    (1000.0, 950.0, 0),    # 5 percent, inside the tolerance
-    (1000.0, 850.0, 0),    # exactly at the tolerance
-    (1000.0, 780.0, 1),    # 22 percent, 70 s past
-    (1000.0, 500.0, 5),    # half the speech missing
+@pytest.mark.parametrize("gap, expected", [
+    (3.9, 0),      # the worst measured on a healthy reference file
+    (17.1, 0),     # the sweep's p95 across 101 files
+    (19.9, 0),
+    (20.0, 1),     # the threshold
+    (46.8, 1),     # the sweep's maximum on a healthy file: a rescue, not a quarantine
+    (120.0, 2),    # two minutes gone: quarantine territory
+    (600.0, 10),
 ])
-def test_the_tolerance_boundary(transcribe_module, speech_total, covered_s, expected):
-    segments = [_segment(0.0, covered_s, " ".join(["word"] * int(covered_s * 2.6)))]
+def test_the_contiguous_gap_threshold(transcribe_module, gap, expected):
+    segments = [_segment(0.0, 600.0, " ".join(["word"] * 1560))]
     _windows, low = transcribe_module.low_speech_windows(
-        segments, speech_total * 1.5, [(0.0, speech_total)]
+        segments, 1200.0, [(0.0, 600.0 + gap)]
     )
     assert low == expected
+
+
+def test_the_total_is_only_a_loose_backstop(transcribe_module):
+    """An omission smeared across many medium gaps that no single stretch catches.
+
+    Half the speech missing in 15 s pieces: under the threshold individually, but the
+    backstop still notices. It is deliberately generous because the two detectors
+    disagree by 0.81 to 1.27 times, so any threshold on a total inherits that.
+    """
+    segments, end = _with_gaps(600.0, 15.0, 40)
+    _windows, low = transcribe_module.low_speech_windows(segments, 2000.0, [(0.0, end)])
+    assert low >= 1
+
+
+def test_a_scattered_shortfall_inside_the_backstop_is_not_charged(transcribe_module):
+    segments, end = _with_gaps(900.0, 2.0, 50)
+    _windows, low = transcribe_module.low_speech_windows(segments, 1400.0, [(0.0, end)])
+    assert low == 0
 
 
 def test_the_omission_reaches_the_returned_counts(transcribe_module, monkeypatch, tmp_path):
@@ -650,8 +698,25 @@ def test_the_omission_reaches_the_returned_counts(transcribe_module, monkeypatch
 
     result = transcribe_module.transcribe_audio(str(audio), "guid")
 
-    assert result["anomaly_windows"] == 2
+    assert result["anomaly_windows"] == 10
     assert result["speech_seconds"] == pytest.approx(3000.0)
+    assert result["uncovered_max_gap_s"] == pytest.approx(600.0)
+    assert result["mean_logprob"] is not None
+
+
+def test_both_coverage_figures_are_reported(transcribe_module):
+    """The sweep needs the total and the stretch side by side to keep scoring this."""
+    segments, end = _with_gaps(900.0, 3.0, 20)
+    report = transcribe_module.coverage_report(segments, [(0.0, end)])
+    assert report["uncovered_s"] == pytest.approx(60.0, abs=1.0)
+    assert report["uncovered_max_gap_s"] == pytest.approx(3.0, abs=0.01)
+    assert report["covered_s"] == pytest.approx(900.0, abs=1.0)
+
+
+def test_uncovered_stretches_are_the_complement(transcribe_module):
+    segments = [_segment(0.0, 10.0, "a b c"), _segment(30.0, 40.0, "d e f")]
+    stretches = transcribe_module.uncovered_stretches(segments, [(0.0, 50.0)])
+    assert stretches == [(10.0, 30.0), (40.0, 50.0)]
 
 
 def test_a_detector_failure_disables_the_check_not_the_job(transcribe_module, monkeypatch,
@@ -735,7 +800,7 @@ def test_call_and_response_across_a_seam_survives(transcribe_module, tail, head)
     assert result[1]["text"] == head, "a three word liturgical echo is content, not an artefact"
 
 
-def test_a_four_word_response_across_a_seam_now_survives(transcribe_module):
+def test_a_four_word_response_across_a_seam_now_survives(transcribe_module, dedupe_on):
     """The residual risk of the word-count rule, closed by the temporal test.
 
     "Lord, hear our prayer" is four words, so the word-count rule trimmed it and a

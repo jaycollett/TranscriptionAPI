@@ -396,6 +396,36 @@ Beyond the standard release-candidate recipe in `docs/SESSION_KNOWLEDGE.md`:
    segment that is a real loop, or a normal recording requeued by the window
    check, is a threshold to revisit before 0.6.1.
 
+## 4.1 Sweep results, 2026-09-07
+
+The acceptance thresholds in section 4 were written against six files. A 100-file
+sweep of the production archive then ran the candidate end to end. Headline
+numbers: median word delta +0.18 percent over 99 files with two regressions,
+neither trim-related and both on material already above 2.5 words per second over
+speech; the legacy low-rate tail improving 1.46 percent; alignment applied on 100
+percent of files, all on the first attempt; the rescue firing on 5 percent and
+kept on 4 percent; five of five repeat submissions byte-identical.
+
+Four changes followed, three of them corrections to decisions section 3 got wrong
+on six files:
+
+- The anomaly gate could deliver nothing. `tcf.20150424` re-decoded identically
+  three times and quarantined with no transcript published against a legacy 8292
+  words. An identical re-decode is now published with its anomaly fields set;
+  quarantine is reserved for the garbage check and the word-rate floor.
+- The omission check now gates on the largest contiguous uncovered stretch
+  (default 20 s) rather than the uncovered total, which the sweep showed is
+  contaminated by disagreement between the two speech detectors (0.81 to 1.27
+  times). The total remains a loose backstop at 0.25.
+- The boundary de-duplication proposed in section 3 is disabled by default. In 64
+  trims across 32 files it produced zero plausible decoder artifacts and about 38
+  clear false positives, including four consecutive dropped segments of 1 Kings
+  18:39. The implementation is retained behind `BOUNDARY_DEDUPE_ENABLED`.
+- Open for 0.6.1: the level-based profile selector is keyed on the wrong signal.
+  The eight most fragmented recordings all took the loud profile and the quiet
+  profile's worst case is better than the loud profile's, so level does not predict
+  fragmentation and the cutover's position is not the question worth asking.
+
 ## 5. Deferred and rejected
 
 - C8 batched pipeline: deferred; 2-3x faster than C1 but loses 1-4 percent of

@@ -49,6 +49,7 @@ def stub_decode(app_module, monkeypatch):
                 "anomaly_windows": anomaly_windows,
                 "flagged_segments": flagged_segments if flagged_segments is not None else [],
                 "speech_seconds": duration_sec * 0.8,
+                "mean_logprob": -0.0612345678901234,
             },
         )
         monkeypatch.setattr(
@@ -131,11 +132,78 @@ def test_the_gate_reason_names_both_counts(app_module, db, upload_dir, stub_deco
     assert "3 low speech windows" in caplog.text
 
 
-def test_a_repeatedly_anomalous_job_is_quarantined(app_module, db, upload_dir, stub_decode,
-                                                   monkeypatch):
-    """The gate uses the shared attempt counter, so it cannot block the queue forever."""
+def test_an_identical_redecode_is_published_not_quarantined(app_module, db, upload_dir,
+                                                            stub_decode, monkeypatch):
+    """The tcf.20150424 case: three identical re-decodes, 510 s of GPU, nothing published.
+
+    The decode is deterministic, so a job the anomaly gate rejects re-decodes to the
+    same transcript and retrying cannot change the verdict. The first attempt still
+    requeues, because the result might not be reproducible; the second recognises
+    itself and publishes. A recording that produced 8292 plausible words must never be
+    black-holed by a quality signal.
+    """
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+
+    row = get_row(db, guid)
+    assert row["status"] == "completed"
+    assert row["transcription"] is not None
+    assert len(row["transcription"].split()) == 8292
+    # The anomaly fields are published with it so the job can be found and reviewed.
+    assert row["anomaly_count"] == 9
+    assert row["anomaly_windows"] == 4
+
+
+def test_the_publish_despite_anomalies_is_logged(app_module, db, upload_dir, stub_decode,
+                                                 monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    app_module.process_pending_job(db.cursor(), guid, filename)
+    with caplog.at_level(logging.WARNING):
+        app_module.process_pending_job(db.cursor(), guid, filename)
+
+    assert "Publishing" in caplog.text
+    assert "reproduced the previous attempt exactly" in caplog.text
+    assert "8292 words" in caplog.text
+
+
+def test_a_changing_anomalous_result_still_quarantines(app_module, db, upload_dir,
+                                                       monkeypatch):
+    """A decode that differs each time has not proved retrying is futile.
+
+    Quarantine still exists; what it no longer does is consume a deterministic result
+    three times and deliver nothing.
+    """
     monkeypatch.setattr(app_module, "max_garbage_retries", 2)
-    stub_decode(anomaly_count=9, anomaly_windows=4)
+    counter = {"n": 0}
+
+    def varying(path, guid):
+        counter["n"] += 1
+        return {
+            "transcription": _prose(200 + counter["n"]),
+            "timings": TIMINGS,
+            "segments": TIMINGS,
+            "duration_sec": 100.0,
+            "anomaly_count": 9,
+            "anomaly_windows": 4,
+            "flagged_segments": [],
+            "mean_logprob": -0.5 - counter["n"],
+        }
+
+    monkeypatch.setattr(app_module, "transcribe_audio", varying)
 
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
@@ -143,6 +211,59 @@ def test_a_repeatedly_anomalous_job_is_quarantined(app_module, db, upload_dir, s
 
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "quarantined"
+
+
+def test_the_garbage_check_and_word_rate_floor_still_quarantine(app_module, db, upload_dir,
+                                                                monkeypatch):
+    """Quarantine is reserved for results that are actually unusable."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 2)
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(50), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 755.0, "speech_seconds": 700.0,
+            "anomaly_count": 0, "anomaly_windows": 0, "flagged_segments": [],
+        },
+    )
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "quarantined"
+
+
+@pytest.mark.parametrize("previous, current, same", [
+    ("8292:-0.123456789012", "8292:-0.123456789012", True),
+    ("8292:-0.123456789012", "8292:-0.123456700000", True),    # inside the epsilon
+    ("8292:-0.123456789012", "8292:-0.223456789012", False),
+    ("8292:-0.123456789012", "8291:-0.123456789012", False),   # a different word count
+    (None, "8292:-0.1", False),
+    ("", "8292:-0.1", False),
+    ("8292:none", "8292:none", True),
+    ("8292:none", "8292:-0.1", False),
+    ("8292:garbage", "8292:-0.1", False),
+])
+def test_same_anomaly_result(app_module, previous, current, same):
+    assert app_module.same_anomaly_result(previous, current) is same
+
+
+def test_the_fingerprint_survives_the_requeue(app_module, db, upload_dir, stub_decode,
+                                              monkeypatch):
+    """It is cleared with the transcript and the whole check stops working."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    app_module.process_pending_job(db.cursor(), guid, filename)
+
+    cur = db.cursor()
+    cur.execute("SELECT last_anomaly_fingerprint FROM transcriptions WHERE guid = ?", (guid,))
+    assert cur.fetchone()[0] is not None
 
 
 def test_a_missing_anomaly_count_does_not_gate(app_module, db, upload_dir, monkeypatch):

@@ -152,18 +152,21 @@ ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
 # and on tcf.20240213a the rescue was then selected and published 9 fewer words at
 # lower agreement than the primary.
 #
-# 15 percent, from two rounds of measurement on the six reference files. The first
-# put the healthy worst case at 7.1 percent, but that used the old unbounded coverage
-# (a plain sum of segment spans) which overcounts; with the spans merged and
-# intersected against the voice-activity intervals the healthy range is 1.1 to 9.0
-# percent, worst on tcf.20240319b. A 10 percent tolerance would have shipped with 12 s
-# of headroom on a 1259 s file, which is not a tolerance.
-#
-# It still catches what it exists for: a 20 percent omission clears 15 percent by
-# 150 s on a 3000 s file, two windows, which trips both the rescue trigger and the
-# quarantine gate. The corpus sweep should re-measure the healthy distribution and set
-# this from it; six files is not a distribution.
-ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.15)
+# This is now a loose backstop only, at 0.25. The 100-file sweep measured both this
+# total and the largest contiguous uncovered stretch, and the total turned out to be
+# contaminated: the two speech detectors disagree by 0.81 to 1.27 times, so the files
+# with the highest uncovered fraction are largely those where the detectors disagree
+# about what counts as speech, not files missing words. Any threshold on a total
+# inherits that sensitivity, which is why the value kept having to move (0.10, then
+# 0.15) as the measurement improved rather than converging.
+ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.25)
+# The real gate. An omission is contiguous: the decoder stops emitting for a stretch
+# and then resumes. A breath is not. Measuring the largest single uncovered stretch is
+# local, so no global offset between the detectors moves it, and the sweep found it
+# separates cleanly across 101 files: median 2.13 s, p95 17.1 s, max 46.8 s, with a
+# distinct tail. The six reference files agree, topping out at 3.92 s while their
+# uncovered *totals* run to 9.0 percent.
+ANOMALY_MAX_UNCOVERED_GAP_SEC = _env_float("ANOMALY_MAX_UNCOVERED_GAP_SEC", 20.0)
 LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 
 # Anomaly-triggered rescue pass. The five-pass decode bought redundancy by paying for
@@ -212,7 +215,17 @@ RESCUE_MAX_WORD_LOSS = _env_int("RESCUE_MAX_WORD_LOSS", 40)
 # The whole step can be turned off with one variable. If overlap turns out not to
 # separate the cases either, the right answer is to accept an occasional doubled
 # phrase at a seam, and that should be a config change rather than a release.
-BOUNDARY_DEDUPE_ENABLED = os.getenv("BOUNDARY_DEDUPE_ENABLED", "1").strip().lower() \
+# OFF by default since the 100-file sweep. Across 64 trims on 32 files it found zero
+# plausible decoder artifacts, about 38 clear false positives including four
+# consecutive dropped segments on the 1 Kings 18:39 acclamation, and 22 ambiguous
+# sentence restarts. Thirty-one trims measured as sequential; of the ten that measured
+# as overlapping, two overlap by 3.7 to 11.7 s against a phrase lasting 1.4 s, which is
+# physically impossible for a double decode and marks them as measurement artifacts.
+# The expected benefit is indistinguishable from zero and the demonstrated harm is
+# deleted scripture. The implementation and its tests are kept intact so it can be
+# switched back on if a real artifact is ever observed; it is disabled on evidence,
+# not removed.
+BOUNDARY_DEDUPE_ENABLED = os.getenv("BOUNDARY_DEDUPE_ENABLED", "0").strip().lower() \
     not in ("0", "false", "no", "")
 # Kept as a secondary condition: a short coincidence is not worth acting on even when
 # the timestamps do overlap.
@@ -613,6 +626,62 @@ def intersect_intervals(a, b):
     return out
 
 
+def subtract_intervals(whole, taken):
+    """`whole` minus `taken`, both merged and ascending."""
+    out = []
+    for start, end in whole:
+        cursor = start
+        for taken_start, taken_end in taken:
+            if taken_end <= cursor or taken_start >= end:
+                continue
+            if taken_start > cursor:
+                out.append((cursor, min(taken_start, end)))
+            cursor = max(cursor, taken_end)
+            if cursor >= end:
+                break
+        if cursor < end:
+            out.append((cursor, end))
+    return out
+
+
+def uncovered_stretches(segments, speech_intervals):
+    """The speech regions no surviving segment covers, as intervals.
+
+    The largest of these is what the omission gate reads. An omission is contiguous,
+    a breath is not, and unlike a total this is local: an offset between the detector
+    that produced `speech_intervals` and the one inside the decode shifts every
+    boundary a little but does not create a long stretch out of nothing.
+    """
+    speech = merge_intervals(speech_intervals)
+    return subtract_intervals(speech, intersect_intervals(speech_spans(segments), speech))
+
+
+def coverage_report(segments, speech_intervals):
+    """Every coverage figure the gate and the log line need, computed once.
+
+    `covered_spans` falls back to the segments' own spans when there are no
+    intervals, so the word-rate clock still works with the omission check disabled.
+    """
+    if not speech_intervals:
+        return {
+            "speech_s": 0.0,
+            "covered_s": 0.0,
+            "uncovered_s": 0.0,
+            "uncovered_max_gap_s": 0.0,
+            "covered_spans": speech_spans(segments),
+        }
+    speech = merge_intervals(speech_intervals)
+    covered_spans = intersect_intervals(speech_spans(segments), speech)
+    gaps = subtract_intervals(speech, covered_spans)
+    return {
+        "speech_s": sum(e - s for s, e in speech),
+        "covered_s": sum(e - s for s, e in covered_spans),
+        "uncovered_s": sum(e - s for s, e in gaps),
+        "uncovered_max_gap_s": max((e - s for s, e in gaps), default=0.0),
+        "covered_spans": covered_spans,
+    }
+
+
 def covered_speech(segments, speech_intervals):
     """The speech the decoder actually produced segments for.
 
@@ -683,24 +752,26 @@ def low_speech_windows(segments, duration_sec, speech_intervals=None):
     over a sermon; charging those reports an omission on a file that is missing
     nothing. See the constant for the measurements.
     """
-    if speech_intervals:
-        speech = merge_intervals(speech_intervals)
-        speech_total = sum(e - s for s, e in speech)
-        covered_spans = intersect_intervals(speech_spans(segments), speech)
-    else:
-        speech = None
-        speech_total = 0.0
-        covered_spans = speech_spans(segments)
+    report = coverage_report(segments, speech_intervals)
+    speech_total = report["speech_s"]
+    uncovered_total = report["uncovered_s"]
+    uncovered_max_gap = report["uncovered_max_gap_s"]
+    covered_spans = report["covered_spans"]
 
     clock = SpeechClock(covered_spans)
     covered = clock.total
 
     uncovered_windows = 0
     if speech_total > 0:
-        # Non-negative by construction now: covered is a subset of speech.
-        uncovered = max(0.0, speech_total - covered)
-        excess = uncovered - ANOMALY_UNCOVERED_TOLERANCE * speech_total
-        uncovered_windows = int(max(0.0, excess) // ANOMALY_WINDOW_SEC)
+        # The gate: one long contiguous stretch of speech with nothing decoded over
+        # it. Charged by the minute so a ten minute hole is decisively worse than a
+        # 21 second one, but never less than one window once it qualifies.
+        if uncovered_max_gap >= ANOMALY_MAX_UNCOVERED_GAP_SEC:
+            uncovered_windows = max(1, int(uncovered_max_gap // ANOMALY_WINDOW_SEC))
+        # Loose backstop for an omission smeared across many medium gaps, which no
+        # single stretch would catch. Deliberately generous: see the constant.
+        excess = uncovered_total - ANOMALY_UNCOVERED_TOLERANCE * speech_total
+        uncovered_windows = max(uncovered_windows, int(max(0.0, excess) // ANOMALY_WINDOW_SEC))
 
     if covered <= 0:
         return [], uncovered_windows
@@ -935,6 +1006,7 @@ def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=No
     deduped = deduplicate_segment_boundaries(kept, guid=guid)
     anomaly_count, flagged = annotate_segments(deduped)
     windows, low_windows = low_speech_windows(deduped, duration_sec, speech_intervals)
+    coverage = coverage_report(deduped, speech_intervals)
     transcript = transcript_from_segments(deduped)
     logprobs = [s["avg_logprob"] for s in deduped if s.get("avg_logprob") is not None]
     return {
@@ -947,6 +1019,9 @@ def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=No
         "flagged_segments": flagged,
         "windows": len(windows),
         "mean_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
+        "uncovered_s": round(coverage["uncovered_s"], 2),
+        "uncovered_max_gap_s": round(coverage["uncovered_max_gap_s"], 2),
+        "covered_s": round(coverage["covered_s"], 2),
     }
 
 
@@ -1149,14 +1224,14 @@ def transcribe_audio(file_path, guid):
         else:
             speech = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
         record["speech_seconds"] = speech
-        covered = sum(
-            e - st for st, e in covered_speech(record["segments"], speech_intervals or [])
-        )
+        covered = record["covered_s"]
         ratio = covered / speech if speech > 0 else 0.0
         logger.info(
             f"{label} pass for {guid} in {record['decode_seconds']:.2f}s: {record['words']} words, "
             f"{len(record['segments'])} segments covering {covered:.1f}s of {speech:.1f}s speech "
-            f"(coverage_ratio={ratio:.3f}), anomaly_count={record['anomaly_count']}, "
+            f"(coverage_ratio={ratio:.3f} uncovered_total_s={record['uncovered_s']} "
+            f"uncovered_max_gap_s={record['uncovered_max_gap_s']}), "
+            f"anomaly_count={record['anomaly_count']}, "
             f"anomaly_windows={record['anomaly_windows']} of {record['windows']}, "
             f"flagged_segments={len(record['flagged_segments'])}"
         )
@@ -1220,6 +1295,11 @@ def transcribe_audio(file_path, guid):
         "flagged_segments": selected["flagged_segments"],
         "rescue_attempted": rescue_attempted,
         "rescue_selected": rescue_selected,
+        # The retry check in app.py compares these across attempts: a decode that
+        # reproduces itself exactly cannot be argued out of a gate by running again.
+        "mean_logprob": selected["mean_logprob"],
+        "uncovered_s": selected["uncovered_s"],
+        "uncovered_max_gap_s": selected["uncovered_max_gap_s"],
         "speech_seconds": speech_seconds,
         "mean_dbfs": mean_dbfs,
         "vad_profile": profile,
