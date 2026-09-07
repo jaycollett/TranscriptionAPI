@@ -110,6 +110,12 @@ def measure(trim, segments, noise_floor=NOISE_FLOOR_S):
     row["overlap_s"] = round(overlap, 3)
     row["gap_s"] = round(-overlap, 3) if overlap < 0 else 0.0
     row["verdict"] = classify(overlap, noise_floor)
+    # The corrected build trims only when the two occurrences overlap in time with zero
+    # slack. `True` means it would still trim, `False` that it would decline, and `None`
+    # that this measurement cannot resolve it inside the alignment noise floor.
+    row["corrected_rule_would_trim"] = {
+        "overlapping": True, "abutting": False
+    }.get(row["verdict"])
     return row
 
 
@@ -152,6 +158,20 @@ def summarise(rows, noise_floor=NOISE_FLOOR_S):
         "abutting": distribution(abutting, digits=3),
         "unresolved_count": len(unresolved),
         "separates_cleanly": separates,
+        "corrected_rule_would_trim": sum(
+            1 for r in rows if r.get("corrected_rule_would_trim") is True
+        ),
+        "corrected_rule_would_decline": sum(
+            1 for r in rows if r.get("corrected_rule_would_trim") is False
+        ),
+        "corrected_rule_unresolved": sum(
+            1 for r in rows if r.get("corrected_rule_would_trim") is None
+        ),
+        "words_restored_if_declined": sum(
+            r["overlap_words"] or 0
+            for r in rows
+            if r.get("corrected_rule_would_trim") is not True
+        ),
     }
 
 
@@ -173,6 +193,15 @@ def render_markdown(summary, rows):
             else "The populations do not separate cleanly, so overlap in time is not on its "
             "own a reliable rule."
         )
+    )
+    out.append("")
+    out.append(
+        f"Against the corrected temporal rule: it would still trim "
+        f"{summary['corrected_rule_would_trim']}, would decline "
+        f"{summary['corrected_rule_would_decline']}, and "
+        f"{summary['corrected_rule_unresolved']} cannot be resolved inside the noise "
+        f"floor. Declining the non-overlapping ones restores "
+        f"{summary['words_restored_if_declined']} words."
     )
     out.append("")
     out.append(

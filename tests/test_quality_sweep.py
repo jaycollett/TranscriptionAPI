@@ -1168,3 +1168,64 @@ def test_decode_attempts_counts_primary_passes():
     ]
     job = service_log.parse(lines)[GUID_A]
     assert job["decode_attempts"] == 2
+
+
+def test_corrected_rule_verdict_follows_the_overlap():
+    overlapping = trims.measure(
+        {"at_s": 103.0, "overlap_words": 4, "removed": "a b c d", "emptied": False},
+        [(90.0, 105.0)],
+    )
+    abutting = trims.measure(
+        {"at_s": 102.0, "overlap_words": 4, "removed": "a b c d", "emptied": False},
+        [(90.0, 100.0)],
+    )
+    unresolved = trims.measure(
+        {"at_s": 100.1, "overlap_words": 4, "removed": "a b c d", "emptied": False},
+        [(90.0, 100.0)],
+    )
+    assert overlapping["corrected_rule_would_trim"] is True
+    assert abutting["corrected_rule_would_trim"] is False
+    assert unresolved["corrected_rule_would_trim"] is None
+
+
+def test_summary_counts_what_the_corrected_rule_would_restore():
+    rows = [
+        trims.measure({"at_s": 103.0, "overlap_words": 4, "removed": "a", "emptied": False},
+                      [(90.0, 105.0)]),
+        trims.measure({"at_s": 202.0, "overlap_words": 5, "removed": "b", "emptied": True},
+                      [(190.0, 200.0)]),
+        trims.measure({"at_s": 300.1, "overlap_words": 6, "removed": "c", "emptied": False},
+                      [(290.0, 300.0)]),
+    ]
+    for row in rows:
+        row["file"] = "a.mp3"
+    summary = trims.summarise(rows)
+    assert summary["corrected_rule_would_trim"] == 1
+    assert summary["corrected_rule_would_decline"] == 1
+    assert summary["corrected_rule_unresolved"] == 1
+    # The declined and the unresolved both give their words back.
+    assert summary["words_restored_if_declined"] == 11
+    assert "would decline 1" in trims.render_markdown(summary, rows)
+
+
+def test_restored_word_delta_is_the_corrected_builds_expected_output():
+    jobs = service_jobs_fixture()
+    jobs["hold.mp3"]["trimmed_words"] = 40
+    rows = {r["file"]: r for r in analyze.build_rows(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), jobs
+    )}
+    hold = rows["hold.mp3"]
+    assert hold["new_words"] == 1010
+    assert hold["words_restored"] == 1050
+    assert hold["word_delta"] == 10
+    assert hold["word_delta_restored"] == 50
+    assert hold["word_delta_pct_restored"] == pytest.approx(0.05)
+
+
+def test_regressions_can_be_read_on_either_basis():
+    jobs = service_jobs_fixture()
+    # drop.mp3 lost 100 words against the baseline; 60 of them to the seam trim.
+    jobs["drop.mp3"]["trimmed_words"] = 60
+    rows = analyze.build_rows(state_with_spans(), fixture_baseline(), fixture_file_list(), jobs)
+    assert [r["file"] for r in analyze.regressions(rows)] == ["drop.mp3"]
+    assert analyze.regressions(rows, key="word_delta_pct_restored") == []

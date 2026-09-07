@@ -198,6 +198,9 @@ def attach_service_log(row, job):
     row["trim_count"] = None
     row["trimmed_words"] = None
     row["trims"] = []
+    row["words_restored"] = None
+    row["word_delta_restored"] = None
+    row["word_delta_pct_restored"] = None
     row["alignment_log"] = {}
     row["service_log_fields"] = {}
     row["vad_profile_taken"] = None
@@ -228,6 +231,17 @@ def attach_service_log(row, job):
             row["new_wps_speech"] = round(row["new_words"] / speech, 4)
         if row["legacy_words"]:
             row["legacy_wps_speech"] = round(row["legacy_words"] / speech, 4)
+    # The corrected build declines every trim whose occurrences merely abut, so its
+    # expected word count is this run's plus whatever the seam rule removed. Both bases
+    # are carried so a delta can be read as measured or as the corrected build would
+    # produce it.
+    if row["new_words"] is not None and row.get("trimmed_words") is not None:
+        row["words_restored"] = row["new_words"] + row["trimmed_words"]
+        if row["legacy_words"]:
+            row["word_delta_restored"] = row["words_restored"] - row["legacy_words"]
+            row["word_delta_pct_restored"] = round(
+                row["word_delta_restored"] / row["legacy_words"], 5
+            )
     for key in ("clamped", "clamped_timings", "span_ratio_lt_0_5", "span_ratio_p5",
                 "span_ratio_median", "empty_fallbacks", "whisper_fallback_segments",
                 "mfa_words", "mfa_segments", "agree250", "utterances"):
@@ -245,13 +259,18 @@ def comparable(rows):
     return [r for r in completed(rows) if r["legacy_words"] and r["new_words"] is not None]
 
 
-def regressions(rows, tolerance=REGRESSION_TOLERANCE):
-    """Completed files that returned more than `tolerance` fewer words than the baseline."""
+def regressions(rows, tolerance=REGRESSION_TOLERANCE, key="word_delta_pct"):
+    """Completed files that returned more than `tolerance` fewer words than the baseline.
+
+    `key` selects the basis: `word_delta_pct` is what this run produced, and
+    `word_delta_pct_restored` is what the corrected build would produce, since it declines
+    the seam trims that removed those words.
+    """
     out = [
         r for r in comparable(rows)
-        if r["word_delta_pct"] is not None and r["word_delta_pct"] < -tolerance
+        if r.get(key) is not None and r[key] < -tolerance
     ]
-    out.sort(key=lambda r: r["word_delta_pct"])
+    out.sort(key=lambda r: r[key])
     return out
 
 
@@ -432,6 +451,19 @@ def summarise_population(rows):
             "tolerance": REGRESSION_TOLERANCE,
             "count": len(regressions(rows)),
             "files": [r["file"] for r in regressions(rows)],
+        },
+        "word_delta_restored": distribution(
+            [r.get("word_delta_restored") for r in comp], digits=1
+        ),
+        "word_delta_pct_restored": distribution(
+            [r.get("word_delta_pct_restored") for r in comp], digits=5
+        ),
+        "regressions_restored": {
+            "tolerance": REGRESSION_TOLERANCE,
+            "count": len(regressions(rows, key="word_delta_pct_restored")),
+            "files": [
+                r["file"] for r in regressions(rows, key="word_delta_pct_restored")
+            ],
         },
         "rescue_attempted": rate(rows, "rescue_attempted"),
         "rescue_selected": rate(rows, "rescue_selected"),
@@ -657,8 +689,8 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     out.append("")
     headers = [
         "population", "files", "completed", "comparable", "word delta median",
-        "delta pct median", "legacy wps median", "new wps median",
-        "new wps over speech", "regressions",
+        "delta pct median", "delta pct restored", "legacy wps median", "new wps median",
+        "new wps over speech", "regressions", "regr restored",
     ]
     body = []
     for name, pop in analysis["populations"].items():
@@ -669,10 +701,12 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
             str(pop["comparable"]),
             _fmt(pop["word_delta"].get("median"), 1),
             _fmt(pop["word_delta_pct"].get("median"), 4),
+            _fmt(pop["word_delta_pct_restored"].get("median"), 4),
             _fmt(pop["legacy_wps"].get("median")),
             _fmt(pop["new_wps"].get("median")),
             _fmt(pop["new_wps_speech"].get("median")),
             str(pop["regressions"]["count"]),
+            str(pop["regressions_restored"]["count"]),
         ])
     out.append(_table(headers, body))
     out.append("")
