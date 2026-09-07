@@ -504,13 +504,12 @@ def process_pending_job(cursor, guid, filename):
             # alphanumeric check but is still a collapsed decode. Skip clips under
             # 30 s, where a pause or two swings the rate, and unknown durations.
             duration_sec = result.get("duration_sec", 0) or 0
-            if duration_sec >= 30:
-                wps = len(transcription.split()) / duration_sec
-                if wps < MIN_WORDS_PER_SEC:
-                    return handle_garbage_result(
-                        cursor, guid,
-                        f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
-                    )
+            wps = len(transcription.split()) / duration_sec if duration_sec > 0 else 0
+            if duration_sec >= 30 and wps < MIN_WORDS_PER_SEC:
+                return handle_garbage_result(
+                    cursor, guid,
+                    f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
+                )
         except Exception as e:
             app.logger.error(f"Whisper transcription failed for {guid}: {e}")
             cursor.execute(
@@ -521,22 +520,11 @@ def process_pending_job(cursor, guid, filename):
 
         # Step 2: Run Forced Alignment (MFA) if necessary
         app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
-        # Check if a processed audio file exists (from noise reduction during
-        # transcription). Handle any audio format, not just MP3. Processed files are
-        # always written as MP3 by preprocess_audio_for_transcription.
-        file_root, _ = os.path.splitext(file_path)
-        processed_file_path = f"{file_root}_processed.mp3"
-        audio_file_for_mfa = processed_file_path if os.path.exists(processed_file_path) else file_path
-        app.logger.info(f"Using audio file for MFA: {audio_file_for_mfa}")
-        refined_timings = run_forced_alignment(audio_file_for_mfa, whisper_segment_timings, guid)
+        refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
 
-        # Garbage check again — just in case MFA corrupted it
+        # Garbage check again, in case MFA corrupted it
         if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
             return handle_garbage_result(cursor, guid, "post-alignment transcription/timing looks corrupted")
-
-        if refined_timings is None:
-            app.logger.error(f"Forced alignment failed for {guid}. Falling back to Whisper's timings.")
-            refined_timings = whisper_segment_timings
 
         # Step 3: Update database with refined timings. Clear attempt_count so a job that
         # succeeds after earlier garbage retries is never wrongly quarantined later.
@@ -544,7 +532,11 @@ def process_pending_job(cursor, guid, filename):
             "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', attempt_count = 0, completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
             (transcription, json.dumps(refined_timings), guid)
         )
-        app.logger.info(f"Transcription completed for {filename} (GUID: {guid})")
+        app.logger.info(
+            f"Transcription completed for {filename} (GUID: {guid}): "
+            f"{len(transcription.split())} words in {duration_sec:.1f}s "
+            f"({wps:.2f} words/sec, floor {MIN_WORDS_PER_SEC})"
+        )
         return 'completed'
 
     except Exception as e:
