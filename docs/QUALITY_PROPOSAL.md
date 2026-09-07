@@ -10,15 +10,15 @@ Pipeline section of `docs/PUNCHLIST.md`.
 
 ## 1. Purpose and method
 
-The question was whether the five-pass decode, the confidence-based pass
-selection, the VAD settings, the boundary de-duplication and the whole-file
-MFA alignment are doing what they were written to do, and what a release that
-fixes them should contain. Each analysis read the service code against the
-library sources it calls, listed the defects, and defined experiments as
-deltas from a single base configuration. The harness (`tools/quality_harness/`)
-then ran those experiments inside the production image
-(`transcription-api:0.5.2`) on the GPU host, with a verbatim replica of the
-production five-pass decode and selection rule (`PROD`) as the control.
+The question was whether the five-pass decode, the pass selection, the VAD
+settings, the boundary de-duplication and the whole-file MFA alignment do
+what they were written to do, and what a release that fixes them should
+contain. Each analysis read the service code against the library sources it
+calls, listed the defects, and defined experiments as deltas from one base
+configuration. The harness (`tools/quality_harness/`) ran them inside the
+production image (`transcription-api:0.5.2`) on the GPU host, with a
+verbatim replica of the production decode and selection rule (`PROD`) as the
+control.
 
 **Reference set.** Six files from the production archive, chosen to cover
 length, format and recording conditions: the 755 s validation file
@@ -90,13 +90,13 @@ four, and in every disagreement it preferred the pass with fewer words.
 | women_retreat s3 | pass 3 (8467, 0.976) | pass 2 (8919, -0.053) | 8904 |
 
 On the retreat file the confidence ranks the passes in reverse order of word
-count: pass 2, with 8919 words, scores lowest at 0.942 and pass 3 with 8467
-wins. The C1-to-PROD diff shows what pass 3 lost: 290 deleted words, including
-two runs at 2085.8 s (61 words) and 2108.9 s (58 words) that are the speaker
-reading Psalm 91:9-11 and 14-15 ("because you have made the Lord your dwelling
-place ... I will be with him in trouble, I will rescue him and honor him"). C1
-has both passages. No pass on any file tripped an anomaly, so C2 decided on
-mean log-probability, which tracked word count every time.
+count: pass 2 with 8919 words scores lowest at 0.942 and pass 3 with 8467
+wins. The C1-to-PROD diff shows what pass 3 lost: 290 deleted words,
+including runs at 2085.8 s (61 words) and 2108.9 s (58 words) that are the
+speaker reading Psalm 91:9-11 and 14-15 ("because you have made the Lord your
+dwelling place ... I will rescue him and honor him"). C1 has both. No pass on
+any file tripped an anomaly, so C2 decided on mean log-probability, which
+tracked word count every time.
 
 ### 2.3 I1: per-utterance MFA instead of one utterance per file [14]
 
@@ -118,15 +118,14 @@ scored with the I2 rule.
 | women_retreat s3 | 1 | 57.6 | 325 | 35.4 | 108 | 52/52 | 0.770 / 0.786 |
 
 The 1369 s file reproduces the production failure: attempt 1 returned code 1
-after 78.7 s and attempt 2 after 200.1 s, 278.8 s spent for no alignment (the
-PROD decode fails the same way in 288.7 s). I1 aligned it on the first attempt
-in 30 s. The 1463 s file needed the 100/400 attempt under a0 (194.8 s total)
-and 26.9 s under I1. On the class file the PROD decode under a0 shows the
-drift the analysis predicted: p95 start delta 17.5 s, 10.8 percent of matched
-words more than 1 s from Whisper's position; under I1 the same decode gives
-p95 0.65 s and 0.4 percent. I1 is bounded by the utterance, so the 1369 s file
-still shows 43 segments with no MFA words (394 of 3578 words unaligned, the
-Whisper timings kept for those) where a0 would have failed the whole file.
+after 78.7 s and attempt 2 after 200.1 s, 278.8 s for no alignment (the PROD
+decode fails the same way in 288.7 s); I1 aligned it on the first attempt in
+30 s. The 1463 s file needed the 100/400 attempt under a0 and 26.9 s under I1.
+On the class file the PROD decode under a0 shows the predicted drift: p95
+start delta 17.5 s and 10.8 percent of matched words over 1 s from Whisper's
+position, against 0.65 s and 0.4 percent under I1. Failure is now bounded by
+the utterance: the 1369 s file keeps Whisper timings for 43 segments (394 of
+3578 words) where a0 lost the whole file.
 
 ### 2.4 I2: sequence-matched word assignment [4]
 
@@ -167,12 +166,11 @@ VAD; 2.0 cannot, F6).
 | women_retreat s3 | 564 | 155 | 156.8 | 192.6 | 8614 / 8904 | 0.979 | 102.6 |
 
 Seams drop 3-4x and removed audio stays under 6 percent. On the 755 s file
-C4 also gives the best alignment of any decode (agree250 0.605 under I1 and
-I2 against 0.516 for C1). The retreat file is the failure: at -28.6 dB the
-0.5 threshold fragments speech into 2171 segments of 1.4 s mean (C1: 435 of
-7.7 s), mean log-probability falls from -0.056 to -0.141, 290 words are lost
-and wall time rises 30 percent. The threshold therefore has to depend on the
-file's level; see section 3.
+C4 also aligns best of any decode (agree250 0.605 under I1 and I2 against
+0.516 for C1). The retreat file is the failure: at -28.6 dB the 0.5 threshold
+fragments speech into 2171 segments of 1.4 s mean (C1: 435 of 7.7 s), mean
+log-probability falls from -0.056 to -0.141, 290 words are lost and wall time
+rises 30 percent. The threshold has to depend on the file's level (section 3).
 
 ### 2.6 C7: repeated n-gram flagger
 
@@ -225,14 +223,13 @@ pass with the lower anomaly score is kept.
 
 **Selection and gate (`transcribe.py` and `app.py`, `process_pending_job`).**
 Delete `calculate_weighted_confidence` and the 1.4 words-per-second scaler.
-The anomaly score is the count of segments with temperature at or above 0.5,
+The anomaly score counts segments with temperature at or above 0.5,
 compression ratio over 2.4, average log-probability under -1.0, or
-`no_speech_prob` over 0.5 with non-empty text, plus the count of 60 s windows
-of VAD speech under 1.2 words per second; ties break on mean average
-log-probability. `transcribe_audio` returns `anomaly_score`, `low_windows`
-and `speech_seconds` alongside the existing fields. `process_pending_job`
-keeps the existing `MIN_WORDS_PER_SEC` floor but computes the rate over
-`speech_seconds` when available, and additionally requeues when
+`no_speech_prob` over 0.5 with non-empty text, plus 60 s windows of VAD
+speech under 1.2 words per second; ties break on mean log-probability.
+`transcribe_audio` returns `anomaly_score`, `low_windows` and
+`speech_seconds`. `process_pending_job` keeps the `MIN_WORDS_PER_SEC` floor,
+computed over `speech_seconds` when available, and also requeues when
 `low_windows` is non-zero, so a partial collapse is caught where the
 whole-file rate is not [22]. Both numbers go to the success log line.
 
@@ -283,14 +280,13 @@ status vocabulary; `large-v3-turbo` float16; the base image and every pin in
 `requirements.txt`; the queue, retry and cleanup behaviour of 0.5.0; MFA
 dictionary and acoustic model.
 
-**Expected effects, from the measured rows.** Whisper time on the 755 s file
-20 s instead of 103-106 s; 70 s instead of 360 s on the 2783 s file. MFA 24-35
-s on every reference file instead of 36-279 s, first attempt every time (a0
-failed one of six files and needed the second attempt on another; I1 zero of
-six). End to end on the 755 s file about 50 s against 138 s in the 0.5.2
-validation. Word counts equal to C1's within the VAD tuning margin, which
-means 28 more words on the 755 s file, 129 on the class file and 443 on the
-retreat file relative to what production publishes today. Timing agreement
+**Expected effects, from the measured rows.** Whisper 20 s instead of
+103-106 s on the 755 s file and 70 s instead of 360 s on the 2783 s file. MFA
+24-35 s on every reference file instead of 36-279 s, first attempt every time
+(a0 failed one file of six and needed the second attempt on another). End to
+end about 50 s on the 755 s file against 138 s in the 0.5.2 validation. Word
+counts at C1's level: 28 more words on the 755 s file, 129 on the class file
+and 443 on the retreat file than production publishes today. Timing agreement
 within 250 ms rises from 0.44-0.65 to 0.52-0.79 with zero overlaps.
 
 ## 4. Validation plan for 0.6.0
@@ -364,17 +360,15 @@ docker run --rm --name transcription-harness --gpus device=0 \
 ```
 
 Stages: `run --audio <a,b> --configs <names>` decodes each config on each
-file and writes the transcript, segments with per-segment diagnostics and
-metrics under `/harness/results/<stem>/<config>/`; `align --audio <a>
---configs <names> --paths a0,i1` runs the production alignment path (`a0`)
-and the per-utterance path (`i1`) on those decodes and scores both refinement
-rules (`window`, `i2`); `report` regenerates `summary.md` and `results.json`
-from the results directory and needs no GPU. `--force` re-runs a cached
-(config, file) pair. The 2026-09-07 run was three stages: the 755 s file with
+file into `/harness/results/<stem>/<config>/` (transcript, segments with
+diagnostics, metrics); `align --audio <a> --configs <names> --paths a0,i1`
+runs the production alignment path (`a0`) and the per-utterance path (`i1`)
+on those decodes and scores both refinement rules (`window`, `i2`); `report`
+regenerates `summary.md` and `results.json` and needs no GPU. `--force`
+re-runs a cached pair. The 2026-09-07 run: the 755 s file with
 `PROD,C1,C1_REPEAT,GREEDY,C3,C4,C8,C10,C5` then `C9`; the class and 1369 s
 files with `PROD,C1,GREEDY,C3,C4,C8,C10,C9,C5`; the 1463 s, 2783 s and
-retreat files with `PROD,C1,C4,C8`. Alignment ran `C1,PROD` with `a0,i1` on
-the first three files, `C3,C4,C8` with `i1` on the 755 s file, and `C1` with
-`a0,i1` on the last three. GPU 0 (the 12 GB RTX 3060) must be the device;
-host-side CUDA ordering puts the 8 GB card first, and that card is held by
-`ollama-vision.service`.
+retreat files with `PROD,C1,C4,C8`; alignment `C1,PROD` with `a0,i1` on the
+first three files, `C3,C4,C8` with `i1` on the 755 s file, `C1` with `a0,i1`
+on the last three. Use `--gpus device=0` (the 12 GB card); the 8 GB card is
+held by `ollama-vision.service`.

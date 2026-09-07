@@ -328,3 +328,16 @@ timings, MFA aligned on the first attempt, torch CUDA available and ctranslate2
 seeing one device. Five Whisper passes took 106 s against 139 to 145 s on 0.4.0,
 0.5.0 and 0.5.1, so the synchronous-launch setting had been costing roughly a
 quarter of the decode time. End to end 138 s against 170 to 180 s.
+
+## 2026-09-07 - Quality analysis and harness results
+
+Two code analyses of the decode path and the post-Whisper pipeline, and a
+harness run of their experiments on six reference files inside the 0.5.2 image,
+are written up in `docs/QUALITY_PROPOSAL.md`; the measured tables and every
+number behind them are under `tools/quality_harness/results/2026-09-07/`. The
+short version: one beam-5 pass reproduces the five-pass winner 4-8x faster, the
+duration-weighted confidence prefers the pass with fewer words (it dropped 119
+words of Psalm 91 on the retreat file), per-utterance MFA aligns the 1369 s file
+that whole-file MFA cannot, and no human-corrected transcript exists so none of
+this is a word error rate. The proposal defines release 0.6.0 and its
+acceptance thresholds against that results directory.
