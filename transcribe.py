@@ -11,9 +11,6 @@ from faster_whisper import WhisperModel # type: ignore
 from pydub import AudioSegment # type: ignore
 import time
 from functools import lru_cache
-import noisereduce as nr  # type: ignore
-import scipy.io.wavfile as wavfile
-import tempfile
 
 # Set audio file location from environment variable or default to /tmp/audio_files
 upload_folder = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
@@ -105,49 +102,42 @@ def clean_boundary_duplicates(text):
     return text
 
 
-def preprocess_audio_for_transcription(file_path):
+# NOTE (2026-09-07): preprocess_audio_for_transcription() was removed.
+# It normalised to -20 dBFS, then measured "noise" as mean(abs(samples))/32768 on the
+# NORMALISED signal. That is a crest-factor measurement of the speech itself, not a
+# noise floor, so every file in the archive scored 0.046-0.060 against the 0.015
+# threshold and the "only if noise is detected" branch was never skipped. It then ran
+# noisereduce with no noise profile over material that is ~78% speech, so the profile
+# it estimated was largely speech: measured effect was speech-active frames falling
+# from 76% to 65% and dynamic range widening by 8 dB, plus a second lossy MP3 encode.
+# faster-whisper's own feature extractor normalises the input, so feeding it the
+# original file is both simpler and measurably better: the same model/config on the
+# untouched 755 s file produces 2.77 words/sec against 0.15-1.24 through this stage.
+# Deleted rather than repaired: a correct noise-floor estimate would need non-speech
+# frame detection, and doing nothing is already the better answer.
+
+
+def temperature_ladder(base, step=0.2):
+    """Return the temperature fallback ladder faster-whisper expects.
+
+    faster-whisper only performs temperature fallback when `temperature` is a
+    sequence; a scalar is wrapped into a single-element list, which disables the
+    fallback entirely. Fallback is the built-in escape from a decode that trips the
+    compression-ratio or log-probability thresholds, i.e. exactly the mid-file
+    collapse this service was producing. Above 0.5 faster-whisper also resets the
+    previous-text prompt, which breaks any repetition loop already under way.
+
+    The ladder runs from `base` up to 1.0 inclusive.
     """
-    Process audio file for optimal transcription quality.
-    Returns the path to the processed audio file.
-    """
-    audio = AudioSegment.from_file(file_path)  # Load audio using pydub
+    steps = []
+    t = float(base)
+    while t < 1.0 + 1e-9:
+        steps.append(round(t, 2))
+        t += step
+    if not steps or steps[-1] < 1.0:
+        steps.append(1.0)
+    return tuple(steps)
 
-    # Normalize volume
-    target_dBFS = -20.0
-    change_in_dBFS = target_dBFS - audio.dBFS
-    audio = audio.apply_gain(change_in_dBFS)
-
-    # Export to WAV for noise reduction
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_wav:
-        audio.export(tmp_wav.name, format="wav")
-        rate, data = wavfile.read(tmp_wav.name)
-
-    # Apply noise reduction only if noise is detected
-    noise_threshold = 0.015  # Empirical threshold for noise energy
-    noise_energy = np.mean(np.abs(data)) / 32768.0  # Normalize 16-bit PCM
-
-    if noise_energy > noise_threshold:
-        logger.info(f"Applying noise reduction (energy={noise_energy:.4f})")
-        reduced_noise = nr.reduce_noise(y=data, sr=rate, prop_decrease=0.8)
-        wavfile.write(tmp_wav.name, rate, reduced_noise)
-        audio = AudioSegment.from_wav(tmp_wav.name)
-        
-        # Create processed audio file, don't overwrite original
-        # Handle any audio format by using splitext
-        file_root, file_ext = os.path.splitext(file_path)
-        processed_file_path = f"{file_root}_processed.mp3"  # Always export as MP3
-        audio.export(processed_file_path, format="mp3")
-        
-        # Clean up temp file
-        os.unlink(tmp_wav.name)
-        
-        return processed_file_path
-    else:
-        logger.info(f"Skipping noise reduction (clean audio, energy={noise_energy:.4f})")
-        # Clean up temp file
-        os.unlink(tmp_wav.name)
-        # Return original file path if no processing needed
-        return file_path
 
 @lru_cache(maxsize=1)
 def get_audio_duration(file_path):
@@ -172,13 +162,15 @@ def transcribe_audio(file_path, guid):
         logger.warning(f"Could not calculate estimated processing time: {e}")
         duration_sec = 0
 
-    # Preprocess audio for optimal transcription quality
-    processed_file_path = preprocess_audio_for_transcription(file_path)
+    # No preprocessing: faster-whisper normalises internally and the previous
+    # denoise stage measurably degraded every file (see note above).
+    processed_file_path = file_path
     logger.info(f"Using audio file for transcription: {processed_file_path}")
 
     model = load_whisper_model()  # Load the Whisper model (cached)
 
     # Define transcription passes with different parameters.
+    # "temperature" is the BASE of each pass's fallback ladder, not a scalar.
     passes = [
         {"temperature": 0.2, "patience": 3.0, "beam_size": 5},
         {"temperature": 0.0, "patience": 2.8, "beam_size": 7},
@@ -238,11 +230,15 @@ def transcribe_audio(file_path, guid):
                 vad_filter=True,
                 vad_parameters={"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300},
                 beam_size=params["beam_size"],
-                temperature=params["temperature"],
+                temperature=temperature_ladder(params["temperature"]),
                 word_timestamps="all",
                 suppress_tokens=[-1],
-                initial_prompt="This is a transcription of a Christian sermon delivered by a single speaker in clear English.",
-                condition_on_previous_text=True,
+                # No initial_prompt. The previous one asserted "a single speaker",
+                # which is false for these multi-voice class and Q&A recordings, and
+                # a prompt is prepended as previous-text context, so it can prime the
+                # repetition loops it was meant to prevent. The configuration measured
+                # at 2.77 words/sec on this material used no prompt at all.
+                condition_on_previous_text=params.get("condition_on_previous_text", True),
                 patience=params["patience"]
             )[0])
             transcript = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
