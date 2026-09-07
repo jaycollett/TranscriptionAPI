@@ -42,6 +42,11 @@ db_connection_timeout = 30  # Connection timeout in seconds
 # quarantined (moved to a terminal state) instead of being requeued. This keeps a
 # single bad sermon from permanently blocking the head of the FIFO queue.
 max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
+# Words-per-second floor for the post-transcription quality gate. Normal sermon
+# material runs 2.5-2.8 words/sec; the 2026-09 decode collapse produced 0.54 and the
+# per-pass penalty in transcribe.py already treats anything under 1.4 as low. The
+# alphanumeric-ratio check alone is blind to coherent prose at half length.
+MIN_WORDS_PER_SEC = float(os.getenv("MIN_WORDS_PER_SEC", "1.0"))
 
 # Ensure database file exists before initializing
 if not os.path.exists(db_file):
@@ -494,6 +499,18 @@ def process_pending_job(cursor, guid, filename):
             # Check for garbage transcription
             if is_garbage_transcription(transcription):
                 return handle_garbage_result(cursor, guid, "garbage transcription detected")
+
+            # Word-rate floor: coherent prose at half the expected rate passes the
+            # alphanumeric check but is still a collapsed decode. Skip clips under
+            # 30 s, where a pause or two swings the rate, and unknown durations.
+            duration_sec = result.get("duration_sec", 0) or 0
+            if duration_sec >= 30:
+                wps = len(transcription.split()) / duration_sec
+                if wps < MIN_WORDS_PER_SEC:
+                    return handle_garbage_result(
+                        cursor, guid,
+                        f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
+                    )
         except Exception as e:
             app.logger.error(f"Whisper transcription failed for {guid}: {e}")
             cursor.execute(

@@ -308,7 +308,7 @@ def transcribe_audio(file_path, guid):
 
     if not adjusted_confidences:
         logger.error(f"Whisper transcription failed for {guid}: No valid transcription found")
-        return {"transcription": "", "timings": []}
+        return {"transcription": "", "timings": [], "duration_sec": duration_sec}
 
     # Select the best pass based on the adjusted confidence scores.
     best_index = int(np.argmax(adjusted_confidences))  # Choose the best scoring pass
@@ -351,12 +351,12 @@ def transcribe_audio(file_path, guid):
             transcript_file.write(final_transcript)
     except Exception as e:
         logger.error(f"Failed to write transcript to {transcript_output_path}: {e}")
-        return {"transcription": "", "timings": []}
+        return {"transcription": "", "timings": [], "duration_sec": duration_sec}
 
     total_time = time.time() - start_time
     logger.info(f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds")
 
-    return {"transcription": final_transcript, "timings": final_timings}
+    return {"transcription": final_transcript, "timings": final_timings, "duration_sec": duration_sec}
 
 if __name__ == "__main__":
     # For testing purposes
