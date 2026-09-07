@@ -64,7 +64,7 @@ jobs:
           TAG_NAME: '${{ github.event.release.tag_name }}'
 
       - name: Push to GitHub Packages
-        uses: docker/build-push-action@v6.10.0
+        uses: docker/build-push-action@v7.3.0
         with:
           context: .
           push: true
