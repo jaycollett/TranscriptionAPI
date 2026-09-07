@@ -1,0 +1,2299 @@
+{
+ "generated_from": {
+  "durations": "durations.csv",
+  "levels": "levels.csv",
+  "baseline": "legacy_baseline.json",
+  "archive_files": 653,
+  "seed": 20260907
+ },
+ "rules": [
+  {
+   "rule": "rerun_2026_09_07",
+   "why": "every file the 0.5.4 re-run produced (legacy era E4): the known collapses"
+  },
+  {
+   "rule": "defective_era_E3",
+   "why": "every file transcribed by 0.3.x, the era with all four decode defects live"
+  },
+  {
+   "rule": "below_vad_cutover",
+   "why": "every file whose mean level is under -26 dBFS: the 0.35 VAD branch"
+  },
+  {
+   "rule": "harness_reference",
+   "why": "the six files the 2026-09-07 harness measured"
+  },
+  {
+   "rule": "lowest_legacy_wps",
+   "why": "the ten lowest legacy words-per-second rates in the archive"
+  },
+  {
+   "rule": "lowest_bitrate",
+   "why": "the ten lowest bit rates"
+  },
+  {
+   "rule": "very_long",
+   "why": "every recording over 2700 s"
+  },
+  {
+   "rule": "non_mono_or_non_mp3",
+   "why": "the stereo files and the one AAC file"
+  },
+  {
+   "rule": "multi_voice",
+   "why": "class, retreat, men's breakfast and Q&A recordings"
+  },
+  {
+   "rule": "rare_sample_rate",
+   "why": "two files from every sample rate the archive holds fewer than ten of"
+  },
+  {
+   "rule": "cutover_zone",
+   "why": "twelve files between -26 and -24 dBFS, spread evenly across the edge"
+  },
+  {
+   "rule": "stratified_fill",
+   "why": "a seeded draw over duration x level cells to reach 100"
+  }
+ ],
+ "strata_counts": {
+  "total": 100,
+  "duration_bucket": {
+   "long": 18,
+   "medium": 39,
+   "short": 30,
+   "very_long": 13
+  },
+  "level_bucket": {
+   "cutover_high": 10,
+   "cutover_low": 16,
+   "loud": 14,
+   "normal": 40,
+   "quiet": 18,
+   "very_quiet": 2
+  },
+  "bitrate_bucket": {
+   "high": 20,
+   "low": 36,
+   "medium": 32,
+   "very_low": 12
+  },
+  "sample_rate": {
+   "22050": 24,
+   "32000": 2,
+   "44100": 23,
+   "48000": 51
+  },
+  "channels": {
+   "1": 94,
+   "2": 6
+  },
+  "legacy_era": {
+   "E1_0.1.5": 51,
+   "E2_0.2.x": 18,
+   "E3_0.3.x": 21,
+   "E4_0.5.x": 10
+  },
+  "vad_threshold": {
+   "0.35": 20,
+   "0.5": 80
+  },
+  "multi_voice": {
+   "False": 88,
+   "True": 12
+  },
+  "reasons": {
+   "below_vad_cutover": 20,
+   "cutover_zone": 12,
+   "defective_era_E3": 21,
+   "harness_reference": 6,
+   "lowest_bitrate": 10,
+   "lowest_legacy_wps": 10,
+   "multi_voice": 12,
+   "non_mono_or_non_mp3": 7,
+   "rare_sample_rate": 2,
+   "rerun_2026_09_07": 10,
+   "stratified_fill": 10,
+   "very_long": 13
+  }
+ },
+ "files": [
+  {
+   "file": "tcf.20260428.mp3",
+   "duration_s": 5095.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -22.8,
+   "max_dbfs": 0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 88400,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 13427,
+   "legacy_wps": 2.6353,
+   "sermon_guid": "6cb848dd-38c8-42b2-b31b-b422060d5bc7",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20211203.mp3",
+   "duration_s": 3875.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -27.4,
+   "max_dbfs": -0.3,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 50191,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 9870,
+   "legacy_wps": 2.5471,
+   "sermon_guid": "72bbdf5c-06b9-4ea2-a159-92d00678cac7",
+   "reasons": [
+    "below_vad_cutover",
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20260331a.mp3",
+   "duration_s": 3794.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -25.0,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 83596,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 9942,
+   "legacy_wps": 2.6205,
+   "sermon_guid": "5df34302-7d41-4b45-929e-9b612e838386",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20221203.mp3",
+   "duration_s": 3704.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -18.7,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 81460,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 9514,
+   "legacy_wps": 2.5686,
+   "sermon_guid": "ad0bce4d-e09f-4302-a746-03bee59ff84d",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "women_retreat_2025_session3.mp3",
+   "duration_s": 3387.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -28.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "very_quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 92984,
+   "bitrate_bucket": "medium",
+   "multi_voice": true,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 8468,
+   "legacy_wps": 2.5001,
+   "sermon_guid": "e84bb9c2-456f-48aa-9311-3926b07eb82a",
+   "reasons": [
+    "below_vad_cutover",
+    "harness_reference",
+    "very_long",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "women_retreat_2026_session1.mp3",
+   "duration_s": 3183.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -23.9,
+   "max_dbfs": -0.2,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 73319,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 7975,
+   "legacy_wps": 2.5055,
+   "sermon_guid": "b162bc04-c8f6-44e8-a0bc-5c1824a15d09",
+   "reasons": [
+    "defective_era_E3",
+    "very_long",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20241129.mp3",
+   "duration_s": 3093.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -21.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 128496,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 6878,
+   "legacy_wps": 2.2237,
+   "sermon_guid": "7aaec82c-8daf-4bfa-b512-1d611ea17e40",
+   "reasons": [
+    "lowest_legacy_wps",
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20150424.mp3",
+   "duration_s": 2998.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -17.8,
+   "max_dbfs": -0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 51452,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 8292,
+   "legacy_wps": 2.7658,
+   "sermon_guid": "dac1050d-401d-456f-8c94-c7fbc1557ff1",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20241105.mp3",
+   "duration_s": 2981.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -20.0,
+   "max_dbfs": 0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 97724,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 8056,
+   "legacy_wps": 2.7024,
+   "sermon_guid": "2ba3b5ad-6a63-4b22-be59-41f02ad30386",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20231006.mp3",
+   "duration_s": 2875.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -21.6,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 131337,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 6512,
+   "legacy_wps": 2.265,
+   "sermon_guid": "9f576f4f-2419-4da6-917c-662465a2956c",
+   "reasons": [
+    "lowest_legacy_wps",
+    "very_long"
+   ]
+  },
+  {
+   "file": "ucf.20211106c.mp3",
+   "duration_s": 2869.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -26.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 47678,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 5920,
+   "legacy_wps": 2.0634,
+   "sermon_guid": "4cafefd4-52a3-460c-87e8-6d461b130cb5",
+   "reasons": [
+    "below_vad_cutover",
+    "lowest_legacy_wps",
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20250607.mp3",
+   "duration_s": 2846.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -19.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 94307,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 7619,
+   "legacy_wps": 2.6771,
+   "sermon_guid": "9bfb4615-7c5e-4d81-ad08-a1bee05369aa",
+   "reasons": [
+    "very_long"
+   ]
+  },
+  {
+   "file": "tcf.20240116.mp3",
+   "duration_s": 2783.0,
+   "duration_bucket": "very_long",
+   "mean_dbfs": -24.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 168340,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 7815,
+   "legacy_wps": 2.8081,
+   "sermon_guid": "95f4fe20-e4bd-48a6-9852-8c12cae6a537",
+   "reasons": [
+    "rerun_2026_09_07",
+    "harness_reference",
+    "very_long",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "ucf.20251107.mp3",
+   "duration_s": 2654.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -26.2,
+   "max_dbfs": 0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 116883,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 6610,
+   "legacy_wps": 2.4906,
+   "sermon_guid": "592b233f-1a51-499c-a4a8-8a873a322174",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20211204.mp3",
+   "duration_s": 2603.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -20.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 34694,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 6850,
+   "legacy_wps": 2.6316,
+   "sermon_guid": "596bf83c-52d8-4f90-aaf6-3cca3d281068",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.202606623.mp3",
+   "duration_s": 2498.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -21.5,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 89764,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 6496,
+   "legacy_wps": 2.6005,
+   "sermon_guid": "0610f667-73fb-44a0-86da-b8888deb9666",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20240713.mp3",
+   "duration_s": 2404.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -17.5,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 46670,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 6602,
+   "legacy_wps": 2.7463,
+   "sermon_guid": "919fbefd-f039-4630-be9d-ab21b43b1ca3",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20210319.mp3",
+   "duration_s": 2396.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -23.1,
+   "max_dbfs": -0.1,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 84243,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 5155,
+   "legacy_wps": 2.1515,
+   "sermon_guid": "9224968a-5a1e-48b8-b3ba-4ce3a1fb7acc",
+   "reasons": [
+    "lowest_legacy_wps"
+   ]
+  },
+  {
+   "file": "tcf.20240319a.mp3",
+   "duration_s": 2345.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -17.7,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 144611,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 6248,
+   "legacy_wps": 2.6644,
+   "sermon_guid": "7537102d-a16d-4737-970d-1c27303efd40",
+   "reasons": [
+    "rerun_2026_09_07"
+   ]
+  },
+  {
+   "file": "tcf.20260627.mp3",
+   "duration_s": 2279.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -24.5,
+   "max_dbfs": -1.7,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 79741,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 6012,
+   "legacy_wps": 2.638,
+   "sermon_guid": "cef73417-6fc9-41a6-8dce-00b0019b40d6",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "ucf20211106b.mp3",
+   "duration_s": 2248.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -21.3,
+   "max_dbfs": 0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 51775,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4974,
+   "legacy_wps": 2.2126,
+   "sermon_guid": "9d563dcf-a7e8-40cb-87d4-edcaf27cb75b",
+   "reasons": [
+    "lowest_legacy_wps"
+   ]
+  },
+  {
+   "file": "tcf.20220729.mp3",
+   "duration_s": 2215.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -27.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 97778,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 5769,
+   "legacy_wps": 2.6045,
+   "sermon_guid": "431be157-1268-4c36-a23c-59ad349a4510",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20210514.mp3",
+   "duration_s": 2141.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -18.4,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 37889,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 6203,
+   "legacy_wps": 2.8972,
+   "sermon_guid": "e27b41ed-8728-498b-aa6e-8db5013ef8c4",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20240130a.mp3",
+   "duration_s": 2084.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -23.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 165728,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 5520,
+   "legacy_wps": 2.6488,
+   "sermon_guid": "37118feb-82b9-4566-b4ee-a4cdec2eb151",
+   "reasons": [
+    "rerun_2026_09_07",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "tcf.20240326a.mp3",
+   "duration_s": 2006.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -21.5,
+   "max_dbfs": 0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 146181,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 5296,
+   "legacy_wps": 2.6401,
+   "sermon_guid": "48126245-dd7e-45b7-a186-3b332546b962",
+   "reasons": [
+    "rerun_2026_09_07",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "tcf.20230603_mens_fast.mp3",
+   "duration_s": 1978.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -18.1,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 81667,
+   "bitrate_bucket": "medium",
+   "multi_voice": true,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 5700,
+   "legacy_wps": 2.8817,
+   "sermon_guid": "c65bb9e9-1a04-4446-b1b5-aa8c4f7279ae",
+   "reasons": [
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "women_retreat_2026_session2.mp3",
+   "duration_s": 1974.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -18.4,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 79523,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4741,
+   "legacy_wps": 2.4017,
+   "sermon_guid": "5d334828-493d-4372-b061-26237f5581f6",
+   "reasons": [
+    "defective_era_E3",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20250912.mp3",
+   "duration_s": 1924.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -26.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 92335,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 5358,
+   "legacy_wps": 2.7848,
+   "sermon_guid": "f9fa3c1f-d19f-40bf-a462-2e531df3b494",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20260102.mp3",
+   "duration_s": 1867.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -25.5,
+   "max_dbfs": -4.9,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 98918,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 5416,
+   "legacy_wps": 2.9009,
+   "sermon_guid": "97069afb-a0d5-4094-a4df-2d5a48c02747",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "women_retreat_2025_session2.mp3",
+   "duration_s": 1842.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -24.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 97073,
+   "bitrate_bucket": "medium",
+   "multi_voice": true,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 5461,
+   "legacy_wps": 2.9647,
+   "sermon_guid": "2e617c5e-2bf1-4cab-9f90-aa1467d6131f",
+   "reasons": [
+    "multi_voice",
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20250426.mp3",
+   "duration_s": 1841.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -24.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 92881,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 4939,
+   "legacy_wps": 2.6828,
+   "sermon_guid": "b4caeca0-1ab4-4cdd-a861-f4349d356b42",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20260830.mp3",
+   "duration_s": 1754.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 81296,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4561,
+   "legacy_wps": 2.6003,
+   "sermon_guid": "278f53e8-8486-4a4a-a61b-6da0684c07af",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20240621.mp3",
+   "duration_s": 1735.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.3,
+   "max_dbfs": -0.1,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 46057,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4570,
+   "legacy_wps": 2.634,
+   "sermon_guid": "cf52952f-cbae-4bde-afaf-063d6122603d",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20260724.mp3",
+   "duration_s": 1731.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.7,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 78212,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4552,
+   "legacy_wps": 2.6297,
+   "sermon_guid": "842a8935-9aca-4b98-af25-5dd6b58906fe",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20210611.mp3",
+   "duration_s": 1728.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.2,
+   "max_dbfs": -0.3,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 38027,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4972,
+   "legacy_wps": 2.8773,
+   "sermon_guid": "c663f92c-7008-4135-8efd-6b0d7d119c46",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20210604.mp3",
+   "duration_s": 1660.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.5,
+   "max_dbfs": 0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 36567,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4560,
+   "legacy_wps": 2.747,
+   "sermon_guid": "a1a581d9-48db-4623-aa4b-755a0d9098e1",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20240524.mp3",
+   "duration_s": 1645.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -18.5,
+   "max_dbfs": -0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 46728,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4369,
+   "legacy_wps": 2.6559,
+   "sermon_guid": "9c94635b-a178-4d8f-a3cb-b70bb511eee8",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20201003.mens_.mp3",
+   "duration_s": 1639.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -18.7,
+   "max_dbfs": -0.3,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 62532,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4422,
+   "legacy_wps": 2.698,
+   "sermon_guid": "b48e6837-2d2f-4051-92ce-1683153ebf5d",
+   "reasons": [
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20260313.mp3",
+   "duration_s": 1636.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.6,
+   "max_dbfs": -0.1,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 51289,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 4002,
+   "legacy_wps": 2.4462,
+   "sermon_guid": "65c0d9e3-f9ed-4f06-8f57-0a91f28f3af7",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20250725.mp3",
+   "duration_s": 1629.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -27.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 94711,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 4439,
+   "legacy_wps": 2.725,
+   "sermon_guid": "9d631571-1aa2-4440-a845-0e08e7139030",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "women_retreat_2025_session4.mp3",
+   "duration_s": 1625.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -28.0,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 98853,
+   "bitrate_bucket": "medium",
+   "multi_voice": true,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 3216,
+   "legacy_wps": 1.9791,
+   "sermon_guid": "852201f0-3fe1-456c-9da8-a243705034dc",
+   "reasons": [
+    "below_vad_cutover",
+    "lowest_legacy_wps",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20260710.mp3",
+   "duration_s": 1562.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.5,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 79651,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4075,
+   "legacy_wps": 2.6088,
+   "sermon_guid": "89d98480-370e-42e7-aeb6-67685b54cd13",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20200417.mp3",
+   "duration_s": 1540.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -21.0,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 32000,
+   "channels": 1,
+   "bit_rate": 72425,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4079,
+   "legacy_wps": 2.6487,
+   "sermon_guid": "9d509641-2de4-48a6-b19d-301005039336",
+   "reasons": [
+    "rare_sample_rate"
+   ]
+  },
+  {
+   "file": "tcf.20260626.mp3",
+   "duration_s": 1505.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.1,
+   "max_dbfs": -2.3,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 51566,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3697,
+   "legacy_wps": 2.4565,
+   "sermon_guid": "ebaa7cb7-8924-4960-a404-4c567cf9b721",
+   "reasons": [
+    "defective_era_E3",
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20260821.mp3",
+   "duration_s": 1502.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.7,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 86675,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4058,
+   "legacy_wps": 2.7017,
+   "sermon_guid": "be7f765b-cd29-4ff8-b8da-422b67eb466f",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "cf.20220402.mens_breakfast_In_Christ.mp3",
+   "duration_s": 1498.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 79767,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4003,
+   "legacy_wps": 2.6722,
+   "sermon_guid": "0c2b402b-2071-46d3-a82f-6fb8838eb812",
+   "reasons": [
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20251212.mp3",
+   "duration_s": 1492.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -26.6,
+   "max_dbfs": -6.9,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 96747,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 4116,
+   "legacy_wps": 2.7587,
+   "sermon_guid": "6184d9fd-fe8a-4322-bef1-6cf7b9366173",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf20260825.mp3",
+   "duration_s": 1477.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -21.7,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 88931,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 4174,
+   "legacy_wps": 2.826,
+   "sermon_guid": "709c6c14-28b0-48a7-bfb6-27f6abbf5855",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20240213a.mp3",
+   "duration_s": 1463.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -23.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 141595,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 4022,
+   "legacy_wps": 2.7491,
+   "sermon_guid": "8beac1f2-738c-4466-90fd-8561ce044bb5",
+   "reasons": [
+    "rerun_2026_09_07",
+    "harness_reference"
+   ]
+  },
+  {
+   "file": "tcf.20240405.mp3",
+   "duration_s": 1456.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -25.8,
+   "max_dbfs": 0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 130990,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4126,
+   "legacy_wps": 2.8338,
+   "sermon_guid": "2e1b5a1d-1583-4ad3-b138-2ef7eea998b2",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20231229.mp3",
+   "duration_s": 1455.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.3,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 153808,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 4077,
+   "legacy_wps": 2.8021,
+   "sermon_guid": "743b909c-4756-4903-be9d-7c322c18b236",
+   "reasons": [
+    "non_mono_or_non_mp3",
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20220121.mp3",
+   "duration_s": 1454.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -21.3,
+   "max_dbfs": -0.3,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 35887,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 3977,
+   "legacy_wps": 2.7352,
+   "sermon_guid": "71a6cb52-e1bb-4ed8-b12b-9c14cb8ee24e",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20240416_Formation_Class_Holy_Spirit.mp3",
+   "duration_s": 1454.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.6,
+   "max_dbfs": -0.2,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 48728,
+   "bitrate_bucket": "very_low",
+   "multi_voice": true,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 3864,
+   "legacy_wps": 2.6575,
+   "sermon_guid": "3fd0ba82-5769-4b78-9caa-cb16d67d1ba0",
+   "reasons": [
+    "rerun_2026_09_07",
+    "harness_reference",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20260728a.mp3",
+   "duration_s": 1435.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.0,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 87357,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3809,
+   "legacy_wps": 2.6544,
+   "sermon_guid": "e703c254-270a-44d9-8f28-095a74778d5f",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20260717.mp3",
+   "duration_s": 1419.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -23.5,
+   "max_dbfs": 0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 63391,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3779,
+   "legacy_wps": 2.6631,
+   "sermon_guid": "e73cda3a-aa49-4951-bcaa-e2740c97e56c",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20260905.mp3",
+   "duration_s": 1415.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.7,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 53379,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3663,
+   "legacy_wps": 2.5887,
+   "sermon_guid": "6d855d50-b323-42f9-b9b6-b58dec90af2e",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20220205.mp3",
+   "duration_s": 1371.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -18.8,
+   "max_dbfs": -0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 36057,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 3558,
+   "legacy_wps": 2.5952,
+   "sermon_guid": "3011dd9f-aa44-465a-a534-1dd2beae6f9f",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20240319b.mp3",
+   "duration_s": 1369.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -17.3,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 140863,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 3582,
+   "legacy_wps": 2.6165,
+   "sermon_guid": "0b5649f1-1a6a-426a-8d79-c6537f20b455",
+   "reasons": [
+    "rerun_2026_09_07",
+    "harness_reference"
+   ]
+  },
+  {
+   "file": "tcf.20200807.mp3",
+   "duration_s": 1352.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.9,
+   "max_dbfs": -0.1,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 32000,
+   "channels": 1,
+   "bit_rate": 74415,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 3548,
+   "legacy_wps": 2.6243,
+   "sermon_guid": "f7773d59-cc81-49b0-81b1-79cfc6d0412e",
+   "reasons": [
+    "rare_sample_rate"
+   ]
+  },
+  {
+   "file": "tcf.20240130b.mp3",
+   "duration_s": 1322.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -22.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 161283,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 3659,
+   "legacy_wps": 2.7678,
+   "sermon_guid": "839d8c05-cf1f-4a8e-97d5-ca3d7627d24f",
+   "reasons": [
+    "rerun_2026_09_07",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "tcf.20240412.mp3",
+   "duration_s": 1309.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -18.9,
+   "max_dbfs": -0.1,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 46528,
+   "bitrate_bucket": "very_low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 3378,
+   "legacy_wps": 2.5806,
+   "sermon_guid": "fd76d6b1-c960-4a52-931a-0d174f7dcff3",
+   "reasons": [
+    "lowest_bitrate"
+   ]
+  },
+  {
+   "file": "tcf.20260807.mp3",
+   "duration_s": 1299.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -19.6,
+   "max_dbfs": -0.1,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 87173,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3349,
+   "legacy_wps": 2.5781,
+   "sermon_guid": "1c884f66-0deb-4c5b-9a26-f9597e9394f6",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "ucf.20251108a.mp3",
+   "duration_s": 1269.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -30.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "very_quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 120085,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 3383,
+   "legacy_wps": 2.6659,
+   "sermon_guid": "7fe89633-8ab4-42ec-81a4-dca576da36d4",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "ucf.20251109.mp3",
+   "duration_s": 1267.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.5,
+   "max_dbfs": -0.3,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 125032,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 3190,
+   "legacy_wps": 2.5178,
+   "sermon_guid": "590d8580-8ac5-474f-8705-52241c8a31e5",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20260801.mp3",
+   "duration_s": 1266.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.7,
+   "max_dbfs": -2.7,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 53888,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 3665,
+   "legacy_wps": 2.8949,
+   "sermon_guid": "44afb5b5-0792-41ad-bead-0ae972bcc57b",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20200515b.mp3",
+   "duration_s": 1263.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.2,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 87635,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 3434,
+   "legacy_wps": 2.7189,
+   "sermon_guid": "5908d387-ed9b-4721-a2e6-f0af78e326ca",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "women_retreat_2025_session1.mp3",
+   "duration_s": 1242.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -26.9,
+   "max_dbfs": 0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 95928,
+   "bitrate_bucket": "medium",
+   "multi_voice": true,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 2226,
+   "legacy_wps": 1.7923,
+   "sermon_guid": "310af35a-67c3-4a28-8a5c-1fac9b82a98c",
+   "reasons": [
+    "below_vad_cutover",
+    "lowest_legacy_wps",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20260904.mp3",
+   "duration_s": 1130.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -21.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 53686,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 2759,
+   "legacy_wps": 2.4416,
+   "sermon_guid": "b977ceeb-29f5-4655-9687-bc19c5671a9e",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20250704.mp3",
+   "duration_s": 1088.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -24.5,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 57980,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 2842,
+   "legacy_wps": 2.6121,
+   "sermon_guid": "d3a1cbfd-8184-4a3a-aa44-4a0007f0f064",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "women_retreat_2026_session4.mp3",
+   "duration_s": 996.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -20.2,
+   "max_dbfs": -0.4,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 79864,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 2761,
+   "legacy_wps": 2.7721,
+   "sermon_guid": "3db5376a-9af9-4cf0-be71-96a15abe0c20",
+   "reasons": [
+    "defective_era_E3",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "women_retreat_2026_session3.mp3",
+   "duration_s": 863.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -18.4,
+   "max_dbfs": -0.1,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 79804,
+   "bitrate_bucket": "low",
+   "multi_voice": true,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 2469,
+   "legacy_wps": 2.861,
+   "sermon_guid": "4961d1a7-35fc-4f26-965d-2e232fd37309",
+   "reasons": [
+    "defective_era_E3",
+    "multi_voice"
+   ]
+  },
+  {
+   "file": "tcf.20260728b.mp3",
+   "duration_s": 817.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -19.1,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 89946,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 1987,
+   "legacy_wps": 2.4321,
+   "sermon_guid": "c1374836-5fd0-4431-8a81-79a34f0cc28d",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20240116b.mp3",
+   "duration_s": 798.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -23.6,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 2,
+   "bit_rate": 148887,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 1975,
+   "legacy_wps": 2.4749,
+   "sermon_guid": "6d55d934-d3bc-4980-8f91-0267d7dfcf02",
+   "reasons": [
+    "rerun_2026_09_07",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "tcf.20260331b.mp3",
+   "duration_s": 764.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -27.1,
+   "max_dbfs": 0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 52820,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E2_0.2.x",
+   "legacy_words": 1940,
+   "legacy_wps": 2.5393,
+   "sermon_guid": "f7c1a890-fe7c-49bf-bb87-25edb585b1b0",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20240213b.mp3",
+   "duration_s": 755.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -23.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 138986,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E4_0.5.x",
+   "legacy_words": 2085,
+   "legacy_wps": 2.7616,
+   "sermon_guid": "f5e593e9-c7b8-4809-a476-2a82d7b613f3",
+   "reasons": [
+    "rerun_2026_09_07",
+    "harness_reference"
+   ]
+  },
+  {
+   "file": "tcf.20260731-1.mp3",
+   "duration_s": 669.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.9,
+   "max_dbfs": -0.1,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 54222,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 1747,
+   "legacy_wps": 2.6114,
+   "sermon_guid": "697d8698-873a-4cb4-b160-686de3000032",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "sermon_from_thomas_wingfold_by_george_macdonald.m4a",
+   "duration_s": 628.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -26.3,
+   "max_dbfs": -1.7,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 65171,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1860,
+   "legacy_wps": 2.9618,
+   "sermon_guid": "0453837e-5264-4ae0-aefe-c1c479aa4ea2",
+   "reasons": [
+    "below_vad_cutover",
+    "non_mono_or_non_mp3"
+   ]
+  },
+  {
+   "file": "tcf.20210131.mp3",
+   "duration_s": 625.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 64698,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1767,
+   "legacy_wps": 2.8272,
+   "sermon_guid": "7c6a3a53-4eff-4c28-beaa-047f106c19f3",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20210217.mp3",
+   "duration_s": 616.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -26.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 56250,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1683,
+   "legacy_wps": 2.7321,
+   "sermon_guid": "97fddfd6-ea8f-4991-bce1-d20c7062e3c0",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20201021.mp3",
+   "duration_s": 603.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -25.2,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 61317,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1641,
+   "legacy_wps": 2.7214,
+   "sermon_guid": "c495ed85-5daf-43bc-bb45-034e472b2ceb",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20201214-15.mp3",
+   "duration_s": 586.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -21.5,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 64083,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1601,
+   "legacy_wps": 2.7321,
+   "sermon_guid": "a646623d-60a5-4820-b7b1-e2c5cdba531a",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20200430.mp3",
+   "duration_s": 568.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -21.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 96385,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1607,
+   "legacy_wps": 2.8292,
+   "sermon_guid": "aa2e0f97-6c21-4c5d-8449-995dd6a56b2c",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20200612.mp3",
+   "duration_s": 562.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -21.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 94669,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1470,
+   "legacy_wps": 2.6157,
+   "sermon_guid": "0a01d78b-1e29-4c6e-8ff4-25e120c45ff2",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20200729.mp3",
+   "duration_s": 543.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.2,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 256000,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1421,
+   "legacy_wps": 2.6169,
+   "sermon_guid": "fa0280c0-738d-4bc7-b0f0-073711c12290",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.202606623b.mp3",
+   "duration_s": 535.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -19.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 22050,
+   "channels": 1,
+   "bit_rate": 53879,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E3_0.3.x",
+   "legacy_words": 1375,
+   "legacy_wps": 2.5701,
+   "sermon_guid": "03cac397-7f70-4029-a199-28c64eb0f501",
+   "reasons": [
+    "defective_era_E3"
+   ]
+  },
+  {
+   "file": "tcf.20210114.mp3",
+   "duration_s": 511.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -21.6,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 66144,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1530,
+   "legacy_wps": 2.9941,
+   "sermon_guid": "307f1a70-880a-4aa2-9187-135f33c3c2c0",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20201002.mp3",
+   "duration_s": 505.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -27.0,
+   "max_dbfs": -0.4,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 61534,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1395,
+   "legacy_wps": 2.7624,
+   "sermon_guid": "0e1fa55b-b870-4aaf-a737-87521349e8b7",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20200925.mp3",
+   "duration_s": 489.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -26.6,
+   "max_dbfs": -1.4,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 61514,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1195,
+   "legacy_wps": 2.4438,
+   "sermon_guid": "dcd7f41f-eaba-48cc-a286-9e8848363093",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20200422.mp3",
+   "duration_s": 486.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -27.9,
+   "max_dbfs": -3.4,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 90360,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1355,
+   "legacy_wps": 2.7881,
+   "sermon_guid": "3e207841-3f67-49d3-939a-dd6340c1010c",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20200814.mp3",
+   "duration_s": 480.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.8,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 256000,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1264,
+   "legacy_wps": 2.6333,
+   "sermon_guid": "ab272b76-6077-4db0-814d-95b4422e5b42",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20210210.mp3",
+   "duration_s": 469.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.3,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 66042,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1248,
+   "legacy_wps": 2.661,
+   "sermon_guid": "775d5f53-9519-490a-b7c0-13bf14be7d40",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20200726.mp3",
+   "duration_s": 450.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -26.9,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 256000,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1232,
+   "legacy_wps": 2.7378,
+   "sermon_guid": "7c5dfa46-91d8-4722-82e7-98dbc57aba1c",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20200818.mp3",
+   "duration_s": 412.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -25.3,
+   "max_dbfs": -0.0,
+   "level_bucket": "cutover_low",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 92472,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1009,
+   "legacy_wps": 2.449,
+   "sermon_guid": "a942c6d9-3810-47b5-930d-fb1b09a2ad65",
+   "reasons": [
+    "cutover_zone"
+   ]
+  },
+  {
+   "file": "tcf.20200926.mp3",
+   "duration_s": 400.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -22.4,
+   "max_dbfs": -0.1,
+   "level_bucket": "cutover_high",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 65850,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 885,
+   "legacy_wps": 2.2125,
+   "sermon_guid": "d8b31065-b627-4bca-96e7-ca8a0e094374",
+   "reasons": [
+    "lowest_legacy_wps"
+   ]
+  },
+  {
+   "file": "tcf.20200622.mp3",
+   "duration_s": 396.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.4,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 92432,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 899,
+   "legacy_wps": 2.2702,
+   "sermon_guid": "0b1136b7-3486-4f64-b1cf-7badd0339700",
+   "reasons": [
+    "lowest_legacy_wps"
+   ]
+  },
+  {
+   "file": "tcf.20200922.mp3",
+   "duration_s": 378.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -20.2,
+   "max_dbfs": -0.0,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 63946,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 1164,
+   "legacy_wps": 3.0794,
+   "sermon_guid": "fc1e03ef-b189-4927-9788-0637e9b1078e",
+   "reasons": [
+    "stratified_fill"
+   ]
+  },
+  {
+   "file": "tcf.20200626b.mp3",
+   "duration_s": 342.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -18.7,
+   "max_dbfs": -0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 85615,
+   "bitrate_bucket": "medium",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 719,
+   "legacy_wps": 2.1023,
+   "sermon_guid": "77c5c74a-83a8-4e4a-baa4-e18e3ed6e34e",
+   "reasons": [
+    "lowest_legacy_wps"
+   ]
+  },
+  {
+   "file": "tcf.20201126.mp3",
+   "duration_s": 257.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -26.3,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 60031,
+   "bitrate_bucket": "low",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 734,
+   "legacy_wps": 2.856,
+   "sermon_guid": "e02c8fc4-d11b-498c-b699-62ef834c74f7",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20200809.mp3",
+   "duration_s": 255.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -27.3,
+   "max_dbfs": -0.0,
+   "level_bucket": "quiet",
+   "vad_threshold": 0.35,
+   "sample_rate": 44100,
+   "channels": 1,
+   "bit_rate": 256000,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 754,
+   "legacy_wps": 2.9569,
+   "sermon_guid": "fcc78932-9c03-4fe9-adeb-70bf28b578f1",
+   "reasons": [
+    "below_vad_cutover"
+   ]
+  },
+  {
+   "file": "tcf.20240301a.mp3",
+   "duration_s": 238.0,
+   "duration_bucket": "short",
+   "mean_dbfs": -21.5,
+   "max_dbfs": -1.7,
+   "level_bucket": "normal",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 128111,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "E1_0.1.5",
+   "legacy_words": 660,
+   "legacy_wps": 2.7731,
+   "sermon_guid": "c22e2749-fb19-46ca-932b-bb43348a1afb",
+   "reasons": [
+    "stratified_fill"
+   ]
+  }
+ ],
+ "supplementary": [
+  {
+   "file": "tcf.20240326b.mp3",
+   "duration_s": 1194.0,
+   "duration_bucket": "medium",
+   "mean_dbfs": -17.8,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 136140,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "unknown",
+   "legacy_words": null,
+   "legacy_wps": null,
+   "sermon_guid": null,
+   "reasons": [
+    "known_collapse_no_baseline"
+   ]
+  },
+  {
+   "file": "tcf.20240514.mp3",
+   "duration_s": 2226.0,
+   "duration_bucket": "long",
+   "mean_dbfs": -17.6,
+   "max_dbfs": 0.0,
+   "level_bucket": "loud",
+   "vad_threshold": 0.5,
+   "sample_rate": 48000,
+   "channels": 1,
+   "bit_rate": 133391,
+   "bitrate_bucket": "high",
+   "multi_voice": false,
+   "legacy_era": "unknown",
+   "legacy_words": null,
+   "legacy_wps": null,
+   "sermon_guid": null,
+   "reasons": [
+    "known_collapse_no_baseline"
+   ]
+  }
+ ]
+}
