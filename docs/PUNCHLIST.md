@@ -328,7 +328,7 @@ Status: Done in 0.5.0 (Stop tracking the stale SQLite database and keep host too
 base ships `requests 2.28.2`.
 Recommended change: `requirements-dev.txt` with `requests`, `pytest`,
 `pytest-cov`, `ruff`; use it in CI.
-Status: Open
+Status: Done in 0.5.0 (Declare the dev tooling and pin the disk-space action to a commit)
 
 **27. checkQueue.py ETA math ignores jobs ahead**
 `checkQueue.py:check_transcription_queue` computes
@@ -344,7 +344,7 @@ Status: Open
 (newest version tag by `-v:refname`) are consistent between release and weekly
 runs; just document that a hotfix of an older line is not retagged `latest`.
 Recommended change: pin to a commit SHA.
-Status: Open
+Status: Done in 0.5.0 (Declare the dev tooling and pin the disk-space action to a commit)
 
 **29. Dockerfile items for a separate GPU-validated release**
 Beyond the header's deferred list (non-root USER, `cuda-toolkit-12-2` to runtime
