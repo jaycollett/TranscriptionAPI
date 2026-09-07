@@ -3,6 +3,12 @@
 tmp/
 models_cache/
 
+# SQLite queue databases. The service creates its own inside the container
+# layer on startup and it is meant to be lost on redeploy; never ship one.
+*.db
+*.db-*
+transcriptions
+
 # VCS / Python / dev cruft
 .git/
 .gitignore
@@ -11,9 +17,21 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 tests/
+requirements-dev.txt
+
+# Host-side tooling and CI, not part of the service
+runDocker.sh
+checkQueue.py
+testIt.py
+.github/
 
 # Logs, patches, secrets, local notes
 *.log
 *.patch
 .hf_token
 *.md
+/tmp
+test.mp3
+
+# Project-local agent memory, never part of the service
+.claude/

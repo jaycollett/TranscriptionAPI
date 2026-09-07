@@ -321,7 +321,7 @@ ships it plus `runDocker.sh`, `checkQueue.py`, `testIt.py` and `.github/`.
 Recommended change: `git rm transcriptions`; add `*.db*`, `transcriptions`,
 `runDocker.sh`, `.github/`, `checkQueue.py`, `testIt.py` to `.dockerignore` and
 `*.db*` to `.gitignore`. The `*.md` exclusion is harmless.
-Status: Open
+Status: Done in 0.5.0 (Stop tracking the stale SQLite database and keep host tooling out of the image)
 
 **26. `requests` used by the helper scripts is not declared**
 `checkQueue.py`, `testIt.py`; it only works in the container because the conda

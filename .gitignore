@@ -1,6 +1,14 @@
 *.pyc
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
 /tmp
 test.mp3
+
+# SQLite queue databases created by a local run of app.py
+*.db
+*.db-*
 
 # Project-local agent memory, never part of the service
 .claude/
