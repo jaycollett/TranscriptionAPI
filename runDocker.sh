@@ -9,7 +9,7 @@ set -euo pipefail
 
 IMAGE="transcription-api"
 CONTAINER="transcription-api"
-VERSION="$(git describe --always --dirty 2>/dev/null || date +untagged-%Y%m%d%H%M%S)"
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || date +untagged-%Y%m%d%H%M%S)"
 HEALTH_URL="http://localhost:5030/health"
 HEALTH_TIMEOUT_SEC=180
 
