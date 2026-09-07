@@ -329,6 +329,97 @@ seeing one device. Five Whisper passes took 106 s against 139 to 145 s on 0.4.0,
 0.5.0 and 0.5.1, so the synchronous-launch setting had been costing roughly a
 quarter of the decode time. End to end 138 s against 170 to 180 s.
 
+## 2026-09-07 - 0.5.3: CI model download rate limit
+
+The 0.5.1 and 0.5.2 release runs (34099157643, 34099726604) failed in the
+Dockerfile's `mfa model download` step with MFA's ModelsConnectionError:
+"Current hourly rate limit (60 per hour) has been exceeded for the GitHub
+API". `mfa model download` resolves models through the GitHub releases API of
+MontrealCorpusTools/mfa-models; unauthenticated that API allows 60 requests
+per hour per source address, and the shared GitHub Actions runner pool
+exhausts it, while the same build on the GPU host succeeds because it is the
+only caller from its address.
+
+Fix: the workflow passes `${{ secrets.GITHUB_TOKEN }}` to build-push-action as
+a BuildKit secret (`secrets: github_token=...`), and the Dockerfile mounts it
+with `RUN --mount=type=secret,id=github_token` and appends `--github_token` to
+both `mfa model download` calls only when `/run/secrets/github_token` is
+present. A local build supplies no secret and downloads unauthenticated as
+before. GITHUB_TOKEN is rate limited at 1,000 requests per hour per repository
+and needs no scope for public releases. Secret mounts are not layers, so the
+token is not in the image or its history (the concern that closed service
+item 4 in 0.4.0). No `# syntax=` directive is needed: `RUN --mount` is in the
+stable Dockerfile reference and BuildKit has been the default builder since
+Docker 23.0; `runDocker.sh` exports `DOCKER_BUILDKIT=1` anyway so a stray
+`DOCKER_BUILDKIT=0` in the calling shell cannot select the legacy builder.
+
+Release-run history since 0.4.0: 0.5.0 was the only run whose image build
+completed (0.5.1 and 0.5.2 died at the MFA download). The 0.4.0 and 0.5.0 runs
+pushed their images and failed only at the Trivy gate, on the base-image and
+cuda-toolkit findings that 0.5.2's cuda-libraries change addresses.
+
+Validation of 0.5.3-rc1 on the reference file: 2084 words, 2.760 words/sec, 194
+timings, MFA aligned on the first attempt, 103 s for the five Whisper passes,
+134 s end to end, zero MFA working directories left. The local build ran the MFA
+download unauthenticated through the new conditional, as intended.
+
+## 2026-09-07 - 0.5.4: residual CVE pass
+
+The 0.5.2 release run (34099726604) pushed its image and failed only at the
+Trivy gate (CRITICAL/HIGH, fixable, `vuln-type os,library`): 1 Ubuntu finding
+and 15 Python findings. A local scan of `transcription-api:0.5.3` with the
+current Trivy database counts 16 (one more vendored setuptools entry, below).
+None of them were in the environment the service runs from. Where each lived,
+found by inspecting the 0.5.3 image on the GPU host, and what fixed it:
+
+- `libnghttp2-14 1.40.0-1build1` (CVE-2023-44487): Ubuntu 20.04 package in the
+  MFA base image. `libnghttp2-14` is now on the existing apt-get install line,
+  which pulls the focal-security build (1.40.0-1ubuntu0.3) in the same layer.
+  No blanket `apt-get upgrade`.
+- `certifi 2022.12.7`, `cryptography 39.0.1`, `pyOpenSSL 23.0.0`,
+  `setuptools 65.6.3`, `urllib3 1.26.14` (13 findings between them): live
+  site-packages of `/opt/conda`, the mambaforge 22.11 environment the MFA
+  image was bootstrapped from (Python 3.10.9, conda 22.11.1, pip 23.0). There
+  is no `/opt/conda/pkgs` cache; the `(PKG-INFO)` label in the report just
+  means certifi and setuptools are egg-info installs there. The service never
+  touches this environment: ENTRYPOINT is tini, CMD is `python app.py`, PATH
+  puts `/env/bin` ahead of `/opt/conda/bin`, and `/env/bin/mfa` has an
+  `/env/bin/python` shebang. Fix: one RUN with `/opt/conda/bin/pip install`
+  of those five packages plus `requests` (2.28.2 pinned `urllib3<1.27`, and
+  pyOpenSSL 23 pinned `cryptography<40`), followed by `pip check`. Result:
+  certifi 2026.7.22, cryptography 50.0.1, pyOpenSSL 26.4.0, setuptools 84.0.0,
+  urllib3 2.7.0, requests 2.34.2, cffi 2.1.1; `pip check` clean; conda
+  22.11.1 still answers `--version` and `info`.
+- `msgpack 1.1.2` (GHSA-6v7p-g79w-8964) and a second `setuptools 70.3.0`
+  (CVE-2025-47273), both reported without a file path: these are the
+  libraries pip 26.2.1 vendors inside `/env`, declared in
+  `pip/_vendor/bom.cdx.json`, a CycloneDX SBOM that Trivy reads. `/env`'s own
+  msgpack is 1.2.1 and its setuptools is 81, both clean. pip 26.2.1 is the
+  newest release on PyPI (2026-08-04) and its `vendor.txt` still lists
+  `msgpack==1.1.2` and `setuptools==70.3.0`, so no pip upgrade clears them.
+  Fix: `python -m pip uninstall -y pip` in a RUN after the Whisper bake, so
+  the requirements and model layers stay cached. Nothing runs pip in the built
+  image (`validate-rc.sh` execs only `python` and `mfa`). Deleting just
+  `bom.cdx.json` was rejected: it hides the finding and leaves the code.
+
+Trivy on `transcription-api:0.5.4-rc1` on the GPU host: 0 findings on every
+target. The scan also warns "Third-party SBOM may lead to inaccurate
+vulnerability detection"; that is the Qt SPDX files under `/env/lib/qt6/sbom`
+and av's `auditwheel.cdx.json`, all clean, not a finding. Image 15.9 GB, the
+same as 0.5.3. In the rc image torch reports CUDA available and ctranslate2
+one device; `mfa version` is 3.4.3.dev0+gd2dc283bd.d20260820, unchanged.
+`Dockerfile.release` needs nothing: it overlays code on a retained image.
+
+Adding a package to the apt line invalidates every layer after it, so the
+first build after this change re-downloads the MFA models, the requirements
+and the Whisper model. On the GPU host that was 3.5 minutes with warm caches.
+
+Validation of 0.5.4-rc1 on the reference file: 2077 words, 2.750 words/sec, 146
+timings, MFA aligned on the first attempt, zero MFA working directories left.
+The five Whisper passes took 194 s because the quality experiment harness was
+sharing GPU 0 at the time; that is contention, not a regression (0.5.2 and 0.5.3
+measured 103 to 106 s on an idle GPU).
+
 ## 2026-09-07 - Quality analysis and harness results
 
 Two code analyses of the decode path and the post-Whisper pipeline, and a

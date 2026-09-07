@@ -80,6 +80,12 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/jaycollett/${{ env.REPO_NAME_LC }}:${{ env.TAG_NAME_LC }}, ghcr.io/jaycollett/${{ env.REPO_NAME_LC }}:latest
+          # The Dockerfile's `mfa model download` step hits the GitHub releases
+          # API, whose unauthenticated limit (60/hour per address) the shared
+          # runner pool exhausts. The token is a BuildKit secret mount, not a
+          # build arg, so it never lands in an image layer.
+          secrets: |
+            github_token=${{ secrets.GITHUB_TOKEN }}
 
       # CVE gate aligned with Harbor's policy (CRITICAL/HIGH, fixable only).
       # On the weekly scheduled rebuild this reports without failing: a CVE

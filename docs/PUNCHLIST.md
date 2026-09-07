@@ -101,6 +101,11 @@ rebuild failed at that layer. Production confirmed it: the running image was a
 locally built `transcription-api:0.3.0-decode-fix`, not a ghcr.io tag. The
 overlay's `docker history` also showed the token in `ARG` and `ENV` layers.
 Status: Resolved in 0.4.0 (speaker diarization removed; the build no longer needs a Hugging Face token)
+Note (0.5.3): the token-in-history concern is closed by 0.4.0. The CI build
+still failed on 0.5.1 and 0.5.2, but at a different layer: `mfa model download`
+hit the unauthenticated GitHub API limit (60/hour) from the shared runner pool.
+0.5.3 passes the workflow's GITHUB_TOKEN as a BuildKit secret mount, which is
+not a layer, so `docker history` stays clean. See `docs/SESSION_KNOWLEDGE.md`.
 
 **5. Audio files survive redeploys but their DB rows do not, so they are never cleaned**
 `runDocker.sh` (`-v ./tmp:/tmp`), `app.py:transcription_worker` cleanup. The
@@ -369,7 +374,13 @@ validate on devmachine against the same two reference files (755 s and
 2783 s), comparing words/sec and wall time. The Werkzeug dev server is
 acceptable for a LAN-only single client; if ever replaced, use single-process
 `waitress` so the worker thread is not duplicated.
-Status: Deferred to a GPU-validated release
+2026-09-07 update: `cuda-libraries-12-2` and the `CUDA_LAUNCH_BLOCKING`
+removal shipped in 0.5.2 (base pin `v3.4.2` since 0.5.1). The residual Trivy
+findings (libnghttp2-14, the `/opt/conda` bootstrap packages, pip's vendored
+msgpack and setuptools in `/env`) are cleared in 0.5.4; see the session
+knowledge entry "0.5.4: residual CVE pass". The non-root USER is the only
+item still open.
+Status: Mostly shipped (0.5.2, 0.5.4); non-root USER still deferred
 
 **30. torch 2.12.1 carries a low-severity advisory (torch.jit.script)**
 `requirements.txt` (`torch==2.12.1`, `torchvision==0.27.1`). GitHub Dependabot
