@@ -1,54 +1,20 @@
-"""Tests for the production-live transcription features that were merged alongside the
-queue-hardening: speaker diarization and the multi-speaker MFA-skip decision.
+"""Tests for the forced-alignment step in app.py.
 
-These cover the *decision logic* only - no GPU, no pyannote models, no MFA binary - so
-they stay fast and deterministic in CI. The heavy diarization/alignment work itself is
-exercised in production, not here.
+run_forced_alignment must always attempt MFA (there is no longer a diarization
+short-circuit ahead of it) and must fall back to the Whisper segments when the aligner
+fails. This covers the control flow only: no GPU, no MFA binary.
 """
 
 import uuid
 
-import pytest
 
-
-# --------------------------------------------------------------------------------------
-# Speaker diarization graceful fallback
-# --------------------------------------------------------------------------------------
-def test_detect_speakers_falls_back_to_one_without_pyannote(app_module, monkeypatch):
-    """When pyannote is unavailable, detect_speakers assumes a single speaker (1)
-    instead of raising, so the pipeline degrades gracefully on hosts without it."""
-    monkeypatch.setattr(app_module, "PYANNOTE_AVAILABLE", False)
-    assert app_module.detect_speakers("/nonexistent/audio.wav") == 1
-
-
-# --------------------------------------------------------------------------------------
-# Multi-speaker content skips MFA forced alignment
-# --------------------------------------------------------------------------------------
-def test_multi_speaker_audio_skips_mfa(app_module, monkeypatch):
-    """If diarization reports >1 speaker, run_forced_alignment returns the Whisper
-    segments untouched and never shells out to MFA (which is inaccurate on multi-speaker
-    audio)."""
-    monkeypatch.setattr(app_module, "detect_speakers", lambda path: 3)
-
-    # MFA must NOT be invoked for multi-speaker audio.
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("subprocess.run (MFA) must not run for multi-speaker audio")
-
-    monkeypatch.setattr(app_module.subprocess, "run", fail_if_called)
-
-    whisper_segments = [{"start": 0.0, "end": 2.5, "text": "hello world"}]
-    result = app_module.run_forced_alignment("/tmp/audio.wav", whisper_segments, str(uuid.uuid4()))
-
-    assert result == whisper_segments
-
-
-def test_single_speaker_audio_invokes_mfa(app_module, monkeypatch, tmp_path):
-    """With a single speaker, run_forced_alignment proceeds into the MFA path (shells out
-    to the aligner) rather than short-circuiting on the diarization check. MFA failing here
-    causes a safe fallback to the Whisper segments."""
+def test_run_forced_alignment_always_invokes_mfa_and_falls_back_on_failure(
+    app_module, monkeypatch, tmp_path
+):
+    """run_forced_alignment shells out to MFA unconditionally; when MFA fails it returns
+    the original Whisper segments rather than raising."""
     import subprocess as _subprocess
 
-    monkeypatch.setattr(app_module, "detect_speakers", lambda path: 1)
     monkeypatch.setitem(app_module.app.config, "UPLOAD_FOLDER", str(tmp_path))
 
     # Minimal AudioSegment stub so MFA input prep (WAV export) succeeds.
@@ -78,7 +44,5 @@ def test_single_speaker_audio_invokes_mfa(app_module, monkeypatch, tmp_path):
     whisper_segments = [{"start": 0.0, "end": 2.5, "text": "hello world"}]
     result = app_module.run_forced_alignment(str(audio_path), whisper_segments, str(uuid.uuid4()))
 
-    # Single-speaker audio must reach the MFA invocation (not skip it)...
-    assert mfa_calls, "single-speaker audio should invoke MFA, not skip alignment"
-    # ...and on MFA failure it falls back safely to the original Whisper segments.
+    assert mfa_calls, "run_forced_alignment should always reach the MFA invocation"
     assert result == whisper_segments

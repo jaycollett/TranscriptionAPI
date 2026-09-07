@@ -13,14 +13,6 @@ from pydub import AudioSegment  # Audio file manipulation
 from datetime import datetime, timedelta, timezone
 import logging  # Logging for debugging and monitoring
 
-# Optional import for speaker diarization (graceful fallback if not available)
-try:
-    from pyannote.audio import Pipeline
-    PYANNOTE_AVAILABLE = True
-except ImportError:
-    PYANNOTE_AVAILABLE = False
-    logging.getLogger(__name__).warning("pyannote.audio not available - speaker diarization will be disabled")
-
 
 # Configure logging
 logging.basicConfig(
@@ -213,61 +205,17 @@ def recover_stuck_jobs(cursor):
         app.logger.info("Startup recovery: no orphaned 'processing' jobs found.")
     return stuck
 
-def detect_speakers(audio_path):
-    """
-    Use pyannote-audio to detect the number of unique speakers in an audio file.
-    Returns the number of speakers detected.
-    """
-    if not PYANNOTE_AVAILABLE:
-        app.logger.warning("pyannote-audio not available, assuming single speaker")
-        return 1
-    
-    try:
-        # Load the speaker diarization pipeline from local models
-        # The model is downloaded to cache_dir during build, so use that location
-        local_model_cache = "/app/models/pyannote"
-        if os.path.exists(local_model_cache):
-            app.logger.info(f"Loading pyannote model from local cache: {local_model_cache}")
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", cache_dir=local_model_cache)
-        else:
-            app.logger.warning("Local pyannote model cache not found, falling back to downloading from HuggingFace")
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
-        
-        # Run speaker diarization
-        diarization = pipeline(audio_path)
-        
-        # Get unique speakers
-        speakers = set()
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            speakers.add(speaker)
-        
-        num_speakers = len(speakers)
-        app.logger.info(f"Speaker diarization detected {num_speakers} unique speakers in {audio_path}")
-        return num_speakers
-        
-    except Exception as e:
-        app.logger.warning(f"Speaker diarization failed: {e}, assuming single speaker")
-        return 1  # Assume single speaker if detection fails
-
 def run_forced_alignment(audio_path, whisper_segments, guid):
     # Use Montreal Forced Aligner to refine Whisper's segment timings
     """
     Runs Montreal Forced Aligner (MFA) to refine the timestamps from the Whisper transcript,
-    ensuring they align with Whisper's segment structure.
+    ensuring they align with Whisper's segment structure. MFA is always attempted; if it
+    fails for any reason the Whisper segments are returned unchanged.
     """
     upload_folder = app.config['UPLOAD_FOLDER']
     transcript_path = os.path.join(upload_folder, f"{guid}.txt")
     aligned_output_dir = os.path.join(upload_folder, f"{guid}_aligned")
     alignment_json_path = os.path.join(aligned_output_dir, f"{guid}.json")
-
-    # Check for multi-speaker content before running/checking MFA
-    # Use proper speaker diarization to detect multiple speakers
-    num_speakers = detect_speakers(audio_path)
-    
-    if num_speakers > 1:
-        app.logger.warning(f"Multi-speaker content detected ({num_speakers} speakers). Skipping MFA alignment to maintain accuracy.")
-        app.logger.info("Using Whisper segments only for multi-speaker audio to ensure accurate timing alignment")
-        return whisper_segments  # Skip MFA entirely for multi-speaker content
 
     # If alignment already exists, avoid re-running MFA
     if os.path.exists(alignment_json_path):
