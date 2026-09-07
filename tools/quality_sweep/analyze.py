@@ -197,8 +197,13 @@ def attach_service_log(row, job):
     row["legacy_wps_speech"] = None
     row["trim_count"] = None
     row["trimmed_words"] = None
+    row["trims"] = []
     row["alignment_log"] = {}
     row["service_log_fields"] = {}
+    row["vad_profile_taken"] = None
+    row["audio_level_service_dbfs"] = None
+    row["service_uncovered_fraction"] = None
+    row["rescue_pass_logged"] = None
     if not job:
         return row
 
@@ -206,6 +211,14 @@ def attach_service_log(row, job):
     row["alignment_log"] = job.get("alignment") or {}
     row["trim_count"] = job.get("trim_count")
     row["trimmed_words"] = job.get("trimmed_words")
+    row["trims"] = job.get("trims") or []
+    row["vad_profile_taken"] = job.get("vad_profile")
+    row["audio_level_service_dbfs"] = job.get("audio_level_dbfs")
+    row["service_uncovered_fraction"] = job.get("service_uncovered_fraction")
+    row["rescue_pass_logged"] = bool(job.get("rescue_pass"))
+    primary = job.get("primary_pass") or {}
+    row["windows_total"] = primary.get("windows_total")
+    row["primary_words"] = primary.get("words")
     speech = job.get("speech_seconds")
     if speech:
         row["speech_seconds"] = speech
@@ -215,7 +228,8 @@ def attach_service_log(row, job):
             row["new_wps_speech"] = round(row["new_words"] / speech, 4)
         if row["legacy_words"]:
             row["legacy_wps_speech"] = round(row["legacy_words"] / speech, 4)
-    for key in ("clamped", "clamped_timings", "span_ratio_lt_0_5", "whisper_fallback_segments",
+    for key in ("clamped", "clamped_timings", "span_ratio_lt_0_5", "span_ratio_p5",
+                "span_ratio_median", "empty_fallbacks", "whisper_fallback_segments",
                 "mfa_words", "mfa_segments", "agree250", "utterances"):
         if key in row["alignment_log"]:
             row[key] = row["alignment_log"][key]
@@ -306,6 +320,20 @@ def dedupe_summary(rows):
                 "word_delta_pct": r["word_delta_pct"],
             }
             for r in sorted(trimmed, key=lambda r: -(r["trimmed_words"] or 0))
+        ],
+        # Every trimmed phrase, so each one can be judged by eye. A four-word minimum
+        # still removes a liturgical response that straddles a seam, so whether four is
+        # the right floor is a question about these phrases, not about the count.
+        "phrases": [
+            {
+                "file": r["file"],
+                "at_s": t.get("at_s"),
+                "overlap_words": t.get("overlap_words"),
+                "removed": t.get("removed"),
+                "emptied_segment": t.get("emptied"),
+            }
+            for r in trimmed
+            for t in (r.get("trims") or [])
         ],
     }
 
@@ -424,6 +452,31 @@ def summarise_population(rows):
         ], digits=1),
         "wall_s": distribution([r["wall_s"] for r in rows], digits=1),
         "timings": timing_health(rows),
+        "alignment": alignment_health(rows),
+        "service_uncovered_fraction": distribution(
+            [r.get("service_uncovered_fraction") for r in completed(rows)], digits=5
+        ),
+    }
+
+
+def alignment_health(rows):
+    """The aligner's own counters, which 0.6.0 emits on the alignment line."""
+    done = completed(rows)
+
+    def values(key):
+        return [r[key] for r in done if r.get(key) is not None]
+
+    return {
+        "agree250": distribution(values("agree250"), digits=4),
+        "span_ratio_p5": distribution(values("span_ratio_p5"), digits=4),
+        "span_ratio_median": distribution(values("span_ratio_median"), digits=4),
+        "span_ratio_lt_0_5_total": sum(values("span_ratio_lt_0_5")),
+        "span_ratio_lt_0_5_files": sum(1 for v in values("span_ratio_lt_0_5") if v),
+        "clamped_total": sum(values("clamped")),
+        "clamped_files": sum(1 for v in values("clamped") if v),
+        "empty_fallbacks_total": sum(values("empty_fallbacks")),
+        "empty_fallbacks_files": sum(1 for v in values("empty_fallbacks") if v),
+        "measured": len(values("agree250")),
     }
 
 
@@ -460,10 +513,8 @@ def level_table(rows, lo=LEVEL_TABLE_LO, hi=LEVEL_TABLE_HI):
             "coverage_median": percentile(
                 [r.get("coverage") for r in completed(members)], 50
             ),
-            "vad_threshold_logged": sorted({
-                str(r["service_log_fields"].get("vad_threshold"))
-                for r in members
-                if (r.get("service_log_fields") or {}).get("vad_threshold") is not None
+            "vad_profile_taken": sorted({
+                r["vad_profile_taken"] for r in members if r.get("vad_profile_taken")
             }) or None,
             "seg_mean_s_median": percentile(
                 [r.get("seg_mean_s") for r in completed(members)], 50
@@ -757,6 +808,42 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
                 for r in ded["files"]
             ]
             out.append(_table(headers, body))
+            out.append("")
+        if ded["phrases"]:
+            out.append(
+                "Every trimmed phrase, for judging by eye. A four-word minimum still "
+                "removes a liturgical response that straddles a seam, so whether four is "
+                "the right floor is a question about these phrases and not about the count."
+            )
+            out.append("")
+            headers = ["file", "at s", "words", "phrase removed", "emptied segment"]
+            body = [
+                [p["file"], _fmt(p["at_s"], 2), _fmt(p["overlap_words"], 0),
+                 (p["removed"] or "").replace("|", "/"),
+                 "yes" if p["emptied_segment"] else "no"]
+                for p in ded["phrases"]
+            ]
+            out.append(_table(headers, body))
+    else:
+        out.append("Not measured: no service log was supplied.")
+    out.append("")
+
+    align = overall["alignment"]
+    out.append("## Alignment counters")
+    out.append("")
+    if align["measured"]:
+        out.append(
+            f"Measured on {align['measured']} files. agree250 median "
+            f"{_fmt(align['agree250'].get('median'), 4)}, p5 "
+            f"{_fmt(align['agree250'].get('p5'), 4)}. Span ratio median of medians "
+            f"{_fmt(align['span_ratio_median'].get('median'), 4)}, p5 of p5s "
+            f"{_fmt(align['span_ratio_p5'].get('p5'), 4)}. "
+            f"{align['span_ratio_lt_0_5_total']} segments fell below the 0.5 span ratio "
+            f"across {align['span_ratio_lt_0_5_files']} files; "
+            f"{align['clamped_total']} timings came from the monotonic clamp across "
+            f"{align['clamped_files']} files; {align['empty_fallbacks_total']} empty "
+            f"fallbacks across {align['empty_fallbacks_files']} files."
+        )
     else:
         out.append("Not measured: no service log was supplied.")
     out.append("")

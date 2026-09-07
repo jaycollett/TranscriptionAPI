@@ -21,6 +21,7 @@ if SWEEP_DIR not in sys.path:
 
 import analyze  # noqa: E402
 import determinism  # noqa: E402
+import gaps  # noqa: E402
 import legacy_eras  # noqa: E402
 import runner  # noqa: E402
 import select_files  # noqa: E402
@@ -822,3 +823,192 @@ def test_analyse_and_render_survive_a_run_without_a_service_log():
     analysis = analyze.analyse(fixture_state(), fixture_baseline(), fixture_file_list())
     text = analyze.render_markdown(analysis)
     assert "Not measured: no service log was supplied." in text
+
+
+# --- interval arithmetic and uncovered speech ----------------------------------------------
+
+
+def test_merge_coalesces_and_sorts():
+    assert gaps.merge([(5, 7), (0, 3), (2, 4)]) == [(0.0, 4.0), (5.0, 7.0)]
+    assert gaps.merge([(1, 2), (2, 3)]) == [(1.0, 3.0)]
+    assert gaps.merge([(3, 1), (None, 5)]) == []
+
+
+def test_complement_covers_the_holes_and_the_edges():
+    assert gaps.complement([(2, 4)], 0, 10) == [(0, 2), (4, 10)]
+    assert gaps.complement([], 0, 5) == [(0, 5)]
+    assert gaps.complement([(0, 5)], 0, 5) == []
+    # Intervals outside the window are ignored.
+    assert gaps.complement([(-5, -1), (20, 30)], 0, 10) == [(0, 10)]
+
+
+def test_subtract_removes_overlaps_and_keeps_the_rest():
+    assert gaps.subtract([(0, 10)], [(2, 4)]) == [(0, 2), (4, 10)]
+    assert gaps.subtract([(0, 10)], [(0, 10)]) == []
+    assert gaps.subtract([(0, 10)], []) == [(0.0, 10.0)]
+    assert gaps.subtract([(0, 5), (10, 15)], [(3, 12)]) == [(0, 3), (12, 15)]
+
+
+def test_total_sums_interval_lengths():
+    assert gaps.total([(0, 2), (5, 6.5)]) == 3.5
+    assert gaps.total([]) == 0
+
+
+def test_analyse_file_finds_a_contiguous_omission():
+    # 100 s file, silent 40 to 50, decoder emitted everything except 60 to 90.
+    silences = [(40, 50)]
+    spans = [(0, 40), (50, 60), (90, 100)]
+    result = gaps.analyse_file(silences, spans, 100)
+    assert result["speech_s"] == 90.0
+    assert result["uncovered_s"] == 30.0
+    assert result["uncovered_fraction"] == pytest.approx(30 / 90, abs=1e-4)
+    assert result["largest_gap_s"] == 30.0
+    assert result["gap_count"] == 1
+    assert result["gaps_over"]["over_15.0s"] == 1
+    assert result["top_gaps"][0] == {"start": 60.0, "end": 90.0, "length_s": 30.0}
+
+
+def test_analyse_file_treats_scattered_breathing_differently_from_an_omission():
+    # Same uncovered total, spread over many small gaps instead of one long one.
+    spans = []
+    cursor = 0.0
+    while cursor < 100:
+        spans.append((cursor, cursor + 7.0))
+        cursor += 10.0
+    scattered = gaps.analyse_file([], spans, 100)
+    contiguous = gaps.analyse_file([], [(0, 70)], 100)
+    assert scattered["uncovered_s"] == pytest.approx(contiguous["uncovered_s"], abs=1.0)
+    assert scattered["largest_gap_s"] == pytest.approx(3.0)
+    assert contiguous["largest_gap_s"] == pytest.approx(30.0)
+    assert scattered["gaps_over"]["over_15.0s"] == 0
+    assert contiguous["gaps_over"]["over_15.0s"] == 1
+
+
+def test_analyse_file_reports_full_coverage_as_zero_uncovered():
+    result = gaps.analyse_file([], [(0, 100)], 100)
+    assert result["uncovered_s"] == 0.0
+    assert result["largest_gap_s"] == 0.0
+    assert result["uncovered_fraction"] == 0.0
+
+
+def test_analyse_file_needs_a_duration():
+    assert gaps.analyse_file([], [(0, 10)], 0) is None
+    assert gaps.analyse_file([], [(0, 10)], None) is None
+
+
+def test_recommend_scales_the_p95_and_respects_the_floor():
+    # p95 of twenty values interpolates between the 19th and 20th, so one high outlier
+    # moves it only a little: the recommendation follows the body, not the tail.
+    rec = gaps.recommend([0.01] * 19 + [0.08])
+    assert rec["p95"] == pytest.approx(0.0135, abs=1e-4)
+    assert rec["value"] == pytest.approx(max(rec["p95"] * 1.5, 0.02), abs=1e-4)
+    # A corpus whose body really is high pulls the recommendation up with it.
+    high = gaps.recommend([0.06] * 19 + [0.09])
+    assert high["value"] > 0.09
+    # A corpus with almost no uncovered speech still gets the floor, not zero.
+    assert gaps.recommend([0.0] * 20)["value"] == 0.02
+    assert gaps.recommend([]) is None
+
+
+def test_summarise_counts_files_over_the_shipped_tolerance():
+    per_file = {
+        "clean.mp3": gaps.analyse_file([], [(0, 99)], 100),
+        "omitted.mp3": gaps.analyse_file([], [(0, 50)], 100),
+    }
+    summary = gaps.summarise(per_file, tolerance=0.10)
+    assert summary["files"] == 2
+    assert summary["over_tolerance"]["count"] == 1
+    assert summary["over_tolerance"]["files"][0]["file"] == "omitted.mp3"
+    assert summary["worst_largest_gap"][0]["file"] == "omitted.mp3"
+    text = gaps.render_markdown(summary, per_file)
+    assert "omitted.mp3" in text and "Recommended tolerance" in text
+
+
+def test_build_skips_files_that_did_not_complete(tmp_path):
+    silence = tmp_path / "silence.jsonl"
+    silence.write_text(
+        json.dumps({"file": "a.mp3", "threshold_db": -34.0, "silences": [[10, 20]]}) + "\n"
+        + json.dumps({"file": "b.mp3", "threshold_db": -34.0, "silences": []}) + "\n"
+    )
+    timings = tmp_path / "timings"
+    timings.mkdir()
+    (timings / "a.json").write_text(json.dumps(
+        {"timings": [{"start": 0, "end": 10}, {"start": 20, "end": 100}]}
+    ))
+    (timings / "b.json").write_text(json.dumps({"timings": [{"start": 0, "end": 100}]}))
+    state = {"files": {
+        "a.mp3": {"outcome": "completed", "duration_s": 100},
+        "b.mp3": {"outcome": "error", "duration_s": 100},
+    }}
+    built = gaps.build(str(silence), str(timings), state)
+    assert set(built) == {"a.mp3"}
+    assert built["a.mp3"]["uncovered_s"] == 0.0
+    assert built["a.mp3"]["threshold_db"] == -34.0
+
+
+# --- rc2 log lines -------------------------------------------------------------------------
+
+RC2_LINES = [
+    f"INFO - transcribe - Audio level for {GUID_A}: -28.4 dBFS; VAD profile 'quiet' "
+    f"(-28.4 dBFS below the -26.0 dBFS cutover): {{'threshold': 0.35}}",
+    f"INFO - transcribe - primary pass for {GUID_A} in 78.8s: 8904 words, 435 segments "
+    f"covering 3100.0s of 3231.0s VAD speech, anomaly_count=3, anomaly_windows=1 of 54, "
+    f"flagged_segments=2",
+    f"INFO - transcribe - rescue pass for {GUID_A} in 74.1s: 8880 words, 430 segments "
+    f"covering 3190.0s of 3231.0s VAD speech, anomaly_count=0, anomaly_windows=0 of 54, "
+    f"flagged_segments=1",
+    f"INFO - transcribe - Boundary dedupe for {GUID_A}: dropped 5 words repeated across "
+    f"the seam at 812.30s: 'lord in your mercy hear'",
+    f"INFO - app - Alignment for {GUID_A}: 8918 MFA words over 435 segments, agree250=0.786 "
+    f"empty_fallbacks=2 span_ratio_lt_0_5=7 span_ratio_p5=0.41 span_ratio_median=0.98 clamped=3",
+]
+
+
+def test_rc2_level_line_gives_the_profile_actually_taken():
+    job = service_log.parse(RC2_LINES)[GUID_A]
+    assert job["audio_level_dbfs"] == -28.4
+    assert job["vad_profile"] == "quiet"
+
+
+def test_rc2_pass_lines_give_coverage_for_each_pass():
+    job = service_log.parse(RC2_LINES)[GUID_A]
+    assert len(job["passes"]) == 2
+    primary = job["primary_pass"]
+    assert primary["covered_s"] == 3100.0
+    assert primary["vad_speech_s"] == 3231.0
+    assert primary["uncovered_s"] == 131.0
+    assert primary["uncovered_fraction"] == pytest.approx(131 / 3231, abs=1e-5)
+    assert primary["windows_total"] == 54
+    assert primary["anomaly_windows"] == 1
+    assert job["rescue_pass"]["words"] == 8880
+    assert job["service_uncovered_fraction"] == primary["uncovered_fraction"]
+
+
+def test_rc2_trim_line_is_parsed_exactly_not_loosely():
+    job = service_log.parse(RC2_LINES)[GUID_A]
+    assert job["trim_count"] == 1
+    assert job["trimmed_words"] == 5
+    trim = job["trims"][0]
+    assert trim["matched"] == "exact"
+    assert trim["overlap_words"] == 5
+    assert trim["at_s"] == 812.30
+    assert trim["removed"] == "lord in your mercy hear"
+    assert trim["emptied"] is False
+    assert job["loose_trim_matches"] == 0
+
+
+def test_rc2_alignment_counters_include_the_span_ratios_and_the_clamp():
+    alignment = service_log.parse(RC2_LINES)[GUID_A]["alignment"]
+    assert alignment["span_ratio_lt_0_5"] == 7
+    assert alignment["span_ratio_p5"] == 0.41
+    assert alignment["span_ratio_median"] == 0.98
+    assert alignment["clamped"] == 3
+    assert alignment["empty_fallbacks"] == 2
+
+
+def test_a_reworded_trim_line_is_still_captured_as_a_loose_match():
+    lines = [f"INFO - transcribe - Seam de-dup for {GUID_A}: removed 4 words 'a b c d'"]
+    job = service_log.parse(lines)[GUID_A]
+    assert job["trim_count"] == 1
+    assert job["trims"][0]["matched"] == "loose"
+    assert job["loose_trim_matches"] == 1

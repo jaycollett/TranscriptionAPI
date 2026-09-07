@@ -153,6 +153,20 @@ python3 "${HERE}/analyze.py" \
     --out-json "${SWEEP_ROOT}/analysis.json" \
     --out-md "${SWEEP_ROOT}/report.md"
 
+# Uncovered speech, measured against silencedetect rather than the service's own VAD.
+# silence.sh is independent of the sweep and can be run at any time; if it has not been
+# run, the gap analysis is skipped rather than guessed at.
+if [ -f "${SWEEP_ROOT}/silence.jsonl" ]; then
+    python3 "${HERE}/gaps.py" \
+        --silence "${SWEEP_ROOT}/silence.jsonl" \
+        --timings "${OUT_DIR}/timings" \
+        --results "${OUT_DIR}/state.json" \
+        --out-json "${SWEEP_ROOT}/gaps.json" \
+        --out-md "${SWEEP_ROOT}/gaps.md"
+else
+    echo "no ${SWEEP_ROOT}/silence.jsonl; run silence.sh for the uncovered-speech analysis" >&2
+fi
+
 python3 "${HERE}/determinism.py" \
     --run-a "${OUT_DIR}/state.json" \
     --run-b "${REPEAT_DIR}/state.json" \

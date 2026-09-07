@@ -42,11 +42,34 @@ RE_KV = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>-?[\w.]+)")
 RE_MFA_WORDS = re.compile(r"(?P<mfa_words>\d+) MFA words over (?P<mfa_segments>\d+) segments")
 RE_WHISPER_FALLBACK = re.compile(r"(?P<whisper_fallback_segments>\d+) segments on Whisper word timings")
 
-# Any line about the seam de-duplication. The corrected image logs each trim at INFO with
-# the GUID; the shape of that line is not pinned here on purpose, so a wording change does
-# not silently drop the data. Whatever matches is kept whole, and the structured fields are
-# filled in when the richer pattern also matches.
-RE_TRIM_LINE = re.compile(r"\b(trim|trimmed|dedup|de-dup|duplicate overlap|seam)\b", re.IGNORECASE)
+# The level line names the profile the decode actually used, rather than the one the -26
+# rule predicts, so the level table can report what happened instead of what should have.
+RE_AUDIO_LEVEL = re.compile(
+    r"Audio level for (?P<guid>" + GUID + r"): (?P<level>-?[\d.]+) dBFS; "
+    r"VAD profile '(?P<profile>\w+)'"
+)
+
+# The per-pass line carries the service's own coverage of its VAD speech, which is the
+# number the 10 percent tolerance is measured against.
+RE_PASS = re.compile(
+    r"(?P<pass_name>primary|rescue) pass for (?P<guid>" + GUID + r") in (?P<seconds>[\d.]+)s: "
+    r"(?P<words>\d+) words, (?P<segments>\d+) segments covering (?P<covered>[\d.]+)s of "
+    r"(?P<speech>[\d.]+)s VAD speech"
+)
+RE_WINDOWS_OF = re.compile(r"anomaly_windows=(?P<windows>\d+) of (?P<windows_total>\d+)")
+
+# The seam de-duplication logs every trim as
+#   Boundary dedupe for <guid>: dropped 4 words repeated across the seam at 123.45s: 'phrase'
+# Verified against the rc2 image's own source before the run. The loose pattern below is
+# kept as a fallback so a wording change is noticed rather than silently dropping trims.
+RE_TRIM = re.compile(
+    r"Boundary dedupe(?: for (?P<guid>" + GUID + r"))?: dropped (?P<overlap>\d+) words "
+    r"repeated across the seam at (?P<at>[\d.]+)s: (?P<removed>.*)"
+)
+RE_TRIM_LINE = re.compile(
+    r"(boundary dedupe|\btrim\b|\btrimmed\b|dedup|de-dup|duplicate overlap|\bseam\b)",
+    re.IGNORECASE,
+)
 RE_TRIM_DETAIL = re.compile(
     r"(?P<overlap>\d+)[ -]word", re.IGNORECASE
 )
@@ -93,13 +116,66 @@ def parse(lines):
                 "vad_removed_s": [],
                 "decode_durations_s": [],
                 "trims": [],
+                "passes": [],
                 "fields": {},
                 "alignment": {},
+                "audio_level_dbfs": None,
+                "vad_profile": None,
             }
         return jobs[guid]
 
     for raw in lines:
         line = raw.rstrip("\n")
+
+        level = RE_AUDIO_LEVEL.search(line)
+        if level:
+            current = level.group("guid")
+            record = job(current)
+            record["audio_level_dbfs"] = float(level.group("level"))
+            record["vad_profile"] = level.group("profile")
+            continue
+
+        run = RE_PASS.search(line)
+        if run:
+            current = run.group("guid")
+            record = job(current)
+            entry = {
+                "pass": run.group("pass_name"),
+                "seconds": float(run.group("seconds")),
+                "words": int(run.group("words")),
+                "segments": int(run.group("segments")),
+                "covered_s": float(run.group("covered")),
+                "vad_speech_s": float(run.group("speech")),
+            }
+            entry["uncovered_s"] = round(entry["vad_speech_s"] - entry["covered_s"], 3)
+            entry["uncovered_fraction"] = (
+                round(entry["uncovered_s"] / entry["vad_speech_s"], 5)
+                if entry["vad_speech_s"] else None
+            )
+            windows = RE_WINDOWS_OF.search(line)
+            if windows:
+                entry["anomaly_windows"] = int(windows.group("windows"))
+                entry["windows_total"] = int(windows.group("windows_total"))
+            for key, value in RE_KV.findall(line):
+                entry.setdefault(key, _coerce(key, value))
+            record["passes"].append(entry)
+            continue
+
+        trim = RE_TRIM.search(line)
+        if trim:
+            current = trim.group("guid") or current
+            if current:
+                quoted = [a or b for a, b in RE_QUOTED.findall(trim.group("removed"))]
+                job(current)["trims"].append({
+                    "overlap_words": int(trim.group("overlap")),
+                    "at_s": float(trim.group("at")),
+                    "removed": quoted[0] if quoted else trim.group("removed").strip(),
+                    "quoted": quoted,
+                    "emptied": "segment emptied" in line,
+                    "line": line.strip(),
+                    "matched": "exact",
+                })
+            continue
 
         received = RE_RECEIVED.search(line)
         if received:
@@ -143,8 +219,12 @@ def parse(lines):
             quoted = [a or b for a, b in RE_QUOTED.findall(line)]
             record["trims"].append({
                 "overlap_words": int(detail.group("overlap")) if detail else None,
+                "at_s": None,
+                "removed": quoted[0] if quoted else None,
                 "quoted": quoted,
+                "emptied": "segment emptied" in line,
                 "line": line.strip(),
+                "matched": "loose",
             })
             continue
 
@@ -170,6 +250,17 @@ def parse(lines):
             record["decode_durations_s"][0] if record["decode_durations_s"] else None
         )
         record["speech_seconds"] = speech_seconds(record)
+        primary = next((p for p in record["passes"] if p["pass"] == "primary"), None)
+        record["primary_pass"] = primary
+        record["rescue_pass"] = next(
+            (p for p in record["passes"] if p["pass"] == "rescue"), None
+        )
+        record["service_uncovered_fraction"] = (
+            primary["uncovered_fraction"] if primary else None
+        )
+        record["loose_trim_matches"] = sum(
+            1 for t in record["trims"] if t.get("matched") == "loose"
+        )
     return jobs
 
 
