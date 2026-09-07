@@ -1,13 +1,36 @@
-torch
-torchvision
-torchaudio
-faster-whisper
-flask
-ffmpeg
-python-Levenshtein
-pydub
-numpy
-ctranslate2
-montreal-forced-aligner
-noisereduce
-pyannote.audio
+# Direct dependencies, pinned to the versions pip actually installed in the
+# production container as captured on 2026-09-07 (pip freeze from the image that
+# transcribes at 2.78-2.82 words/sec after the decode fix).
+#
+# Why pin: the previous file was fully unversioned, so any rebuild swapped the
+# whole CUDA/torch stack alongside whatever code change prompted the rebuild,
+# and a transcription regression could not be attributed to either. Bump these
+# deliberately, one at a time, and re-run the validation recipe in
+# docs/SESSION_KNOWLEDGE.md on a GPU host before deploying.
+#
+# torch and torchvision must move together: torchvision declares torch==<same>.
+torch==2.12.1
+torchvision==0.27.1
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+pyannote.audio==4.0.5
+Flask==3.1.3
+pydub==0.25.1
+
+# Provided by the base image's conda environment (they show up in pip freeze as
+# "@ file:///..." rather than "==" lines): numpy, scipy, montreal-forced-aligner,
+# kalpy, torchaudio, torchcodec. Do not list them here. Pinning them would make
+# pip fight the base's conda packages, and the working container runs the base's
+# copies as-is.
+#
+# torchaudio in particular: nothing in this service imports it, no torchaudio
+# release matching torch 2.12.1 exists on PyPI (2.11.0 is the newest, and each
+# torchaudio release pins its own torch version), and the working container kept
+# the base's conda torchaudio, which is built against the base's CPU torch. If a
+# future dependency needs a torchaudio that links against the pip torch, it has
+# to be replaced together with torch, not added on its own.
+#
+# Removed on 2026-09-07:
+#   noisereduce       only used by the deleted audio preprocessing stage
+#   ffmpeg            a bogus PyPI package; the binary comes from apt in the Dockerfile
+#   python-Levenshtein  nothing in the code imports it
