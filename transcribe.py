@@ -142,24 +142,28 @@ ANOMALY_WINDOW_SEC = _env_float("ANOMALY_WINDOW_SEC", 60.0)
 ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.2)
 # A window shorter than this is not scored: a 12 s tail is not evidence of collapse.
 ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
-# Share of VAD speech a healthy decode is allowed to leave uncovered before any of it
+# Share of speech a healthy decode is allowed to leave uncovered before any of it
 # counts as an omission.
 #
-# Segment spans never tile VAD speech exactly: the decoder leaves a fraction of a
-# second between segments at every breath, and those pauses sum. Measured on the six
-# reference files, a healthy decode leaves 0 to 7.1 percent of VAD speech uncovered,
-# and on the worst of them (tcf.20240213a) that 101.5 s is 373 sub-second gaps whose
-# largest single member is 1.8 s. Charging raw uncovered time therefore reports a
-# missing minute on files that are missing nothing, which is what the first
-# implementation of this check did: it fired on 2 of 6 healthy files, triggered the
-# rescue on both, and on tcf.20240213a the rescue was then selected and published 9
-# fewer words at lower agreement than the primary.
+# Segment spans never tile speech exactly: the decoder leaves a fraction of a second
+# between segments at every breath, and those pauses sum. Charging raw uncovered time
+# reports a missing minute on files that are missing nothing, which is what the first
+# implementation did: it fired on 2 of 6 healthy files, triggered the rescue on both,
+# and on tcf.20240213a the rescue was then selected and published 9 fewer words at
+# lower agreement than the primary.
 #
-# 10 percent leaves margin over the measured 7.1 percent worst case while still
-# catching the omissions this exists for: a 20 percent omission clears it by 300 s,
-# five windows. Calibrated on six files; the sweep should re-measure the healthy
-# distribution and set it from that.
-ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.10)
+# 15 percent, from two rounds of measurement on the six reference files. The first
+# put the healthy worst case at 7.1 percent, but that used the old unbounded coverage
+# (a plain sum of segment spans) which overcounts; with the spans merged and
+# intersected against the voice-activity intervals the healthy range is 1.1 to 9.0
+# percent, worst on tcf.20240319b. A 10 percent tolerance would have shipped with 12 s
+# of headroom on a 1259 s file, which is not a tolerance.
+#
+# It still catches what it exists for: a 20 percent omission clears 15 percent by
+# 150 s on a 3000 s file, two windows, which trips both the rescue trigger and the
+# quarantine gate. The corpus sweep should re-measure the healthy distribution and set
+# this from it; six files is not a distribution.
+ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.15)
 LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 
 # Anomaly-triggered rescue pass. The five-pass decode bought redundancy by paying for

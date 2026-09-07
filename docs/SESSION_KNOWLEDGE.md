@@ -432,30 +432,52 @@ file has to vanish before the 1.0 floor trips. So `duration_after_vad` is now re
 before the pass is scored and speech no segment covers is charged to the window
 count.
 
-The trap is charging it raw. Segment spans never tile VAD speech exactly, and the
-sub-second pauses between segments sum to minutes over a sermon. Measured on the
-six reference files, a healthy decode leaves 0 to 7.1 percent of VAD speech
-uncovered, and three of the six leave *negative* uncovered time because segment
-spans carry the VAD's padding and overrun the chunk. On the worst file
-(`tcf.20240213a`) the 101.5 s of uncovered speech is 373 sub-second gaps whose
-largest single member is 1.8 s: there is no omission anywhere in it. Charging raw
-uncovered time fired on 2 of 6 healthy files, triggered the rescue on both, and on
+The trap is charging it raw. Segment spans never tile speech exactly, and the
+sub-second pauses between segments sum to minutes over a sermon. On
+`tcf.20240213a` the uncovered time is 373 sub-second gaps whose largest single
+member is 1.8 s: there is no omission anywhere in it. Charging raw uncovered time
+fired on 2 of 6 healthy files, triggered the rescue on both, and on
 `tcf.20240213a` the rescue was then selected and published 9 fewer words at lower
 agreement than the primary. The gate made the output worse on a file that was
-fine.
+fine. `ANOMALY_UNCOVERED_TOLERANCE` is the share of speech a decode may leave
+uncovered before any of it counts, and it is scale-free on purpose: a 60 s
+absolute bucket is meaningless without knowing whether the file is 12 minutes or
+56.
 
-`ANOMALY_UNCOVERED_TOLERANCE` (0.10) is therefore the share of VAD speech a decode
-may leave uncovered before any of it counts. It is scale-free on purpose: the
-absolute 60 s bucket is meaningless without knowing how long the file is. A 20
-percent omission still clears it by 300 s, five windows. Calibrated on six files
-against a measured healthy worst case of 7.1 percent, so the sweep should
-re-measure the healthy distribution and set it from that; it is the single number
-here most likely to be wrong.
+**The measure has to be bounded by what it is compared against, and the obvious
+implementation is not.** The first version summed segment spans, merged only
+against the immediately preceding span, and compared that against
+`duration_after_vad`. Those are different quantities: Whisper's timestamps are
+padded by the VAD and can overlap each other or run past the speech region, so the
+sum is unbounded above. The corpus sweep found coverage ratios up to 1.087 on 5 of
+its first 10 files, and on 3 of the 6 reference files the naive ratio is 1.019 to
+1.036. Above 1.0 the uncovered figure is zero or negative, the tolerance can never
+fire, and the omission check is silently dead again, one step downstream of where
+it was dead before.
 
-A better version of this check would locate the uncovered speech rather than
-totalling it, since a real omission is contiguous and breath pauses are not. That
-needs the VAD chunk positions, which means running the VAD ourselves on the
-decoded audio, and is deferred.
+Coverage is now the merged segment spans **intersected** with the voice-activity
+intervals, which is bounded by construction; the same six files come out at 0.919
+to 0.989. Two details matter. The merge has to sort first, because a merge that
+only checks its immediate predecessor double counts unsorted input, and Whisper
+timestamps do arrive slightly out of order after `restore_speech_timestamps`. And
+the intervals themselves are required: a total cannot be intersected with
+anything, which is why `duration_after_vad` is not enough.
+
+**So the service now runs the voice-activity detector itself.** faster-whisper
+reports the total but not the regions. The audio is decoded once with
+`decode_audio` and handed to `model.transcribe` in place of the path, which is
+what faster-whisper would have done internally, so the decode is not repeated and
+the marginal cost is one detector pass, logged per job with the region count and
+seconds. A failure there falls back to the file path and disables the omission
+check loudly rather than losing the job.
+
+Correcting the arithmetic also moved the tolerance. The healthy worst case was
+measured at 7.1 percent using the inflated coverage; intersected, the healthy
+range across the six files is 1.1 to 9.0 percent, worst on `tcf.20240319b`. A 10
+percent tolerance would have shipped with 12 s of headroom on a 1259 s file, which
+is not a tolerance, so the default is 15 percent. All six measured coverages are
+pinned as tests. Six files is still not a distribution and the sweep should set
+this from the corpus.
 
 **A rescue pass, not five of them.** The redundancy the five-pass design was
 reaching for is kept, but paid for only where it is needed. If the primary pass
@@ -498,6 +520,37 @@ no decoder loop occurred on any file. So the flag is surfaced in
 `flagged_segments` for review and is deliberately excluded from the count that
 can requeue a job. If a first-week job is flagged for a real loop, that is the
 evidence needed to promote it.
+
+**The seam de-duplication test is temporal, not lexical.** Word count cannot tell
+a decoder artifact from a speaker saying something twice, and the corpus sweep
+proved it: ten trims across its first eight files, none of them an artifact,
+including four consecutive segments emptied on 1 Kings 18:39, "The LORD, he is
+God; the LORD, he is God", an acclamation whose entire force is the doubling, and
+two more on "I want to love" as anaphora. Raising the minimum from 2 to 4 words
+did not help, because length is not the distinguishing feature.
+
+A seam artifact is one stretch of audio decoded twice, so the repeated words at
+the end of segment N and the start of segment N+1 describe overlapping time
+ranges. A speaker saying it twice produces two sequential, disjoint ranges. The
+word timestamps separate the cases cleanly and nothing else does. Only an overlap
+is trimmed; the overlap in seconds goes on the log line so the rule can be scored
+from production.
+
+`BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC` defaults to 0.0, not to a small positive
+value, and that is deliberate: continuous speech abuts. A speaker repeating a
+phrase across a segment boundary ends one occurrence and begins the next within
+tens of milliseconds, so treating abutment as overlap puts every anaphora straight
+back in scope. Raise it only on evidence that real artifacts are being missed.
+
+A trim never empties a segment. If the repeated run is the whole segment the trim
+is declined and logged, because dropping segments whole is exactly how the
+scripture passage vanished. `BOUNDARY_DEDUPE_ENABLED` turns the whole step off in
+one variable so that decision stays a config change.
+
+The measured effect on the six reference files: the word-count rule made one trim,
+on the class file, and the temporal rule keeps it. Its two occurrences are 0.86 s
+apart, so that one apparent true positive was repetition too, and across the
+entire reference set there is no evidence a seam artifact has ever occurred.
 
 **Text and timings are one sequence again.** `clean_boundary_duplicates` is
 deleted. It ran a repeated-phrase regex over the transcript string and left the
@@ -551,7 +604,10 @@ found, and it is the only reason word count is trusted as a tie-break.
 `VAD_MIN_SILENCE_DURATION_MS`, `VAD_SPEECH_PAD_MS`,
 `VAD_MIN_SILENCE_DURATION_MS_QUIET`, `VAD_SPEECH_PAD_MS_QUIET`. Rescue:
 `RESCUE_ENABLED`, `RESCUE_ANOMALY_SEGMENTS`, `RESCUE_ANOMALY_WINDOWS`,
-`RESCUE_TEMPERATURE_BASE`, `RESCUE_MIN_WORD_RETENTION`.
+`RESCUE_TEMPERATURE_BASE`, `RESCUE_MIN_WORD_RETENTION`, `RESCUE_MAX_WORD_LOSS`.
+Anomaly windows: `ANOMALY_UNCOVERED_TOLERANCE`. De-duplication:
+`BOUNDARY_DEDUPE_ENABLED`, `BOUNDARY_DEDUPE_MIN_WORDS`,
+`BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC`.
 Gate: `ANOMALY_WINDOWS_MAX`, `ANOMALY_SEGMENTS_MAX`. Alignment:
 `MFA_UTTERANCE_GAP_SEC`, `MFA_UTTERANCE_PAD_SEC`, `MFA_UTTERANCE_MIN_SEC`,
 `MFA_UTTERANCE_MAX_SEC`, `MFA_TIMEOUT_FLOOR_SEC`, `MFA_TIMEOUT_BASE_SEC`,

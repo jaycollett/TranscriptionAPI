@@ -531,7 +531,7 @@ def test_overlapping_segments_do_not_hide_an_omission(transcribe_module):
     assert naive > 3000.0, "the naive sum exceeds the speech, which is the bug"
 
     _windows, low = transcribe_module.low_speech_windows(segments, 3600.0, speech)
-    assert low >= 3, "the omission must still be charged"
+    assert low >= 1, "the omission must still be charged"
 
 
 # --------------------------------------------------------------------------------------
@@ -552,14 +552,14 @@ def test_an_omission_is_counted_from_uncovered_speech(transcribe_module):
     assert blind == 0, "the segment-span clock cannot see an omission; that is the bug"
 
     _windows, low = transcribe_module.low_speech_windows(segments, 3600.0, speech)
-    # 600 s uncovered, 300 s inside the 10 percent tolerance, 300 s charged.
-    assert low == 5
+    # 600 s uncovered, 450 s inside the 15 percent tolerance, 150 s charged.
+    assert low == 2
 
 
 def test_a_total_omission_is_counted(transcribe_module):
     """No segments at all: every second of speech is uncovered."""
     _windows, low = transcribe_module.low_speech_windows([], 3600.0, [(0.0, 600.0)])
-    assert low == 9, "600 s uncovered less the 60 s tolerance is nine windows"
+    assert low == 8, "600 s uncovered less the 90 s tolerance is eight windows"
 
 
 def test_full_coverage_charges_nothing(transcribe_module):
@@ -576,16 +576,20 @@ def test_a_small_coverage_shortfall_is_not_charged(transcribe_module):
 
 
 @pytest.mark.parametrize("stem, speech_total, covered_frac", [
-    ("tcf.20240213b", 734.9, 685.6 / 734.9),
-    ("tcf.20240319b", 1259.4, 1192.5 / 1259.4),
-    ("tcf.20240213a", 1438.9, 1337.4 / 1438.9),   # the worst measured, 7.1 percent
+    ("tcf.20240213b", 734.9, 675.6 / 734.9),      # 8.1 percent uncovered
+    ("tcf.20240319b", 1259.4, 1145.9 / 1259.4),   # 9.0 percent, the worst measured
+    ("tcf.20240416", 1381.8, 1366.9 / 1381.8),    # 1.1 percent, the best
+    ("tcf.20240213a", 1438.9, 1329.8 / 1438.9),   # 7.6 percent
+    ("tcf.20240116", 2659.7, 2606.5 / 2659.7),    # 2.0 percent
+    ("women_retreat", 3231.0, 3184.9 / 3231.0),   # 1.4 percent
 ])
 def test_healthy_files_are_not_charged_an_omission(transcribe_module, stem, speech_total,
                                                    covered_frac):
-    """The measured coverage of three real reference decodes must score zero.
+    """The real coverage of all six reference decodes, intersected, must score zero.
 
-    On tcf.20240213a the 101.5 s uncovered is 373 sub-second pauses whose largest
-    single member is 1.8 s; there is no omission anywhere in the file.
+    These are the numbers the tolerance is set from, so they are pinned here: a change
+    to the formula or the constant has to confront six measured healthy files. The
+    worst, tcf.20240319b at 9.0 percent, is what rules out a 10 percent tolerance.
     """
     covered = speech_total * covered_frac
     segments = [_segment(0.0, covered, " ".join(["word"] * int(covered * 2.6)))]
@@ -597,9 +601,9 @@ def test_healthy_files_are_not_charged_an_omission(transcribe_module, stem, spee
 
 @pytest.mark.parametrize("speech_total, covered_s, expected", [
     (1000.0, 950.0, 0),    # 5 percent, inside the tolerance
-    (1000.0, 900.0, 0),    # exactly at the tolerance
-    (1000.0, 830.0, 1),    # 17 percent, 70 s past
-    (1000.0, 500.0, 6),    # half the speech missing
+    (1000.0, 850.0, 0),    # exactly at the tolerance
+    (1000.0, 780.0, 1),    # 22 percent, 70 s past
+    (1000.0, 500.0, 5),    # half the speech missing
 ])
 def test_the_tolerance_boundary(transcribe_module, speech_total, covered_s, expected):
     segments = [_segment(0.0, covered_s, " ".join(["word"] * int(covered_s * 2.6)))]
@@ -646,7 +650,7 @@ def test_the_omission_reaches_the_returned_counts(transcribe_module, monkeypatch
 
     result = transcribe_module.transcribe_audio(str(audio), "guid")
 
-    assert result["anomaly_windows"] == 5
+    assert result["anomaly_windows"] == 2
     assert result["speech_seconds"] == pytest.approx(3000.0)
 
 
