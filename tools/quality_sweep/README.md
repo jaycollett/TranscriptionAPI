@@ -179,6 +179,33 @@ python3 analyze.py --results /home/jay/sweep/run/state.json \
     --out-json /home/jay/sweep/analysis.json --out-md /home/jay/sweep/report.md
 ```
 
+### What 0.6.0 adds, and what the analysis does with it
+
+The decode is one beam-5 pass with a temperature ladder. A rescue pass fires only when
+the primary shows an anomaly, re-decodes once with previous-text conditioning off, and is
+kept only if it retains at least 99 percent of the primary's words. `analyze.py` reports
+the firing rate, the selection rate, and every selected rescue with the word delta it
+produced.
+
+VAD is a level-selected profile rather than one threshold: the loud profile uses 0.5 with
+a 1000 ms minimum silence and a hallucination filter, the quiet profile keeps the gentler
+older parameters because 1000 ms of minimum silence shreds quiet audio. The level table
+therefore carries words, segment count and mean segment length per decibel, and
+`cutover_view` aggregates either side of -26 dBFS and inside the band straddling it. A
+profile that is shredding a file shows as a collapse in mean segment length and a jump in
+segment count, which is what 0.5 did to the retreat file before the profiles existed.
+
+The decode is not bit-reproducible on longer files, and the rescue trigger is a threshold
+on anomaly counts, so a run-to-run flip could change whether a file takes the rescue path.
+`run_sweep.sh` submits five files spanning 238 s to 3388 s a second time into
+`/home/jay/sweep/repeat`, and `determinism.py` pairs the two runs:
+
+```
+python3 determinism.py --run-a /home/jay/sweep/run/state.json \
+    --run-b /home/jay/sweep/repeat/state.json \
+    --out-json /home/jay/sweep/determinism.json --out-md /home/jay/sweep/determinism.md
+```
+
 The runner records every key `/status` returns, so the additive 0.6.0 fields
 (`anomaly_count`, `anomaly_windows`, `flagged_segments`, `rescue_attempted`,
 `rescue_selected`) land in the results without a code change here. The analyzer
@@ -197,6 +224,8 @@ image reports the new fields as absent rather than as clean.
 | `file_list.json` | the committed 100-file sample with every stratum label and reason |
 | `runner.py` | submit, poll, record; resumable, stdlib only |
 | `analyze.py` | joins results to the baseline, writes the report and the results JSON |
+| `determinism.py` | pairs two runs of the same files: word, anomaly and rescue-decision spread |
+| `legacy_eras.py` | single-pass against multi-pass legacy words per second, raw and stratified |
 | `norm.py` | the harness's word normalisation, so both sides normalise identically |
 
 `tests/test_quality_sweep.py` covers the stratum boundaries, the selection rules, and
