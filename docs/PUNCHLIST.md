@@ -373,7 +373,13 @@ validate on devmachine against the same two reference files (755 s and
 2783 s), comparing words/sec and wall time. The Werkzeug dev server is
 acceptable for a LAN-only single client; if ever replaced, use single-process
 `waitress` so the worker thread is not duplicated.
-Status: Deferred to a GPU-validated release
+2026-09-07 update: `cuda-libraries-12-2` and the `CUDA_LAUNCH_BLOCKING`
+removal shipped in 0.5.2 (base pin `v3.4.2` since 0.5.1). The residual Trivy
+findings (libnghttp2-14, the `/opt/conda` bootstrap packages, pip's vendored
+msgpack and setuptools in `/env`) are cleared in 0.5.4; see the session
+knowledge entry "0.5.4: residual CVE pass". The non-root USER is the only
+item still open.
+Status: Mostly shipped (0.5.2, 0.5.4); non-root USER still deferred
 
 **30. torch 2.12.1 carries a low-severity advisory (torch.jit.script)**
 `requirements.txt` (`torch==2.12.1`, `torchvision==0.27.1`). GitHub Dependabot
