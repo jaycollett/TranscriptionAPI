@@ -132,6 +132,8 @@ def cmd_run(args):
                 metrics["rescue_attempted"] = production.get("rescue_attempted")
                 metrics["rescue_selected"] = production.get("rescue_selected")
                 metrics["selected_pass"] = production.get("selected_pass")
+                metrics["uncovered_s"] = production.get("uncovered_s")
+                metrics["uncovered_max_gap_s"] = production.get("uncovered_max_gap_s")
                 if production.get("pass_scores"):
                     metrics["pass_scores"] = production["pass_scores"]
                     metrics["pass_wall_s"] = production["pass_wall_s"]

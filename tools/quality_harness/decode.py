@@ -261,6 +261,8 @@ def _record_production(result, record, raw_segments, extra=None):
         "windows": record["windows"],
         "flagged_segments": record["flagged_segments"],
         "mean_logprob": record["mean_logprob"],
+        "uncovered_s": record.get("uncovered_s"),
+        "uncovered_max_gap_s": record.get("uncovered_max_gap_s"),
         "words_before_dedupe": sum(len(s["text"].split()) for s in raw_segments if s["text"].strip()),
         "segments_before_dedupe": sum(1 for s in raw_segments if s["text"].strip()),
     }
