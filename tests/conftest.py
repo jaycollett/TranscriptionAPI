@@ -183,7 +183,7 @@ def get_row(conn, guid):
         "SELECT guid, filename, status, transcription, timings, attempt_count, completed_at, "
         "processing_seconds, words_per_second, mfa_applied, "
         "anomaly_count, anomaly_windows, flagged_segments, "
-        "rescue_attempted, rescue_selected "
+        "rescue_attempted, rescue_selected, speech_seconds "
         "FROM transcriptions WHERE guid = ?",
         (guid,),
     )
@@ -193,7 +193,7 @@ def get_row(conn, guid):
     keys = ["guid", "filename", "status", "transcription", "timings",
             "attempt_count", "completed_at", "processing_seconds", "words_per_second",
             "mfa_applied", "anomaly_count", "anomaly_windows", "flagged_segments",
-        "rescue_attempted", "rescue_selected"]
+        "rescue_attempted", "rescue_selected", "speech_seconds"]
     return dict(zip(keys, row))
 
 

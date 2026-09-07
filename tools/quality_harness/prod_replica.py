@@ -1,9 +1,15 @@
 """The production decode, replicated verbatim from transcribe.py (main, 0.5.2).
 
-`temperature_ladder` and `clean_boundary_duplicates` are imported from the deployed
-transcribe.py when it is importable (/app in the image, the repo root on a dev
-machine) so the control cannot drift from production; the copies below are the
-fallback and are asserted equal in the unit tests.
+This is the PROD control for the 2026-09-07 baseline, so what it has to be faithful
+to is 0.5.x, not whatever transcribe.py says today. Production has since moved: 0.6.0
+deleted `clean_boundary_duplicates` outright and replaced the five passes with one.
+
+`temperature_ladder` is still imported from the deployed transcribe.py when it is
+importable (/app in the image, the repo root on a dev machine), because 0.6.0 kept
+that function unchanged and a shared copy is one fewer thing to keep in step; the
+local `_temperature_ladder` is the fallback and the unit tests assert the two agree.
+`clean_boundary_duplicates` is always the local copy: it no longer exists upstream,
+and an import of it would fail, be swallowed, and silently change the control.
 """
 
 import os
@@ -50,7 +56,15 @@ def _clean_boundary_duplicates(text):
 
 
 def _load_production_helpers():
-    """Import the two helpers from the real transcribe.py if it can be found."""
+    """Import `temperature_ladder` from the real transcribe.py if it can be found.
+
+    Only the ladder. `clean_boundary_duplicates` was deleted in 0.6.0, so importing
+    it from production would raise AttributeError, get swallowed by the except below
+    and silently fall back for BOTH helpers, changing the control without saying so.
+    The local `_clean_boundary_duplicates` copy is now the only source, which is what
+    the PROD control needs anyway: it has to stay bug-for-bug identical to 0.5.x for
+    the 2026-09-07 baseline to remain reproducible, and production has moved on.
+    """
     candidates = ["/app", os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))]
     for root in candidates:
         path = os.path.join(root, "transcribe.py")
@@ -62,14 +76,16 @@ def _load_production_helpers():
             spec = importlib.util.spec_from_file_location("transcribe_prod", path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            return module.temperature_ladder, module.clean_boundary_duplicates, path
+            return module.temperature_ladder, path
         except Exception as exc:  # torch or pydub missing on a dev box
-            sys.stderr.write(f"prod_replica: could not import {path}: {exc}; using local copies\n")
+            sys.stderr.write(f"prod_replica: could not import {path}: {exc}; using the local copy\n")
             break
-    return _temperature_ladder, _clean_boundary_duplicates, None
+    return _temperature_ladder, None
 
 
-temperature_ladder, clean_boundary_duplicates, PROD_HELPERS_SOURCE = _load_production_helpers()
+temperature_ladder, PROD_HELPERS_SOURCE = _load_production_helpers()
+# Always the local copy: see _load_production_helpers.
+clean_boundary_duplicates = _clean_boundary_duplicates
 
 
 def prod_pass_kwargs(params):

@@ -191,7 +191,8 @@ def ensure_schema(cursor):
             anomaly_windows INTEGER DEFAULT NULL,
             flagged_segments TEXT DEFAULT NULL,
             rescue_attempted INTEGER DEFAULT NULL,
-            rescue_selected INTEGER DEFAULT NULL
+            rescue_selected INTEGER DEFAULT NULL,
+            speech_seconds REAL DEFAULT NULL
         )
     ''')
 
@@ -214,6 +215,7 @@ def ensure_schema(cursor):
         ('flagged_segments', 'TEXT DEFAULT NULL'),
         ('rescue_attempted', 'INTEGER DEFAULT NULL'),
         ('rescue_selected', 'INTEGER DEFAULT NULL'),
+        ('speech_seconds', 'REAL DEFAULT NULL'),
     ]
     for column, definition in migrations:
         if not column_exists(cursor, 'transcriptions', column):
@@ -293,7 +295,8 @@ def _count_failed_attempt(cursor, guid, reason, terminal_status):
     cursor.execute(
         "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL, "
         "anomaly_count = NULL, anomaly_windows = NULL, flagged_segments = NULL, "
-        "rescue_attempted = NULL, rescue_selected = NULL WHERE guid = ?",
+        "rescue_attempted = NULL, rescue_selected = NULL, speech_seconds = NULL "
+        "WHERE guid = ?",
         (guid,)
     )
     # run_forced_alignment skips MFA when <guid>_aligned already holds output, so a
@@ -548,8 +551,9 @@ def match_mfa_words(segments, mfa_words):
 def refine_segment_timings(segments, mfa_words):
     """Refine each segment's edges from its own MFA words, then enforce monotonicity.
 
-    A segment MFA did not cover keeps Whisper's word timestamps rather than its
-    VAD-padded segment bounds. Returns (timings, empty_fallbacks).
+    A segment MFA did not cover, or covered so partially that its refined span is
+    under half the Whisper span, keeps Whisper's word timestamps rather than its
+    VAD-padded segment bounds. Returns (timings, empty_fallbacks, short_fallbacks).
     """
     owned = {}
     for record in match_mfa_words(segments, mfa_words):
@@ -558,14 +562,24 @@ def refine_segment_timings(segments, mfa_words):
 
     refined = []
     empty_fallbacks = 0
+    short_fallbacks = 0
     for index, segment in enumerate(segments):
         indices = owned.get(index)
+        whisper_start, whisper_end = whisper_span(segment)
         if indices:
             start = mfa_words[min(indices)]["start"]
             end = mfa_words[max(indices)]["end"]
+            # Owning some words is not the same as being aligned. A segment that owns
+            # 2 of its 30 words gets a span covering those two, so a 20 second stretch
+            # of text would be published against a 0.6 second timing. Treat a refined
+            # span under half the Whisper span as a failure to cover the segment.
+            whisper_length = whisper_end - whisper_start
+            if whisper_length > 0 and (end - start) < 0.5 * whisper_length:
+                short_fallbacks += 1
+                start, end = whisper_start, whisper_end
         else:
             empty_fallbacks += 1
-            start, end = whisper_span(segment)
+            start, end = whisper_start, whisper_end
         refined.append({"start": float(start), "end": float(end), "text": segment["text"].strip()})
 
     # One pass to make the sequence monotonic: a later segment can never start
@@ -575,7 +589,7 @@ def refine_segment_timings(segments, mfa_words):
         entry["start"] = max(entry["start"], previous_end)
         entry["end"] = max(entry["end"], entry["start"] + 0.05)
         previous_end = entry["end"]
-    return refined, empty_fallbacks
+    return refined, empty_fallbacks, short_fallbacks
 
 
 def alignment_agreement(segments, refined):
@@ -634,7 +648,8 @@ def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
     mfa_work_dir = os.path.join(MFA_ROOT_DIR, f"{guid}_mfa_input")
 
     segments = [s for s in whisper_segments if s.get("text", "").strip()]
-    stats = {"agree250": None, "utterances": 0, "mfa_wall_s": None, "empty_fallbacks": None}
+    stats = {"agree250": None, "utterances": 0, "mfa_wall_s": None,
+             "empty_fallbacks": None, "short_fallbacks": None}
     if not segments:
         return [], False, stats
 
@@ -730,12 +745,14 @@ def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
         app.logger.error(f"MFA returned no words for {guid}; using Whisper timings.")
         return fallback()
 
-    refined, empty_fallbacks = refine_segment_timings(segments, mfa_words)
+    refined, empty_fallbacks, short_fallbacks = refine_segment_timings(segments, mfa_words)
     stats["empty_fallbacks"] = empty_fallbacks
+    stats["short_fallbacks"] = short_fallbacks
     stats["agree250"] = alignment_agreement(segments, refined)
     app.logger.info(
         f"Alignment for {guid}: {len(mfa_words)} MFA words over {len(segments)} segments, "
-        f"agree250={stats['agree250']}, {empty_fallbacks} segments on Whisper word timings"
+        f"agree250={stats['agree250']}, {empty_fallbacks} segments uncovered and "
+        f"{short_fallbacks} only partially covered, all on Whisper word timings"
     )
     return refined, True, stats
 
@@ -796,11 +813,19 @@ def process_pending_job(cursor, guid, filename):
         # alphanumeric check but is still a collapsed decode. Skip clips under
         # 30 s, where a pause or two swings the rate, and unknown durations.
         duration_sec = result.get("duration_sec", 0) or 0
-        wps = len(transcription.split()) / duration_sec if duration_sec > 0 else 0
+        # Rate over the speech the decoder was actually given, not over the whole
+        # file. A recording that is half silence reads as half rate against total
+        # duration, which is why the floor had to sit so low to be safe; over speech
+        # the same floor means what it says. Falls back to total duration when the
+        # decode did not report duration_after_vad.
+        speech_seconds = result.get("speech_seconds") or 0
+        denom = speech_seconds or duration_sec
+        wps = len(transcription.split()) / denom if denom > 0 else 0
         if duration_sec >= 30 and wps < MIN_WORDS_PER_SEC:
             return handle_garbage_result(
                 cursor, guid,
-                f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
+                f"word rate {wps:.2f} words/sec over {denom:.0f}s of "
+                f"{'speech' if speech_seconds else 'audio'} below floor {MIN_WORDS_PER_SEC}"
             )
 
         # Anomaly gate: the whole-file word rate is blind to a partial collapse, so a
@@ -838,31 +863,34 @@ def process_pending_job(cursor, guid, filename):
             "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', "
             "processing_seconds = ?, words_per_second = ?, mfa_applied = ?, "
             "anomaly_count = ?, anomaly_windows = ?, flagged_segments = ?, "
-            "rescue_attempted = ?, rescue_selected = ?, "
+            "rescue_attempted = ?, rescue_selected = ?, speech_seconds = ?, "
             "completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
             (
                 transcription,
                 json.dumps(refined_timings),
                 processing_seconds,
-                round(wps, 3) if duration_sec > 0 else None,
+                round(wps, 3) if denom > 0 else None,
                 1 if mfa_applied else 0,
                 anomaly_count,
                 anomaly_windows,
                 json.dumps(flagged_segments),
                 1 if rescue_attempted else 0,
                 1 if rescue_selected else 0,
+                round(speech_seconds, 2) if speech_seconds else None,
                 guid,
             )
         )
         app.logger.info(
             f"Transcription completed for {filename} (GUID: {guid}): "
             f"{len(transcription.split())} words in {duration_sec:.1f}s "
-            f"({wps:.2f} words/sec, floor {MIN_WORDS_PER_SEC}), "
+            f"({speech_seconds:.1f}s speech, {wps:.2f} words/sec over "
+            f"{'speech' if speech_seconds else 'audio'}, floor {MIN_WORDS_PER_SEC}), "
             f"{processing_seconds:.1f}s processing, mfa_applied={mfa_applied}, "
             f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows}, "
             f"flagged_segments={len(flagged_segments)}, "
             f"rescue_attempted={rescue_attempted}, rescue_selected={rescue_selected}, "
-            f"agree250={alignment_stats.get('agree250')}"
+            f"agree250={alignment_stats.get('agree250')}, "
+            f"short_fallbacks={alignment_stats.get('short_fallbacks')}"
         )
         return 'completed'
 
@@ -976,7 +1004,7 @@ def get_all_transcriptions():
         SELECT guid, filename, status, created_at, completed_at, processing_time_est,
                processing_seconds, words_per_second, attempt_count, mfa_applied,
                anomaly_count, anomaly_windows, flagged_segments,
-               rescue_attempted, rescue_selected
+               rescue_attempted, rescue_selected, speech_seconds
         FROM transcriptions
         ORDER BY created_at DESC
     """)
@@ -1001,6 +1029,7 @@ def get_all_transcriptions():
         'flagged_segments': parse_flagged_segments(row[12]),
         'rescue_attempted': None if row[13] is None else bool(row[13]),
         'rescue_selected': None if row[14] is None else bool(row[14]),
+        'speech_seconds': row[15],
     } for row in records]
 
     return jsonify(result), 200
@@ -1148,7 +1177,7 @@ def get_transcription(guid):
         SELECT status, transcription, timings, created_at, processing_time_est,
                processing_seconds, words_per_second, attempt_count, mfa_applied,
                anomaly_count, anomaly_windows, flagged_segments,
-               rescue_attempted, rescue_selected
+               rescue_attempted, rescue_selected, speech_seconds
         FROM transcriptions WHERE guid = ?
     """, (guid,))
     row = cursor.fetchone()
@@ -1159,7 +1188,7 @@ def get_transcription(guid):
     (status, transcription, timings, created_at, processing_time_est,
      processing_seconds, words_per_second, attempt_count, mfa_applied,
      anomaly_count, anomaly_windows, flagged_segments,
-     rescue_attempted, rescue_selected) = row
+     rescue_attempted, rescue_selected, speech_seconds) = row
 
     # If already completed, return the results immediately
     if status == 'completed' or status == 'processed':  # Support both new and old status values during transition
@@ -1178,6 +1207,7 @@ def get_transcription(guid):
             'flagged_segments': parse_flagged_segments(flagged_segments),
             'rescue_attempted': None if rescue_attempted is None else bool(rescue_attempted),
             'rescue_selected': None if rescue_selected is None else bool(rescue_selected),
+            'speech_seconds': speech_seconds,
         }), 200
 
     # Handle error / quarantined status (both terminal failures). 'quarantined' means the

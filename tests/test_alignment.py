@@ -172,7 +172,7 @@ def test_words_are_assigned_by_sequence_not_by_time(app_module):
         {"start": 3.4, "end": 3.7, "text": "mercy"},
         {"start": 3.7, "end": 4.2, "text": "endures"},
     ]
-    refined, empty = app_module.refine_segment_timings(segments, mfa_words)
+    refined, empty, _short = app_module.refine_segment_timings(segments, mfa_words)
 
     assert empty == 0
     assert refined[0]["start"] == pytest.approx(1.0)
@@ -190,7 +190,7 @@ def test_a_boundary_word_is_owned_by_one_segment_only(app_module):
         {"start": 1.0, "end": 1.5, "text": "gamma"},
         {"start": 1.5, "end": 2.0, "text": "delta"},
     ]
-    refined, _ = app_module.refine_segment_timings(segments, mfa_words)
+    refined, _empty, _short = app_module.refine_segment_timings(segments, mfa_words)
     assert refined[0]["end"] == pytest.approx(1.0)
     assert refined[1]["start"] == pytest.approx(1.0)
 
@@ -203,7 +203,7 @@ def test_case_and_punctuation_do_not_break_the_match(app_module):
         {"start": 0.6, "end": 0.8, "text": "is"},
         {"start": 0.8, "end": 1.4, "text": "good"},
     ]
-    refined, empty = app_module.refine_segment_timings(segments, mfa_words)
+    refined, empty, _short = app_module.refine_segment_timings(segments, mfa_words)
     assert empty == 0
     assert refined[0]["start"] == pytest.approx(0.1)
     assert refined[0]["end"] == pytest.approx(1.4)
@@ -221,7 +221,7 @@ def test_uncovered_segment_falls_back_to_whisper_word_timestamps(app_module):
         {"start": 0.1, "end": 0.5, "text": "alpha"},
         {"start": 0.5, "end": 1.1, "text": "beta"},
     ]
-    refined, empty = app_module.refine_segment_timings([covered, uncovered], mfa_words)
+    refined, empty, _short = app_module.refine_segment_timings([covered, uncovered], mfa_words)
 
     assert empty == 1
     assert refined[1]["start"] == pytest.approx(2.4)
@@ -237,7 +237,7 @@ def test_monotonicity_is_enforced(app_module):
         {"start": 1.0, "end": 1.5, "text": "gamma"},   # starts before segment 0 ended
         {"start": 1.5, "end": 2.0, "text": "delta"},
     ]
-    refined, _ = app_module.refine_segment_timings(segments, mfa_words)
+    refined, _empty, _short = app_module.refine_segment_timings(segments, mfa_words)
 
     assert refined[1]["start"] >= refined[0]["end"]
     for entry in refined:
@@ -502,3 +502,57 @@ def test_no_segments_returns_nothing_to_align(app_module, upload_dir, alignment_
 def test_no_dead_corpus_probe_remains(app_module):
     import inspect
     assert "_corpus" not in inspect.getsource(app_module.run_forced_alignment)
+
+
+def test_a_barely_covered_segment_falls_back_to_the_whisper_span(app_module):
+    """Owning some aligner words is not the same as being aligned.
+
+    A 20 second segment that MFA matched on 2 of its 30 words would otherwise be
+    published with a 0.6 second timing carrying twenty seconds of text, which is
+    worse than having no refinement at all: it is confidently wrong, and the
+    empty-window fallback never fires because the segment is not empty.
+    """
+    covered = _worded(0.0, 2.0, "alpha beta")
+    sparse = _worded(2.0, 22.0, " ".join(f"word{i}" for i in range(30)))
+
+    mfa_words = [
+        {"start": 0.1, "end": 0.5, "text": "alpha"},
+        {"start": 0.5, "end": 1.1, "text": "beta"},
+        # Only two of the sparse segment's thirty words came back.
+        {"start": 2.2, "end": 2.4, "text": "word0"},
+        {"start": 2.4, "end": 2.8, "text": "word1"},
+    ]
+    refined, empty, short = app_module.refine_segment_timings([covered, sparse], mfa_words)
+
+    assert empty == 0, "the segment owns words, so the empty fallback cannot fire"
+    assert short == 1
+    whisper_start, whisper_end = app_module.whisper_span(sparse)
+    assert refined[1]["end"] == pytest.approx(whisper_end)
+    assert refined[1]["end"] - refined[1]["start"] > 15.0
+
+
+def test_a_well_covered_segment_keeps_its_refined_span(app_module):
+    """The guard must not undo the refinement it exists to protect."""
+    segment = _worded(0.0, 10.0, " ".join(f"word{i}" for i in range(10)))
+    mfa_words = [
+        {"start": 0.2 + i, "end": 0.9 + i, "text": f"word{i}"} for i in range(10)
+    ]
+    refined, empty, short = app_module.refine_segment_timings([segment], mfa_words)
+
+    assert empty == 0 and short == 0
+    assert refined[0]["start"] == pytest.approx(0.2)
+    assert refined[0]["end"] == pytest.approx(9.9)
+
+
+def test_short_fallbacks_are_reported_in_the_stats(app_module, upload_dir, alignment_env):
+    """The sweep needs to see how often this fires."""
+    guid, audio = alignment_env
+    _mfa_output(guid, upload_dir, [
+        [0.1, 0.5, "hello"], [0.6, 2.4, "world"],
+        [2.6, 2.7, "second"],  # only one of the second segment's two words
+    ])
+    _timings, applied, stats = app_module.run_forced_alignment(audio, SEGMENTS, guid, 5.0)
+
+    assert applied is True
+    assert stats["short_fallbacks"] is not None
+    assert stats["empty_fallbacks"] == 0

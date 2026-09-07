@@ -83,7 +83,10 @@ WHISPER_BEAM_SIZE = _env_int("WHISPER_BEAM_SIZE", 5)
 WHISPER_BEST_OF = _env_int("WHISPER_BEST_OF", 5)
 WHISPER_PATIENCE = _env_float("WHISPER_PATIENCE", 1.0)
 WHISPER_TEMPERATURE_BASE = _env_float("WHISPER_TEMPERATURE_BASE", 0.0)
-WHISPER_TEMPERATURE_STEP = _env_float("WHISPER_TEMPERATURE_STEP", 0.2)
+# Clamped positive: temperature_ladder walks upward by this, so zero or a negative
+# value never terminates and would hang the worker thread on the first job with no
+# log line to say why.
+WHISPER_TEMPERATURE_STEP = max(0.01, _env_float("WHISPER_TEMPERATURE_STEP", 0.2))
 WHISPER_COMPRESSION_RATIO_THRESHOLD = _env_float("WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4)
 WHISPER_LOG_PROB_THRESHOLD = _env_float("WHISPER_LOG_PROB_THRESHOLD", -1.0)
 WHISPER_NO_SPEECH_THRESHOLD = _env_float("WHISPER_NO_SPEECH_THRESHOLD", 0.6)
@@ -143,7 +146,11 @@ LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 # gate (ANOMALY_SEGMENTS_MAX / ANOMALY_WINDOWS_MAX in app.py): a second opinion is
 # cheap and a requeue is not, so the rescue fires long before the job is at risk.
 RESCUE_ENABLED = os.getenv("RESCUE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
-RESCUE_ANOMALY_SEGMENTS = _env_int("RESCUE_ANOMALY_SEGMENTS", 1)
+# 2, not 1. At 1 the trigger sits at the minimum representable value, so a single
+# flipped segment decides the code path, and the decode is measurably not
+# bit-reproducible on long files: two runs of the identical configuration on
+# tcf.20240319b gave 3599 and 3598 words with 1 and 0 anomalous segments.
+RESCUE_ANOMALY_SEGMENTS = _env_int("RESCUE_ANOMALY_SEGMENTS", 2)
 RESCUE_ANOMALY_WINDOWS = _env_int("RESCUE_ANOMALY_WINDOWS", 1)
 # The rescue ladder starts above 0.0: the primary pass already decoded this audio at
 # that rung and produced the anomalies, so repeating it is the one outcome guaranteed
@@ -158,10 +165,22 @@ RESCUE_TEMPERATURE_BASE = _env_float("RESCUE_TEMPERATURE_BASE", 0.2)
 # different door, so the rescue has to keep at least this share of the primary's
 # words to be eligible at all.
 RESCUE_MIN_WORD_RETENTION = _env_float("RESCUE_MIN_WORD_RETENTION", 0.99)
+# The ratio alone scales the wrong way. It was calibrated on a 74 word loss at 3599
+# words, but the same 1 percent on the 8904 word retreat file permits an 89 word
+# loss, which is larger than the two Psalm 91 runs (61 and 58 words) whose loss
+# motivated this whole rewrite. Both conditions have to hold.
+RESCUE_MAX_WORD_LOSS = _env_int("RESCUE_MAX_WORD_LOSS", 40)
 
 # Boundary de-duplication: the longest and shortest overlap between the tail of one
 # segment and the head of the next that is treated as a duplicate.
-BOUNDARY_DEDUPE_MIN_WORDS = _env_int("BOUNDARY_DEDUPE_MIN_WORDS", 2)
+#
+# 4, not 2. A two or three word coincidence across a seam is ordinary English, and at
+# 2 this rule reproduced the defect it was written to remove: the segments
+# ["The Lord is with you. He is risen.", "He is risen indeed. Alleluia."] published as
+# "The Lord is with you. He is risen. indeed. Alleluia.", which is the old regex's
+# failure exactly. Every trim is logged so the true-positive rate can be counted from
+# production rather than assumed.
+BOUNDARY_DEDUPE_MIN_WORDS = _env_int("BOUNDARY_DEDUPE_MIN_WORDS", 4)
 BOUNDARY_DEDUPE_MAX_WORDS = _env_int("BOUNDARY_DEDUPE_MAX_WORDS", 5)
 
 # Real-time factor for the client-facing estimate. Measured on the six reference
@@ -487,8 +506,13 @@ def speech_spans(segments):
     The window check needs a clock that skips silence, or a file with a ten minute
     break before the Q&A reads as a collapse. faster-whisper does not hand back the
     VAD chunks it used, and re-running the VAD would mean decoding the audio a second
-    time, so the segments' own spans stand in for them: under `vad_filter` a segment
-    only exists where the VAD found speech.
+    time, so the segments' own spans stand in for them.
+
+    On their own they are not enough, and this is the trap: audio the decoder emitted
+    nothing for contributes no span, so an omission shrinks the clock instead of
+    showing up as a low-rate window, and the check is blind to the one failure it
+    exists for. `low_speech_windows` therefore compares this coverage against the VAD
+    speech faster-whisper reports and charges the difference.
     """
     spans = []
     for segment in segments:
@@ -535,27 +559,44 @@ def flat_words(segments):
     return out
 
 
-def low_speech_windows(segments, duration_sec):
+def low_speech_windows(segments, duration_sec, speech_seconds=None):
     """Count 60 s windows of speech carrying under 1.2 words/sec (harness C2).
 
     Returns (windows, low_count). The whole-file word rate hides a partial collapse:
-    a file that transcribes normally for forty minutes and produces nothing for ten
-    still clears the floor, and this is what catches it.
+    at a normal 2.6 words/sec about 62 percent of a file has to vanish before the 1.0
+    words/sec floor trips, so a 20-40 percent omission clears the floor, the rescue
+    trigger and the quarantine gate. This is what is supposed to catch it.
+
+    Two things are counted. Windows the decoder did produce words for are scored on
+    their word rate. Then VAD speech the decoder produced no segment for at all is
+    charged whole: `speech_seconds` is faster-whisper's `duration_after_vad`, the
+    audio it was actually given, and every 60 s of that which no surviving segment
+    covers is a silent window by definition. Without the second half an omission
+    simply shrinks the clock and is invisible.
     """
-    clock = SpeechClock(speech_spans(segments))
-    total = clock.total
-    if total <= 0:
-        return [], 0
+    spans = speech_spans(segments)
+    clock = SpeechClock(spans)
+    covered = clock.total
+
+    uncovered_windows = 0
+    if speech_seconds:
+        uncovered = max(0.0, float(speech_seconds) - covered)
+        uncovered_windows = int(uncovered // ANOMALY_WINDOW_SEC)
+
+    if covered <= 0:
+        return [], uncovered_windows
+
     counts = Counter()
     for start, end, _ in flat_words(segments):
         midpoint = (start + end) / 2.0
         counts[int(clock.speech_time(midpoint) // ANOMALY_WINDOW_SEC)] += 1
-    full_windows = int(total // ANOMALY_WINDOW_SEC)
-    tail = total - full_windows * ANOMALY_WINDOW_SEC
+    full_windows = int(covered // ANOMALY_WINDOW_SEC)
+    tail = covered - full_windows * ANOMALY_WINDOW_SEC
     windows = [counts[i] / ANOMALY_WINDOW_SEC for i in range(full_windows)]
     if tail >= ANOMALY_WINDOW_MIN_TAIL_SEC:
         windows.append(counts[full_windows] / tail)
-    return windows, sum(1 for w in windows if w < ANOMALY_WINDOW_MIN_WPS)
+    low = sum(1 for w in windows if w < ANOMALY_WINDOW_MIN_WPS)
+    return windows, low + uncovered_windows
 
 
 # ---------------------------------------------------------------------------------
@@ -587,14 +628,19 @@ def _text_from_words(words):
     return "".join(w["word"] for w in words).strip()
 
 
-def deduplicate_segment_boundaries(segments):
+def deduplicate_segment_boundaries(segments, guid=None):
     """Drop a phrase repeated across a segment seam, editing the segments themselves.
 
     When the last k words of segment N (k from BOUNDARY_DEDUPE_MAX_WORDS down to
     BOUNDARY_DEDUPE_MIN_WORDS) equal the first k words of segment N+1, ignoring case
     and punctuation, those k words are removed from the start of N+1 and its start
     moves to the first surviving word's timestamp. Nothing inside a segment is ever
-    touched, so "He is risen. He is risen indeed." survives whole.
+    touched, so "He is risen. He is risen indeed." inside one segment survives whole.
+
+    The minimum of 4 is load-bearing rather than conservative. At 2 this rule deleted
+    genuine liturgical repetition that happened to straddle a seam, which is the exact
+    defect the old regex was removed for. Every trim is logged so the true-positive
+    rate can be counted from production instead of assumed.
 
     Returns a new list; segments emptied by the trim are dropped.
     """
@@ -609,9 +655,16 @@ def deduplicate_segment_boundaries(segments):
             previous = result[-1]
             trim = _boundary_overlap(previous, segment)
             if trim:
-                segment = _trim_leading_words(segment, trim)
-                if segment is None:
+                where = f"{segment.get('start', 0.0):.2f}s"
+                trimmed, removed = _trim_leading_words(segment, trim)
+                logger.info(
+                    f"Boundary dedupe{'' if guid is None else f' for {guid}'}: dropped {trim} words "
+                    f"repeated across the seam at {where}: {removed!r}"
+                    + ("" if trimmed is not None else " (segment emptied and dropped)")
+                )
+                if trimmed is None:
                     continue
+                segment = trimmed
         result.append(segment)
     return result
 
@@ -629,27 +682,34 @@ def _boundary_overlap(previous, segment):
 
 
 def _trim_leading_words(segment, count):
-    """Remove `count` leading words from a segment; None when nothing survives."""
+    """Remove `count` leading words from a segment.
+
+    Returns (segment, removed_text); the segment is None when nothing survives the
+    trim. `removed_text` is what was dropped, for the log line.
+    """
     tokens = _segment_tokens(segment)
-    if count >= len(tokens):
-        return None
-    first_kept = tokens[count][0]
     words = segment.get("words")
+    if count >= len(tokens):
+        whole = _text_from_words(words) if words else segment.get("text", "").strip()
+        return None, whole
+    first_kept = tokens[count][0]
     if words:
+        removed = _text_from_words(words[:first_kept])
         survivors = words[first_kept:]
         text = _text_from_words(survivors)
         if not text:
-            return None
+            return None, removed
         segment["words"] = survivors
         segment["text"] = text
         segment["start"] = normalize_timestamp(survivors[0]["start"])
     else:
         parts = segment.get("text", "").split()
+        removed = " ".join(parts[:first_kept])
         text = " ".join(parts[first_kept:]).strip()
         if not text:
-            return None
+            return None, removed
         segment["text"] = text
-    return segment
+    return segment, removed
 
 
 def whisper_span(segment):
@@ -685,17 +745,20 @@ def transcript_from_segments(segments):
 # ---------------------------------------------------------------------------------
 # Passes: scoring, the rescue trigger and the selection rule
 # ---------------------------------------------------------------------------------
-def summarize_pass(segments, duration_sec, label):
+def summarize_pass(segments, duration_sec, label, speech_seconds=None, guid=None):
     """Post-process one pass's segments and score it, returning a comparable record.
 
     Empty segments are dropped, seam duplicates are trimmed, flags are attached and
     the anomaly counts are computed, so two passes are always compared on the output
     that would actually be published rather than on the raw decode.
+
+    `speech_seconds` is this pass's `duration_after_vad`. Without it the window check
+    cannot see an omission, so it is threaded through rather than read after the fact.
     """
     kept = [s for s in segments if s.get("text", "").strip()]
-    deduped = deduplicate_segment_boundaries(kept)
+    deduped = deduplicate_segment_boundaries(kept, guid=guid)
     anomaly_count, flagged = annotate_segments(deduped)
-    windows, low_windows = low_speech_windows(deduped, duration_sec)
+    windows, low_windows = low_speech_windows(deduped, duration_sec, speech_seconds)
     transcript = transcript_from_segments(deduped)
     logprobs = [s["avg_logprob"] for s in deduped if s.get("avg_logprob") is not None]
     return {
@@ -754,12 +817,24 @@ def retains_enough_words(primary, candidate):
     """True when `candidate` keeps enough of `primary`'s words to be worth considering.
 
     The anomaly score counts segments; this counts content. A rescue that clears a
-    flagged segment by dropping 2 percent of the transcript has removed the evidence
-    rather than the defect, and nothing downstream would ever notice.
+    flagged segment by dropping part of the transcript has removed the evidence rather
+    than the defect, and nothing downstream would ever notice.
+
+    Both a ratio and an absolute cap, because either alone scales wrongly. The ratio
+    was calibrated on a 74 word loss at 3599 words; the same 1 percent on the 8904
+    word retreat file would permit 89 words, more than the two Psalm 91 runs (61 and
+    58 words) whose loss is the reason this rewrite exists. The cap alone would be
+    absurdly strict on a short clip.
     """
     if primary["words"] <= 0:
         return True
-    return candidate["words"] >= primary["words"] * RESCUE_MIN_WORD_RETENTION
+    lost = primary["words"] - candidate["words"]
+    if lost <= 0:
+        return True
+    return (
+        candidate["words"] >= primary["words"] * RESCUE_MIN_WORD_RETENTION
+        and lost <= RESCUE_MAX_WORD_LOSS
+    )
 
 
 def select_pass(passes):
@@ -781,8 +856,10 @@ def select_pass(passes):
         else:
             logger.warning(
                 f"Discarding the {candidate['label']} pass: {candidate['words']} words against the "
-                f"{primary['label']} pass's {primary['words']} is below the "
-                f"{RESCUE_MIN_WORD_RETENTION:.0%} retention floor, despite scoring "
+                f"{primary['label']} pass's {primary['words']} loses "
+                f"{primary['words'] - candidate['words']}, past the "
+                f"{RESCUE_MIN_WORD_RETENTION:.0%} retention floor or the "
+                f"{RESCUE_MAX_WORD_LOSS} word cap, despite scoring "
                 f"{candidate['anomaly_count'] + candidate['anomaly_windows']} "
                 f"against {primary['anomaly_count'] + primary['anomaly_windows']}"
             )
@@ -861,14 +938,18 @@ def transcribe_audio(file_path, guid):
         except Exception as e:
             logger.error(f"Error during the {label} decode for {guid}: {e}")
             raise
-        record = summarize_pass(segments, duration_sec, label)
-        record["decode_seconds"] = round(time.time() - decode_start, 2)
-        # duration_after_vad is the speech the decoder actually saw; it is the honest
-        # denominator for a word rate, and the only place faster-whisper reports it.
+        # duration_after_vad is the speech the decoder actually saw. It is read before
+        # scoring, not after: it is the honest denominator for a word rate and the
+        # only reference the window check has for audio the decoder skipped entirely.
         speech = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
+        record = summarize_pass(segments, duration_sec, label, speech_seconds=speech, guid=guid)
+        record["decode_seconds"] = round(time.time() - decode_start, 2)
+        record["speech_seconds"] = speech
+        covered = sum(e - s for s, e in speech_spans(record["segments"]))
         logger.info(
             f"{label} pass for {guid} in {record['decode_seconds']:.2f}s: {record['words']} words, "
-            f"{len(record['segments'])} segments, anomaly_count={record['anomaly_count']}, "
+            f"{len(record['segments'])} segments covering {covered:.1f}s of {speech:.1f}s VAD speech, "
+            f"anomaly_count={record['anomaly_count']}, "
             f"anomaly_windows={record['anomaly_windows']} of {record['windows']}, "
             f"flagged_segments={len(record['flagged_segments'])}"
         )

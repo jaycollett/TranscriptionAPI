@@ -87,9 +87,21 @@ def test_an_anomalous_primary_pass_triggers_exactly_one_rescue(two_pass):
     assert result["rescue_attempted"] is True
 
 
+def test_a_rescue_that_is_still_anomalous_does_not_trigger_another(two_pass):
+    """A `while should_attempt_rescue(...)` regression would hang the worker.
+
+    The assertion is the point: the failure has to be a red test, not a wedged
+    thread with no log line.
+    """
+    calls, result = two_pass([_anomalous(), _anomalous()])
+    assert len(calls) == 2, "the rescue must never itself trigger a rescue"
+    assert result["rescue_attempted"] is True
+
+
 @pytest.mark.parametrize("count, windows, expected", [
     (0, 0, False),
-    (1, 0, True),
+    (1, 0, False),   # one flipped segment out of hundreds is not evidence
+    (2, 0, True),
     (0, 1, True),
     (3, 2, True),
 ])
@@ -247,14 +259,36 @@ def test_a_rescue_with_more_words_is_always_eligible(transcribe_module):
 
 @pytest.mark.parametrize("rescue_words, eligible", [
     (10000, True),
-    (9900, True),    # exactly at the 99 percent floor
-    (9899, False),
+    (9960, True),    # exactly at the 40 word cap
+    (9959, False),   # inside the 99 percent ratio, past the cap
+    (9900, False),
     (5000, False),
 ])
 def test_the_retention_floor_boundary(transcribe_module, rescue_words, eligible):
+    """The cap binds on a long file, where 1 percent is far more than 40 words."""
     primary = _record("primary", words=10000)
     rescue = _record("rescue", words=rescue_words)
     assert transcribe_module.retains_enough_words(primary, rescue) is eligible
+
+
+@pytest.mark.parametrize("primary_words, rescue_words, eligible", [
+    (400, 397, True),    # 0.75 percent of a short clip, 3 words
+    (400, 395, False),   # 1.25 percent, inside the cap but past the ratio
+])
+def test_the_ratio_binds_on_a_short_file(transcribe_module, primary_words, rescue_words,
+                                         eligible):
+    """On a short clip the 40 word cap is no constraint, so the ratio has to be there."""
+    primary = _record("primary", words=primary_words)
+    rescue = _record("rescue", words=rescue_words)
+    assert transcribe_module.retains_enough_words(primary, rescue) is eligible
+
+
+def test_the_retreat_sized_loss_the_ratio_alone_would_have_allowed(transcribe_module):
+    """1 percent of 8904 words is 89, more than the two Psalm 91 runs that started this."""
+    primary = _record("primary", anomaly_count=2, words=8904)
+    rescue = _record("rescue", anomaly_count=0, words=8815)
+    assert transcribe_module.retains_enough_words(primary, rescue) is False
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "primary"
 
 
 def test_an_empty_primary_does_not_divide_by_zero(transcribe_module):

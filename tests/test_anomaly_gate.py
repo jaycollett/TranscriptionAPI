@@ -303,3 +303,137 @@ def test_unparseable_flagged_segments_does_not_break_the_response(client, route_
 
     body = client.get(f"/status/{guid}").get_json()
     assert body["flagged_segments"] == []
+
+
+# --------------------------------------------------------------------------------------
+# The word-rate floor over speech, and the speech_seconds field
+# --------------------------------------------------------------------------------------
+def test_the_floor_divides_by_speech_not_total_duration(app_module, db, upload_dir,
+                                                        monkeypatch):
+    """A recording that is half silence must not read as half rate.
+
+    270 words over 100 s of audio is 2.7 words/sec, but only 60 s of that was speech,
+    so the honest rate is 4.5. Dividing by total duration is what forced the floor
+    down to 1.0 to be safe on quiet material.
+    """
+    import uuid
+
+    from conftest import get_row, insert_job
+
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(270), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 100.0, "speech_seconds": 60.0,
+            "anomaly_count": 0, "anomaly_windows": 0, "flagged_segments": [],
+        },
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
+    insert_job(db, guid, filename="sermon.mp3", status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, "sermon.mp3") == "completed"
+    row = get_row(db, guid)
+    assert row["words_per_second"] == pytest.approx(4.5)
+    assert row["speech_seconds"] == pytest.approx(60.0)
+
+
+def test_the_floor_falls_back_to_duration_without_speech_seconds(app_module, db, upload_dir,
+                                                                 monkeypatch):
+    """An older or stubbed decode reports no duration_after_vad."""
+    import uuid
+
+    from conftest import get_row, insert_job
+
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(270), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 100.0,
+            "anomaly_count": 0, "anomaly_windows": 0, "flagged_segments": [],
+        },
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
+    insert_job(db, guid, filename="sermon.mp3", status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, "sermon.mp3") == "completed"
+    row = get_row(db, guid)
+    assert row["words_per_second"] == pytest.approx(2.7)
+    assert row["speech_seconds"] is None
+
+
+def test_a_collapse_over_speech_is_requeued(app_module, db, upload_dir, monkeypatch):
+    """60 words over 600 s of actual speech is 0.1 words/sec, well under the floor."""
+    import uuid
+
+    from conftest import get_row, insert_job
+
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(60), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 900.0, "speech_seconds": 600.0,
+            "anomaly_count": 0, "anomaly_windows": 0, "flagged_segments": [],
+        },
+    )
+
+    guid = str(uuid.uuid4())
+    (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
+    insert_job(db, guid, filename="sermon.mp3", status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, "sermon.mp3") == "pending"
+    assert get_row(db, guid)["attempt_count"] == 1
+
+
+def test_speech_seconds_reaches_both_endpoints(client, route_db):
+    import json
+    import uuid
+
+    guid = str(uuid.uuid4())
+    route_db.cursor().execute(
+        "INSERT INTO transcriptions (guid, filename, status, transcription, timings, "
+        "speech_seconds) VALUES (?, 'sermon.mp3', 'completed', 'hello world', ?, 612.5)",
+        (guid, json.dumps(TIMINGS)),
+    )
+
+    assert client.get(f"/status/{guid}").get_json()["speech_seconds"] == pytest.approx(612.5)
+    rows = client.get("/transcriptions").get_json()
+    assert next(r for r in rows if r["guid"] == guid)["speech_seconds"] == pytest.approx(612.5)
+
+
+def test_speech_seconds_is_null_on_older_rows(client, route_db):
+    import uuid
+
+    guid = str(uuid.uuid4())
+    route_db.cursor().execute(
+        "INSERT INTO transcriptions (guid, filename, status, transcription) "
+        "VALUES (?, 'sermon.mp3', 'completed', 'hello world')",
+        (guid,),
+    )
+    assert client.get(f"/status/{guid}").get_json()["speech_seconds"] is None
+
+
+def test_speech_seconds_migrates_onto_an_older_database(app_module):
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE transcriptions (
+            guid TEXT PRIMARY KEY, filename TEXT, status TEXT DEFAULT 'pending',
+            transcription TEXT, timings TEXT, created_at TIMESTAMP, completed_at TIMESTAMP,
+            processing_time_est INTEGER DEFAULT 0
+        )
+    """)
+    app_module.ensure_schema(cursor)
+    assert app_module.column_exists(cursor, "transcriptions", "speech_seconds")
+    conn.close()

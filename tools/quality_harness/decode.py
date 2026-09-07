@@ -268,7 +268,7 @@ def _record_production(result, record, raw_segments, extra=None):
     result["production"] = block
 
 
-def apply_production_postprocess(segments, duration, result):
+def apply_production_postprocess(segments, duration, result, speech_seconds=None):
     """Run transcribe.py's post-decode stage: dedupe, anomaly score, loop flags.
 
     Returns (segments, transcript, timings) as the service would publish them, so the
@@ -277,7 +277,7 @@ def apply_production_postprocess(segments, duration, result):
     """
     from transcribe import summarize_pass, timings_from_segments
 
-    record = summarize_pass(segments, duration, "primary")
+    record = summarize_pass(segments, duration, "primary", speech_seconds=speech_seconds)
     _record_production(result, record, segments, {"rescue_attempted": False, "rescue_selected": False})
     return record["segments"], record["transcript"], timings_from_segments(record["segments"])
 
@@ -297,7 +297,8 @@ def run_with_rescue(model, audio, kwargs, duration, result):
     )
 
     primary_run = run_sequential(model, audio, kwargs)
-    primary = summarize_pass(primary_run["segments"], duration, "primary")
+    primary = summarize_pass(primary_run["segments"], duration, "primary",
+                             speech_seconds=primary_run.get("duration_after_vad"))
     passes, runs = [primary], [primary_run]
 
     attempted = should_attempt_rescue(primary["anomaly_count"], primary["anomaly_windows"])
@@ -307,7 +308,8 @@ def run_with_rescue(model, audio, kwargs, duration, result):
             primary["anomaly_count"], primary["anomaly_windows"],
         )
         rescue_run = run_sequential(model, audio, rescue_decode_kwargs(kwargs))
-        passes.append(summarize_pass(rescue_run["segments"], duration, "rescue"))
+        passes.append(summarize_pass(rescue_run["segments"], duration, "rescue",
+                                     speech_seconds=rescue_run.get("duration_after_vad")))
         runs.append(rescue_run)
 
     selected = select_pass(passes)
@@ -388,7 +390,9 @@ def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
                 runs = [p]
                 segments, transcript, timings = p["segments"], p["transcript"], prod_timings(p["segments"])
                 if cfg.get("production_postprocess"):
-                    segments, transcript, timings = apply_production_postprocess(segments, duration, result)
+                    segments, transcript, timings = apply_production_postprocess(
+                        segments, duration, result, speech_seconds=p.get("duration_after_vad")
+                    )
             result.update(
                 {
                     "passes": runs,
