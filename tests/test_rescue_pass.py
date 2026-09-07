@@ -151,11 +151,12 @@ def _record(label, anomaly_count=0, anomaly_windows=0, words=100, mean_logprob=-
 
 
 def test_the_lower_anomaly_score_wins(transcribe_module):
+    """Within the retention floor, the anomaly score decides."""
     primary = _record("primary", anomaly_count=3, anomaly_windows=1, words=2000)
-    rescue = _record("rescue", anomaly_count=0, anomaly_windows=0, words=1900)
+    rescue = _record("rescue", anomaly_count=0, anomaly_windows=0, words=1990)
     assert transcribe_module.select_pass([primary, rescue])["label"] == "rescue"
     # And the other way round: fewer anomalies wins even with fewer words.
-    primary = _record("primary", anomaly_count=0, anomaly_windows=0, words=1900)
+    primary = _record("primary", anomaly_count=0, anomaly_windows=0, words=1990)
     rescue = _record("rescue", anomaly_count=2, anomaly_windows=0, words=2000)
     assert transcribe_module.select_pass([primary, rescue])["label"] == "primary"
 
@@ -213,6 +214,77 @@ def test_a_worse_rescue_is_discarded(two_pass):
 def test_the_invariant_holds_on_the_selected_pass(two_pass):
     _calls, result = two_pass([_anomalous(), _clean()])
     assert " ".join(t["text"] for t in result["timings"]) == result["transcription"]
+
+
+# --------------------------------------------------------------------------------------
+# The word-retention floor
+# --------------------------------------------------------------------------------------
+def test_a_rescue_that_truncates_is_discarded(transcribe_module):
+    """Measured on tcf.20240319b with the trigger forced on.
+
+    The primary scored one anomalous segment out of 323 with 3599 words; the rescue
+    scored none with 3525. On the anomaly score alone the rescue wins and the service
+    publishes 74 fewer words, which is the same failure the retired confidence rule
+    made on the retreat file. The retention floor keeps the primary.
+    """
+    primary = _record("primary", anomaly_count=1, words=3599, mean_logprob=-0.162)
+    rescue = _record("rescue", anomaly_count=0, words=3525, mean_logprob=-0.118)
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "primary"
+
+
+def test_a_rescue_within_the_floor_still_wins_on_anomalies(transcribe_module):
+    """The floor is a guard, not a veto: a rescue that fixes anomalies cheaply wins."""
+    primary = _record("primary", anomaly_count=4, words=3599)
+    rescue = _record("rescue", anomaly_count=0, words=3580)  # 0.5 percent loss
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "rescue"
+
+
+def test_a_rescue_with_more_words_is_always_eligible(transcribe_module):
+    primary = _record("primary", anomaly_count=2, words=3500)
+    rescue = _record("rescue", anomaly_count=0, words=3700)
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "rescue"
+
+
+@pytest.mark.parametrize("rescue_words, eligible", [
+    (10000, True),
+    (9900, True),    # exactly at the 99 percent floor
+    (9899, False),
+    (5000, False),
+])
+def test_the_retention_floor_boundary(transcribe_module, rescue_words, eligible):
+    primary = _record("primary", words=10000)
+    rescue = _record("rescue", words=rescue_words)
+    assert transcribe_module.retains_enough_words(primary, rescue) is eligible
+
+
+def test_an_empty_primary_does_not_divide_by_zero(transcribe_module):
+    primary = _record("primary", words=0)
+    rescue = _record("rescue", words=0)
+    assert transcribe_module.retains_enough_words(primary, rescue) is True
+
+
+def test_the_discarded_rescue_is_logged(transcribe_module, caplog):
+    """A silently discarded second decode is a fault nobody would ever find."""
+    import logging
+
+    primary = _record("primary", anomaly_count=1, words=3599)
+    rescue = _record("rescue", anomaly_count=0, words=3525)
+    with caplog.at_level(logging.WARNING):
+        transcribe_module.select_pass([primary, rescue])
+    assert "retention floor" in caplog.text
+    assert "3525" in caplog.text and "3599" in caplog.text
+
+
+def test_the_forced_213b_case_keeps_the_primary(transcribe_module):
+    """Measured on tcf.20240213b with the trigger forced on: a tie on anomalies.
+
+    Both passes scored zero; the rescue had 2085 words against 2104. The word-count
+    tie-break alone already keeps the primary here, and the retention floor is a
+    second line for the case where the rescue also scores better.
+    """
+    primary = _record("primary", anomaly_count=0, words=2104, mean_logprob=-0.136)
+    rescue = _record("rescue", anomaly_count=0, words=2085, mean_logprob=-0.109)
+    assert transcribe_module.select_pass([primary, rescue])["label"] == "primary"
 
 
 # --------------------------------------------------------------------------------------

@@ -149,6 +149,15 @@ RESCUE_ANOMALY_WINDOWS = _env_int("RESCUE_ANOMALY_WINDOWS", 1)
 # that rung and produced the anomalies, so repeating it is the one outcome guaranteed
 # not to help.
 RESCUE_TEMPERATURE_BASE = _env_float("RESCUE_TEMPERATURE_BASE", 0.2)
+# A rescue that clears the anomaly by deleting content has not fixed the transcript,
+# it has truncated it. Measured 2026-09-07 on tcf.20240319b with the trigger forced
+# on: the primary scored one anomalous segment out of 323 with 3599 words, the rescue
+# scored none with 3525, and the anomaly score alone would have published the pass
+# with 74 fewer words. That is the same "prefer the shorter transcript" failure the
+# retired duration-weighted rule made on the retreat file, arriving through a
+# different door, so the rescue has to keep at least this share of the primary's
+# words to be eligible at all.
+RESCUE_MIN_WORD_RETENTION = _env_float("RESCUE_MIN_WORD_RETENTION", 0.99)
 
 # Boundary de-duplication: the longest and shortest overlap between the tail of one
 # segment and the head of the next that is treated as a duplicate.
@@ -741,13 +750,43 @@ def pass_sort_key(record):
     )
 
 
+def retains_enough_words(primary, candidate):
+    """True when `candidate` keeps enough of `primary`'s words to be worth considering.
+
+    The anomaly score counts segments; this counts content. A rescue that clears a
+    flagged segment by dropping 2 percent of the transcript has removed the evidence
+    rather than the defect, and nothing downstream would ever notice.
+    """
+    if primary["words"] <= 0:
+        return True
+    return candidate["words"] >= primary["words"] * RESCUE_MIN_WORD_RETENTION
+
+
 def select_pass(passes):
     """Pick the best of the decoded passes.
 
-    `min` keeps the first of equal candidates, and the primary pass is always first,
-    so the rescue only displaces it on a strict win.
+    A candidate that fails the word-retention floor is not eligible however good its
+    anomaly score looks. Among the eligible passes the order is fewest anomalies,
+    then most words, then best mean log-probability; `min` keeps the first of equal
+    candidates and the primary is always first, so the rescue only displaces it on a
+    strict win.
     """
-    return min(passes, key=pass_sort_key)
+    if not passes:
+        raise ValueError("select_pass needs at least one pass")
+    primary = passes[0]
+    eligible = [primary]
+    for candidate in passes[1:]:
+        if retains_enough_words(primary, candidate):
+            eligible.append(candidate)
+        else:
+            logger.warning(
+                f"Discarding the {candidate['label']} pass: {candidate['words']} words against the "
+                f"{primary['label']} pass's {primary['words']} is below the "
+                f"{RESCUE_MIN_WORD_RETENTION:.0%} retention floor, despite scoring "
+                f"{candidate['anomaly_count'] + candidate['anomaly_windows']} "
+                f"against {primary['anomaly_count'] + primary['anomaly_windows']}"
+            )
+    return min(eligible, key=pass_sort_key)
 
 
 # ---------------------------------------------------------------------------------
