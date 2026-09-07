@@ -92,7 +92,7 @@ def total(intervals):
     return round(sum(b - a for a, b in intervals), 3)
 
 
-def analyse_file(silences, spans, duration):
+def analyse_file(silences, spans, duration, service_speech_s=None):
     """Uncovered-speech figures for one file.
 
     `silences` are the detected silent stretches, `spans` the segments the decoder
@@ -104,6 +104,12 @@ def analyse_file(silences, spans, duration):
     speech = complement(silences, 0.0, float(duration))
     speech_s = total(speech)
     uncovered = subtract(speech, spans)
+    # A second reading of the same quantity against the service's own VAD speech, with
+    # the spans merged first so overlapping segments cannot count twice. The two speech
+    # measures disagree by up to a quarter either way on this corpus, so a tolerance set
+    # on the total inherits that disagreement whichever detector defines it. Reporting
+    # both is how the fragility of the total becomes visible.
+    merged_span_s = total(merge(spans))
     lengths = sorted((b - a for a, b in uncovered), reverse=True)
     uncovered_s = round(sum(lengths), 3)
     return {
@@ -112,6 +118,15 @@ def analyse_file(silences, spans, duration):
         "covered_s": round(speech_s - uncovered_s, 3),
         "uncovered_s": uncovered_s,
         "uncovered_fraction": round(uncovered_s / speech_s, 5) if speech_s else None,
+        "merged_span_s": merged_span_s,
+        "service_speech_s": service_speech_s,
+        "speech_ratio_to_service": (
+            round(speech_s / service_speech_s, 4) if service_speech_s else None
+        ),
+        "uncovered_fraction_service_basis": (
+            round(max(0.0, service_speech_s - merged_span_s) / service_speech_s, 5)
+            if service_speech_s else None
+        ),
         "largest_gap_s": round(lengths[0], 3) if lengths else 0.0,
         "largest_gap_fraction": (
             round(lengths[0] / speech_s, 5) if lengths and speech_s else None
@@ -160,7 +175,12 @@ def build(silence_path, timings_dir, state):
             silences = [
                 (a, b) for a, b in doc.get("silences") or [] if a is not None and b is not None
             ]
-            figures = analyse_file(silences, spans, record.get("duration_s"))
+            figures = analyse_file(
+                silences,
+                spans,
+                record.get("duration_s"),
+                (record.get("payload") or {}).get("speech_seconds"),
+            )
             if figures:
                 figures["threshold_db"] = doc.get("threshold_db")
                 out[filename] = figures
@@ -170,6 +190,14 @@ def build(silence_path, timings_dir, state):
 def summarise(per_file, tolerance=0.10):
     """Corpus-level distributions, and what tolerance the data would support."""
     fractions = [v["uncovered_fraction"] for v in per_file.values() if v["uncovered_fraction"] is not None]
+    service_fractions = [
+        v["uncovered_fraction_service_basis"] for v in per_file.values()
+        if v.get("uncovered_fraction_service_basis") is not None
+    ]
+    speech_ratios = [
+        v["speech_ratio_to_service"] for v in per_file.values()
+        if v.get("speech_ratio_to_service") is not None
+    ]
     largest = [v["largest_gap_s"] for v in per_file.values()]
     largest_fraction = [
         v["largest_gap_fraction"] for v in per_file.values() if v["largest_gap_fraction"] is not None
@@ -194,6 +222,9 @@ def summarise(per_file, tolerance=0.10):
         "files": len(per_file),
         "tolerance_under_test": tolerance,
         "uncovered_fraction": distribution(fractions, digits=5),
+        "uncovered_fraction_service_basis": distribution(service_fractions, digits=5),
+        "speech_ratio_to_service": distribution(speech_ratios, digits=4),
+        "recommended_tolerance_service_basis": recommend(service_fractions),
         "largest_gap_s": distribution(largest, digits=2),
         "largest_gap_fraction": distribution(largest_fraction, digits=5),
         "over_tolerance": {"count": len(over_tolerance), "files": over_tolerance},
@@ -234,6 +265,18 @@ def render_markdown(summary, per_file):
         f"median {dist.get('median')}, p75 {dist.get('p75')}, p95 {dist.get('p95')}, "
         f"max {dist.get('max')}. Largest contiguous uncovered stretch: median "
         f"{gap.get('median')} s, p95 {gap.get('p95')} s, max {gap.get('max')} s."
+    )
+    out.append("")
+    ratio = summary["speech_ratio_to_service"]
+    svc = summary["uncovered_fraction_service_basis"]
+    out.append(
+        f"The same quantity against the service's own VAD speech, with the spans merged "
+        f"first: median {svc.get('median')}, p95 {svc.get('p95')}, max {svc.get('max')}. "
+        f"The two speech detectors disagree: waveform speech over VAD speech runs "
+        f"{ratio.get('min')} to {ratio.get('max')}, median {ratio.get('median')}. A "
+        f"tolerance on the total inherits that disagreement whichever detector defines it, "
+        f"which is a reason to prefer the largest contiguous gap: a local statistic is not "
+        f"moved by a global threshold offset."
     )
     out.append("")
     rec = summary["recommended_tolerance"]

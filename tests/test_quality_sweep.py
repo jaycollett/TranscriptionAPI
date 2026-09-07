@@ -1229,3 +1229,27 @@ def test_regressions_can_be_read_on_either_basis():
     rows = analyze.build_rows(state_with_spans(), fixture_baseline(), fixture_file_list(), jobs)
     assert [r["file"] for r in analyze.regressions(rows)] == ["drop.mp3"]
     assert analyze.regressions(rows, key="word_delta_pct_restored") == []
+
+
+def test_analyse_file_reports_both_speech_bases():
+    # 100 s file, no silence, decoder emitted 0-70 s. The service says 80 s of speech.
+    result = gaps.analyse_file([], [(0.0, 70.0)], 100.0, service_speech_s=80.0)
+    assert result["speech_s"] == 100.0
+    assert result["uncovered_fraction"] == pytest.approx(0.30)
+    assert result["merged_span_s"] == 70.0
+    assert result["speech_ratio_to_service"] == pytest.approx(1.25)
+    assert result["uncovered_fraction_service_basis"] == pytest.approx(10.0 / 80.0)
+
+
+def test_service_basis_merges_overlapping_spans_before_counting():
+    # Two segments that overlap must not count their shared seconds twice, which is the
+    # bug that let the service report coverage above 100 percent.
+    result = gaps.analyse_file([], [(0.0, 60.0), (50.0, 100.0)], 100.0, service_speech_s=90.0)
+    assert result["merged_span_s"] == 100.0
+    assert result["uncovered_fraction_service_basis"] == 0.0
+
+
+def test_service_basis_is_absent_without_a_service_number():
+    result = gaps.analyse_file([], [(0.0, 70.0)], 100.0)
+    assert result["uncovered_fraction_service_basis"] is None
+    assert result["speech_ratio_to_service"] is None
