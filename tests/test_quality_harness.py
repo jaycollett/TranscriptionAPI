@@ -280,3 +280,12 @@ def test_i2_ignores_mfa_word_missing_from_whisper():
     records, ratio = align.match_words(segs, words)
     assert [r["mfa"] for r in records] == [0, 2, 3, 4]
     assert ratio < 1.0
+
+
+def test_glossary_stats_counts_terms_and_leakage():
+    terms = ["Holy Spirit", "Bonhoeffer", "Acts"]
+    g = metrics.glossary_stats("The Holy Spirit came in Acts. Bonhoeffer wrote. holy spirit bonhoeffer acts", terms)
+    assert g["per_term"] == {"Holy Spirit": 2, "Bonhoeffer": 2, "Acts": 2}
+    assert g["total_hits"] == 6
+    assert g["leakage"] == 2  # "holy spirit bonhoeffer" and "bonhoeffer acts" in listed order
+    assert len(configs.GLOSSARY_TERMS) == len(configs.GLOSSARY.split(","))

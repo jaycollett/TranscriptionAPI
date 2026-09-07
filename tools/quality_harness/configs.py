@@ -48,10 +48,11 @@ BASE = {
 # the C1 transcripts for capitalised terms). Kept under 30 tokens on purpose: the
 # hotwords are prepended to every window outside the 223-token previous-text cap.
 GLOSSARY = (
-    "Colossians, Philemon, Habakkuk, Zephaniah, Ephesians, Galatians, Thessalonians, "
-    "Nehemiah, Isaiah, Corinthians, Pentecost, sanctification, propitiation, "
-    "justification, Trinity, Holy Spirit, Pharisees"
+    "Jesus, Holy Spirit, Bonhoeffer, Sermon on the Mount, Great Commission, Acts, Moses, "
+    "Joshua, Peter, Paul, Colossians, Philemon, Habakkuk, Nehemiah, Ephesians, Galatians, "
+    "Corinthians, Thessalonians, Pentecost, sanctification, propitiation"
 )
+GLOSSARY_TERMS = [t.strip() for t in GLOSSARY.split(",")]
 
 C4_VAD = {
     "threshold": 0.5,

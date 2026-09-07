@@ -6,7 +6,8 @@ tables can be regenerated on the Mac from copied results.
 import json
 import os
 
-from metrics import agreement
+from configs import GLOSSARY_TERMS
+from metrics import agreement, glossary_stats
 from selection import anomaly_count
 
 DECODE_COLUMNS = [
@@ -182,7 +183,17 @@ def file_markdown(stem, file_meta, configs, aligns, cross):
         )
     if "C5" in configs:
         sel = configs["C5"]["segments"].get("selection", {})
-        lines.append(f"C5: {sel.get('clips')} clips, {sel.get('clips_disagreeing')} with pass disagreement.")
+        lines.append(
+            f"C5: {sel.get('clips')} clips, {sel.get('clips_disagreeing')} with pass disagreement; "
+            f"chosen per pass {sel.get('chosen_counts')}."
+        )
+    if "C9" in configs and "C1" in configs:
+        g9 = glossary_stats(configs["C9"]["segments"]["transcript"], GLOSSARY_TERMS)
+        g1 = glossary_stats(configs["C1"]["segments"]["transcript"], GLOSSARY_TERMS)
+        lines.append(
+            f"C9 GLOSSARY: term hits C9 {g9['total_hits']} vs C1 {g1['total_hits']} "
+            f"(C9 {g9['per_term']}; C1 {g1['per_term']}); prompt leakage C9 {g9['leakage']}."
+        )
     lines.append("")
     if aligns:
         lines.append("Alignment (rows: decode config, MFA path, refinement rule):")

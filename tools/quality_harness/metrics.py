@@ -186,6 +186,22 @@ def phantom_segments(segments):
     return hits
 
 
+def glossary_stats(transcript, terms):
+    """C9: occurrences of each glossary term (normalised) and prompt-text leakage,
+    counted as any two glossary terms appearing adjacent in their listed order."""
+    words = norm_words(transcript)
+    text = " " + " ".join(words) + " "
+    counts = {}
+    for term in terms:
+        key = " " + " ".join(norm_words(term)) + " "
+        counts[term] = text.count(key)
+    leaks = 0
+    for a, b in zip(terms, terms[1:]):
+        key = " " + " ".join(norm_words(a)) + " " + " ".join(norm_words(b)) + " "
+        leaks += text.count(key)
+    return {"total_hits": sum(counts.values()), "per_term": {k: v for k, v in counts.items() if v}, "leakage": leaks}
+
+
 def api_invariants(transcript, timings):
     joined = " ".join(t["text"].strip() for t in timings if t["text"].strip())
     nonmono = 0

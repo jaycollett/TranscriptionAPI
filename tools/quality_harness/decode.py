@@ -212,11 +212,15 @@ def run_shared_clips(model, audio, cfg):
                 "disagree": len(set(texts)) > 1,
             }
         )
+    chosen_counts = {}
+    for d in decisions:
+        chosen_counts[d["chosen"]] = chosen_counts.get(d["chosen"], 0) + 1
     return {
         "passes": [{"name": n} | p for n, p in passes],
         "segments": chosen,
         "clips": len(clips),
         "clip_decisions": decisions,
+        "chosen_counts": chosen_counts,
         "clips_disagreeing": sum(1 for d in decisions if d["disagree"]),
         "wall_s": round(sum(p["wall_s"] for _, p in passes), 2),
     }
@@ -305,6 +309,7 @@ def run_config(model, audio, duration, name, ref_chunks):
                         "rule": cfg["selection"]["rule"],
                         "clips": r["clips"],
                         "clips_disagreeing": r["clips_disagreeing"],
+                        "chosen_counts": r["chosen_counts"],
                         "clip_decisions": r["clip_decisions"],
                     },
                     "vad_chunks": vad_chunks_seconds(audio, C4_VAD),
