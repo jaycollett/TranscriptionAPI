@@ -1002,6 +1002,31 @@ review, they simply do not decide anything. **No anomaly signal can quarantine a
 any more.** Quarantine belongs to the garbage check and the word-rate floor, which
 reject output that is unusable rather than merely suspect.
 
+**Why the retry fingerprint was not kept for the surviving quarantine paths.** It
+existed to stop a deterministic decode burning three attempts to reach the same
+quarantine. The two paths that can still quarantine are the garbage check and the
+word-rate floor, and both fire on output that is genuinely unusable, where quarantine
+is the intended outcome rather than a failure of the gate. More to the point, output
+bad enough to trip either has almost certainly tripped the compression-ratio or
+log-probability threshold on the way, which means the ladder engaged, which means the
+higher rungs sampled: retries on exactly those paths do vary run to run and are worth
+attempting. The fingerprint would rarely match where it still applied, and it would
+cost a column, a comparison and two extra return values to protect against a case the
+remaining paths mostly do not produce. Keeping dead machinery for a hypothetical is
+what this release spent a day removing.
+
+**The shape the release ends on, which is the lesson rather than the detail: the
+remedy was kept and the punishment removed.** A low word-rate window fires the rescue
+pass, which is the thing that actually recovers a dropped passage. No quality signal
+can quarantine anything any more. Quarantine belongs solely to output that is
+unusable on its face. The day produced four separate rules that would each have
+destroyed good content, and every one of them was a punishment attached to a signal
+nobody had measured: the boundary de-duplication deleting scripture, the anomaly gate
+black-holing a healthy 8292-word transcript, the uncovered-speech total reporting an
+omission on files missing nothing, and the per-segment count flagging six healthy
+files while missing all seven bad ones. Measure a signal before you let it throw work
+away, and when in doubt publish with a marker rather than withhold.
+
 **Why a threshold on that signal was never going to be stable.** A file varied by one
 word between two runs with no rescue on either, and that single word flipped its
 anomaly count. It carries a temperature flag, so the ladder engaged inside the primary
