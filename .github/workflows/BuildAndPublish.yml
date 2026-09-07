@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
 jobs:
   # The image is only built and pushed on a green test suite and lint run.
+  # On the weekly schedule (and workflow_dispatch) this job checks out and
+  # tests the default branch, while push_to_registry rebuilds the newest
+  # release tag; the gate is on the branch, not on the exact tag rebuilt.
   test:
     uses: ./.github/workflows/Test.yml
 
