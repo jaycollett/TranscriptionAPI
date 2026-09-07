@@ -1,0 +1,1028 @@
+{
+ "configs": [
+  "control",
+  "no_context",
+  "no_vad",
+  "quiet_profile",
+  "ladder_from_0_2"
+ ],
+ "files": {
+  "tcf.20210210.mp3": {
+   "control": {
+    "words": 1173,
+    "segments": 81,
+    "decode_seconds": 11.3,
+    "speech_seconds": 464.16,
+    "passages": {
+     "5.0": {
+      "label": "Matthew 12:15-16 read aloud",
+      "reference_words": 23,
+      "containment": 0.7368,
+      "windows": [
+       {
+        "start": -25.0,
+        "end": 35.0,
+        "words": 49,
+        "wps": 0.817,
+        "below_floor": true
+       },
+       {
+        "start": 35.0,
+        "end": 65.0,
+        "words": 47,
+        "wps": 1.567,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 1175,
+    "segments": 90,
+    "decode_seconds": 10.67,
+    "speech_seconds": 464.16,
+    "passages": {
+     "5.0": {
+      "label": "Matthew 12:15-16 read aloud",
+      "reference_words": 23,
+      "containment": 0.7368,
+      "windows": [
+       {
+        "start": -25.0,
+        "end": 35.0,
+        "words": 30,
+        "wps": 0.5,
+        "below_floor": true
+       },
+       {
+        "start": 35.0,
+        "end": 65.0,
+        "words": 62,
+        "wps": 2.067,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 1197,
+    "segments": 108,
+    "decode_seconds": 11.67,
+    "speech_seconds": 469.88,
+    "passages": {
+     "5.0": {
+      "label": "Matthew 12:15-16 read aloud",
+      "reference_words": 23,
+      "containment": 0.7368,
+      "windows": [
+       {
+        "start": -25.0,
+        "end": 35.0,
+        "words": 23,
+        "wps": 0.383,
+        "below_floor": true
+       },
+       {
+        "start": 35.0,
+        "end": 65.0,
+        "words": 73,
+        "wps": 2.433,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 1173,
+    "segments": 83,
+    "decode_seconds": 11.7,
+    "speech_seconds": 464.3,
+    "passages": {
+     "5.0": {
+      "label": "Matthew 12:15-16 read aloud",
+      "reference_words": 23,
+      "containment": 0.7368,
+      "windows": [
+       {
+        "start": -25.0,
+        "end": 35.0,
+        "words": 20,
+        "wps": 0.333,
+        "below_floor": true
+       },
+       {
+        "start": 35.0,
+        "end": 65.0,
+        "words": 76,
+        "wps": 2.533,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 1173,
+    "segments": 82,
+    "decode_seconds": 11.59,
+    "speech_seconds": 464.16,
+    "passages": {
+     "5.0": {
+      "label": "Matthew 12:15-16 read aloud",
+      "reference_words": 23,
+      "containment": 0.7368,
+      "windows": [
+       {
+        "start": -25.0,
+        "end": 35.0,
+        "words": 20,
+        "wps": 0.333,
+        "below_floor": true
+       },
+       {
+        "start": 35.0,
+        "end": 65.0,
+        "words": 76,
+        "wps": 2.533,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  "tcf.20210217.mp3": {
+   "control": {
+    "words": 1634,
+    "segments": 137,
+    "decode_seconds": 16.25,
+    "speech_seconds": 607.99,
+    "passages": {
+     "20.0": {
+      "label": "Matthew 6:19-21 read aloud",
+      "reference_words": 107,
+      "containment": 0.1176,
+      "windows": [
+       {
+        "start": -10.0,
+        "end": 50.0,
+        "words": 25,
+        "wps": 0.417,
+        "below_floor": true
+       },
+       {
+        "start": 50.0,
+        "end": 80.0,
+        "words": 96,
+        "wps": 3.2,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 1679,
+    "segments": 117,
+    "decode_seconds": 14.25,
+    "speech_seconds": 607.99,
+    "passages": {
+     "20.0": {
+      "label": "Matthew 6:19-21 read aloud",
+      "reference_words": 107,
+      "containment": 0.549,
+      "windows": [
+       {
+        "start": -10.0,
+        "end": 50.0,
+        "words": 87,
+        "wps": 1.45,
+        "below_floor": false
+       },
+       {
+        "start": 50.0,
+        "end": 80.0,
+        "words": 76,
+        "wps": 2.533,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 1682,
+    "segments": 129,
+    "decode_seconds": 18.88,
+    "speech_seconds": 616.81,
+    "passages": {
+     "20.0": {
+      "label": "Matthew 6:19-21 read aloud",
+      "reference_words": 107,
+      "containment": 0.5392,
+      "windows": [
+       {
+        "start": -10.0,
+        "end": 50.0,
+        "words": 69,
+        "wps": 1.15,
+        "below_floor": true
+       },
+       {
+        "start": 50.0,
+        "end": 80.0,
+        "words": 96,
+        "wps": 3.2,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 1678,
+    "segments": 136,
+    "decode_seconds": 15.8,
+    "speech_seconds": 609.65,
+    "passages": {
+     "20.0": {
+      "label": "Matthew 6:19-21 read aloud",
+      "reference_words": 107,
+      "containment": 0.5392,
+      "windows": [
+       {
+        "start": -10.0,
+        "end": 50.0,
+        "words": 69,
+        "wps": 1.15,
+        "below_floor": true
+       },
+       {
+        "start": 50.0,
+        "end": 80.0,
+        "words": 96,
+        "wps": 3.2,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 1681,
+    "segments": 128,
+    "decode_seconds": 16.12,
+    "speech_seconds": 607.99,
+    "passages": {
+     "20.0": {
+      "label": "Matthew 6:19-21 read aloud",
+      "reference_words": 107,
+      "containment": 0.5392,
+      "windows": [
+       {
+        "start": -10.0,
+        "end": 50.0,
+        "words": 69,
+        "wps": 1.15,
+        "below_floor": true
+       },
+       {
+        "start": 50.0,
+        "end": 80.0,
+        "words": 96,
+        "wps": 3.2,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  "tcf.20210604.mp3": {
+   "control": {
+    "words": 4505,
+    "segments": 585,
+    "decode_seconds": 43.89,
+    "speech_seconds": 1560.76,
+    "passages": {
+     "290.18": {
+      "label": "C.S. Lewis, The Problem of Pain",
+      "reference_words": 68,
+      "containment": 0.9375,
+      "windows": [
+       {
+        "start": 260.2,
+        "end": 320.2,
+        "words": 109,
+        "wps": 1.817,
+        "below_floor": false
+       },
+       {
+        "start": 320.2,
+        "end": 344.8,
+        "words": 56,
+        "wps": 2.275,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 4545,
+    "segments": 428,
+    "decode_seconds": 53.95,
+    "speech_seconds": 1560.76,
+    "passages": {
+     "290.18": {
+      "label": "C.S. Lewis, The Problem of Pain",
+      "reference_words": 68,
+      "containment": 1.0,
+      "windows": [
+       {
+        "start": 260.2,
+        "end": 320.2,
+        "words": 164,
+        "wps": 2.733,
+        "below_floor": false
+       },
+       {
+        "start": 320.2,
+        "end": 344.8,
+        "words": 56,
+        "wps": 2.275,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 4553,
+    "segments": 759,
+    "decode_seconds": 92.99,
+    "speech_seconds": 1660.33,
+    "passages": {
+     "290.18": {
+      "label": "C.S. Lewis, The Problem of Pain",
+      "reference_words": 68,
+      "containment": 1.0,
+      "windows": [
+       {
+        "start": 260.2,
+        "end": 320.2,
+        "words": 145,
+        "wps": 2.417,
+        "below_floor": false
+       },
+       {
+        "start": 320.2,
+        "end": 344.8,
+        "words": 56,
+        "wps": 2.275,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 4502,
+    "segments": 422,
+    "decode_seconds": 75.28,
+    "speech_seconds": 1585.36,
+    "passages": {
+     "290.18": {
+      "label": "C.S. Lewis, The Problem of Pain",
+      "reference_words": 68,
+      "containment": 1.0,
+      "windows": [
+       {
+        "start": 260.2,
+        "end": 320.2,
+        "words": 146,
+        "wps": 2.433,
+        "below_floor": false
+       },
+       {
+        "start": 320.2,
+        "end": 344.8,
+        "words": 0,
+        "wps": 0.0,
+        "below_floor": true
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 4563,
+    "segments": 384,
+    "decode_seconds": 86.65,
+    "speech_seconds": 1560.76,
+    "passages": {
+     "290.18": {
+      "label": "C.S. Lewis, The Problem of Pain",
+      "reference_words": 68,
+      "containment": 1.0,
+      "windows": [
+       {
+        "start": 260.2,
+        "end": 320.2,
+        "words": 155,
+        "wps": 2.583,
+        "below_floor": false
+       },
+       {
+        "start": 320.2,
+        "end": 344.8,
+        "words": 56,
+        "wps": 2.275,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  "tcf.20241105.mp3": {
+   "control": {
+    "words": 7794,
+    "segments": 749,
+    "decode_seconds": 158.15,
+    "speech_seconds": 2719.6,
+    "passages": {
+     "1299.39": {
+      "label": "Q&A exchange, 89 words",
+      "reference_words": 93,
+      "containment": 0.5281,
+      "windows": [
+       {
+        "start": 1269.4,
+        "end": 1329.4,
+        "words": 149,
+        "wps": 2.483,
+        "below_floor": false
+       },
+       {
+        "start": 1329.4,
+        "end": 1356.7,
+        "words": 45,
+        "wps": 1.648,
+        "below_floor": false
+       }
+      ]
+     },
+     "1657.65": {
+      "label": "Q&A exchange, 48 words",
+      "reference_words": 52,
+      "containment": 0.7708,
+      "windows": [
+       {
+        "start": 1627.7,
+        "end": 1687.7,
+        "words": 127,
+        "wps": 2.117,
+        "below_floor": false
+       },
+       {
+        "start": 1687.7,
+        "end": 1704.1,
+        "words": 22,
+        "wps": 1.34,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 7525,
+    "segments": 586,
+    "decode_seconds": 120.29,
+    "speech_seconds": 2719.6,
+    "passages": {
+     "1299.39": {
+      "label": "Q&A exchange, 89 words",
+      "reference_words": 93,
+      "containment": 0.5506,
+      "windows": [
+       {
+        "start": 1269.4,
+        "end": 1329.4,
+        "words": 162,
+        "wps": 2.7,
+        "below_floor": false
+       },
+       {
+        "start": 1329.4,
+        "end": 1356.7,
+        "words": 41,
+        "wps": 1.502,
+        "below_floor": false
+       }
+      ]
+     },
+     "1657.65": {
+      "label": "Q&A exchange, 48 words",
+      "reference_words": 52,
+      "containment": 0.6875,
+      "windows": [
+       {
+        "start": 1627.7,
+        "end": 1687.7,
+        "words": 123,
+        "wps": 2.05,
+        "below_floor": false
+       },
+       {
+        "start": 1687.7,
+        "end": 1704.1,
+        "words": 3,
+        "wps": 0.183,
+        "below_floor": true
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 7987,
+    "segments": 793,
+    "decode_seconds": 172.64,
+    "speech_seconds": 2981.86,
+    "passages": {
+     "1299.39": {
+      "label": "Q&A exchange, 89 words",
+      "reference_words": 93,
+      "containment": 0.6966,
+      "windows": [
+       {
+        "start": 1269.4,
+        "end": 1329.4,
+        "words": 180,
+        "wps": 3.0,
+        "below_floor": false
+       },
+       {
+        "start": 1329.4,
+        "end": 1356.7,
+        "words": 73,
+        "wps": 2.674,
+        "below_floor": false
+       }
+      ]
+     },
+     "1657.65": {
+      "label": "Q&A exchange, 48 words",
+      "reference_words": 52,
+      "containment": 0.9792,
+      "windows": [
+       {
+        "start": 1627.7,
+        "end": 1687.7,
+        "words": 140,
+        "wps": 2.333,
+        "below_floor": false
+       },
+       {
+        "start": 1687.7,
+        "end": 1704.1,
+        "words": 48,
+        "wps": 2.923,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 8117,
+    "segments": 796,
+    "decode_seconds": 166.91,
+    "speech_seconds": 2870.58,
+    "passages": {
+     "1299.39": {
+      "label": "Q&A exchange, 89 words",
+      "reference_words": 93,
+      "containment": 0.6517,
+      "windows": [
+       {
+        "start": 1269.4,
+        "end": 1329.4,
+        "words": 183,
+        "wps": 3.05,
+        "below_floor": false
+       },
+       {
+        "start": 1329.4,
+        "end": 1356.7,
+        "words": 60,
+        "wps": 2.198,
+        "below_floor": false
+       }
+      ]
+     },
+     "1657.65": {
+      "label": "Q&A exchange, 48 words",
+      "reference_words": 52,
+      "containment": 0.6667,
+      "windows": [
+       {
+        "start": 1627.7,
+        "end": 1687.7,
+        "words": 157,
+        "wps": 2.617,
+        "below_floor": false
+       },
+       {
+        "start": 1687.7,
+        "end": 1704.1,
+        "words": 40,
+        "wps": 2.436,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 7727,
+    "segments": 819,
+    "decode_seconds": 146.76,
+    "speech_seconds": 2719.6,
+    "passages": {
+     "1299.39": {
+      "label": "Q&A exchange, 89 words",
+      "reference_words": 93,
+      "containment": 0.5393,
+      "windows": [
+       {
+        "start": 1269.4,
+        "end": 1329.4,
+        "words": 154,
+        "wps": 2.567,
+        "below_floor": false
+       },
+       {
+        "start": 1329.4,
+        "end": 1356.7,
+        "words": 41,
+        "wps": 1.502,
+        "below_floor": false
+       }
+      ]
+     },
+     "1657.65": {
+      "label": "Q&A exchange, 48 words",
+      "reference_words": 52,
+      "containment": 0.7083,
+      "windows": [
+       {
+        "start": 1627.7,
+        "end": 1687.7,
+        "words": 128,
+        "wps": 2.133,
+        "below_floor": false
+       },
+       {
+        "start": 1687.7,
+        "end": 1704.1,
+        "words": 20,
+        "wps": 1.218,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  "tcf.20250607.mp3": {
+   "control": {
+    "words": 7818,
+    "segments": 754,
+    "decode_seconds": 80.47,
+    "speech_seconds": 2745.23,
+    "passages": {
+     "76.35": {
+      "label": "Exodus 24 read aloud",
+      "reference_words": 9,
+      "containment": 0.8,
+      "windows": [
+       {
+        "start": 46.3,
+        "end": 106.3,
+        "words": 72,
+        "wps": 1.2,
+        "below_floor": false
+       },
+       {
+        "start": 106.3,
+        "end": 131.1,
+        "words": 37,
+        "wps": 1.495,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 7715,
+    "segments": 555,
+    "decode_seconds": 65.65,
+    "speech_seconds": 2745.23,
+    "passages": {
+     "76.35": {
+      "label": "Exodus 24 read aloud",
+      "reference_words": 9,
+      "containment": 0.8,
+      "windows": [
+       {
+        "start": 46.3,
+        "end": 106.3,
+        "words": 175,
+        "wps": 2.917,
+        "below_floor": false
+       },
+       {
+        "start": 106.3,
+        "end": 131.1,
+        "words": 77,
+        "wps": 3.111,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 7711,
+    "segments": 706,
+    "decode_seconds": 79.52,
+    "speech_seconds": 2846.53,
+    "passages": {
+     "76.35": {
+      "label": "Exodus 24 read aloud",
+      "reference_words": 9,
+      "containment": 0.8,
+      "windows": [
+       {
+        "start": 46.3,
+        "end": 106.3,
+        "words": 188,
+        "wps": 3.133,
+        "below_floor": false
+       },
+       {
+        "start": 106.3,
+        "end": 131.1,
+        "words": 72,
+        "wps": 2.909,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 7399,
+    "segments": 668,
+    "decode_seconds": 83.53,
+    "speech_seconds": 2769.17,
+    "passages": {
+     "76.35": {
+      "label": "Exodus 24 read aloud",
+      "reference_words": 9,
+      "containment": 0.8,
+      "windows": [
+       {
+        "start": 46.3,
+        "end": 106.3,
+        "words": 72,
+        "wps": 1.2,
+        "below_floor": false
+       },
+       {
+        "start": 106.3,
+        "end": 131.1,
+        "words": 37,
+        "wps": 1.495,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 7678,
+    "segments": 798,
+    "decode_seconds": 82.52,
+    "speech_seconds": 2745.23,
+    "passages": {
+     "76.35": {
+      "label": "Exodus 24 read aloud",
+      "reference_words": 9,
+      "containment": 0.8,
+      "windows": [
+       {
+        "start": 46.3,
+        "end": 106.3,
+        "words": 179,
+        "wps": 2.983,
+        "below_floor": false
+       },
+       {
+        "start": 106.3,
+        "end": 131.1,
+        "words": 82,
+        "wps": 3.313,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  },
+  "ucf20211106b.mp3": {
+   "control": {
+    "words": 5055,
+    "segments": 386,
+    "decode_seconds": 58.65,
+    "speech_seconds": 2088.68,
+    "passages": {
+     "1225.64": {
+      "label": "1 Peter 1:22-25 read aloud",
+      "reference_words": 59,
+      "containment": 0.3636,
+      "windows": [
+       {
+        "start": 1195.6,
+        "end": 1255.6,
+        "words": 23,
+        "wps": 0.383,
+        "below_floor": true
+       },
+       {
+        "start": 1255.6,
+        "end": 1280.8,
+        "words": 54,
+        "wps": 2.145,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_context": {
+    "words": 5028,
+    "segments": 357,
+    "decode_seconds": 45.97,
+    "speech_seconds": 2088.68,
+    "passages": {
+     "1225.64": {
+      "label": "1 Peter 1:22-25 read aloud",
+      "reference_words": 59,
+      "containment": 0.3636,
+      "windows": [
+       {
+        "start": 1195.6,
+        "end": 1255.6,
+        "words": 23,
+        "wps": 0.383,
+        "below_floor": true
+       },
+       {
+        "start": 1255.6,
+        "end": 1280.8,
+        "words": 53,
+        "wps": 2.105,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "no_vad": {
+    "words": 5038,
+    "segments": 453,
+    "decode_seconds": 54.39,
+    "speech_seconds": 2248.44,
+    "passages": {
+     "1225.64": {
+      "label": "1 Peter 1:22-25 read aloud",
+      "reference_words": 59,
+      "containment": 0.3636,
+      "windows": [
+       {
+        "start": 1195.6,
+        "end": 1255.6,
+        "words": 25,
+        "wps": 0.417,
+        "below_floor": true
+       },
+       {
+        "start": 1255.6,
+        "end": 1280.8,
+        "words": 31,
+        "wps": 1.231,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "quiet_profile": {
+    "words": 4988,
+    "segments": 1186,
+    "decode_seconds": 65.04,
+    "speech_seconds": 2119.47,
+    "passages": {
+     "1225.64": {
+      "label": "1 Peter 1:22-25 read aloud",
+      "reference_words": 59,
+      "containment": 0.9091,
+      "windows": [
+       {
+        "start": 1195.6,
+        "end": 1255.6,
+        "words": 91,
+        "wps": 1.517,
+        "below_floor": false
+       },
+       {
+        "start": 1255.6,
+        "end": 1280.8,
+        "words": 53,
+        "wps": 2.105,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   },
+   "ladder_from_0_2": {
+    "words": 5138,
+    "segments": 447,
+    "decode_seconds": 70.93,
+    "speech_seconds": 2088.68,
+    "passages": {
+     "1225.64": {
+      "label": "1 Peter 1:22-25 read aloud",
+      "reference_words": 59,
+      "containment": 0.9091,
+      "windows": [
+       {
+        "start": 1195.6,
+        "end": 1255.6,
+        "words": 84,
+        "wps": 1.4,
+        "below_floor": false
+       },
+       {
+        "start": 1255.6,
+        "end": 1280.8,
+        "words": 57,
+        "wps": 2.264,
+        "below_floor": false
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "references": {
+  "tcf.20250607.mp3@76.35": {
+   "words": 9,
+   "text": "So I'll just read this in chapter 24. Offerings."
+  },
+  "tcf.20210604.mp3@290.18": {
+   "words": 68,
+   "text": "So Lewis writes, this is in his book, The Problem of Pain. I willingly believe that the damned are, in one sense, successful, rebels to the end. That the doors of hell are locked on the inside. They enjoy forever the horrible freedom that they have demanded and are therefore self-enslaved. Just as the blessed, forever submitting to obedience, become through all eternity more and more free."
+  },
+  "ucf20211106b.mp3@1225.64": {
+   "words": 59,
+   "text": "Twenty two through twenty five. All right. Having purified your souls by your obedience to the truth for a sincere brotherly love, love one another earnestly from a pure heart, since you have been born again, not of perishable seed, but of imperishable through the living and abiding word of God for all flesh is like grass and all."
+  },
+  "tcf.20241105.mp3@1299.39": {
+   "words": 93,
+   "text": "that awe is meant to lead into trust. Yeah. But that's a whole great topic. I mean, just the fear of God, what it is, I think is a whole great topic for another day. Dave? I was just going to say, I feel like it's the fear. It's like there's fear pre-relationship with Jesus and fear because it's like the fear becomes trust. Yeah. Like this fear is the beginning of wisdom. Once you know that God is in control, that becomes trust. Yeah. Once you've ever seen that, there's this"
+  },
+  "tcf.20241105.mp3@1657.65": {
+   "words": 52,
+   "text": "ago, um, versus, all right, I need to rebuke you. Um, does that make sense? That's another, I think, huge discussion, but I would just say the Bible is enormously textured in its vocabulary of how we challenge one another, encourage one another, sometimes rebuke one another. Um, and yeah, I wouldn't."
+  },
+  "tcf.20210210.mp3@5.0": {
+   "words": 23,
+   "text": "Matthew chapter 12, starting in verse 15. How will anyone hear his voice in the streets? A bruised reed he will not break."
+  },
+  "tcf.20210217.mp3@20.0": {
+   "words": 107,
+   "text": "I say to you, they have received their reward. But when you fast, anoint your head and wash your face, that your fasting may not be seen by others, but by your Father who is in secret. And your Father who sees in secret will reward you. Do not lay up for yourself treasures on earth, where moth and rust destroy, and where thieves break in and steal. But lay up for yourself treasures in heaven, where neither moth nor rust destroys, and where thieves do not break in and steal. For where your treasure is, there your heart will be also. The eye is the lamp."
+  }
+ }
+}
