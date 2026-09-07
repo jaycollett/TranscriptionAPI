@@ -238,7 +238,7 @@ Recommended change: `set -euo pipefail`; build into a versioned tag
 (`git describe --always --dirty`) before stopping anything, retag the previous
 image `transcription-api:rollback`, then stop/rm/run and poll `/health` for up
 to 3 minutes. Verify: GPU.
-Status: Open
+Status: Done in 0.5.0 (Build before stopping, keep a rollback tag and wait for health in runDocker.sh)
 
 **18. Log noise: three INFO lines every 30 s, plus MFA progress bars**
 `app.py:transcription_worker`, `app.py:run_forced_alignment`. 70 of the 300
