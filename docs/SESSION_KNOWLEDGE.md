@@ -62,8 +62,8 @@ produced with it.
 **Diarization was failing during validation.** The 2.78-2.82 words/sec numbers
 were measured with pyannote diarization failing (401 on the gated
 `pyannote/segmentation-3.0` model, which the build-time download does not
-fetch) and falling back to one speaker, so MFA always ran. The feature is
-slated for removal in the next release.
+fetch) and falling back to one speaker, so MFA always ran. The feature has
+since been removed (entry below), which is a no-op at runtime.
 
 **Measured before/after** on the same 755 s file: 0.54 to 2.745 words/sec;
 410 tokens of mostly punctuation to 2,073 words; runtime about 16 min to
@@ -91,13 +91,13 @@ production image, so a code change can ship without touching the stack.
 
 **Release process caveat.** The GitHub Actions workflow builds from the
 from-scratch `Dockerfile` on every published release and pushes `:latest`. It
-currently fails because it passes no `HUGGINGFACE_TOKEN_BUILD`. Once that is
-fixed, it will publish whatever the from-scratch build produces (pinned
-v3.4.1 base, pinned requirements, freshly downloaded models), which is a
-different stack from the one validated here. A GitHub release must therefore
-only be published after that exact build has passed the validation recipe
-below on the GPU host. Until then, ship code-only changes through
-`Dockerfile.release`.
+used to fail because it passed no `HUGGINGFACE_TOKEN_BUILD`; with diarization
+removed (entry below) the build needs no secret and will succeed, and it will
+then publish whatever the from-scratch build produces (pinned v3.4.1 base,
+pinned requirements, freshly downloaded models), which is a different stack
+from the one validated here. A GitHub release must therefore only be
+published after that exact build has passed the validation recipe below on
+the GPU host. Until then, ship code-only changes through `Dockerfile.release`.
 
 **GLIBCXX note.** A bare `docker exec <container> python -c "import torch"`
 fails with `GLIBCXX_3.4.29 not found` because the system libstdc++ is too old,
@@ -126,6 +126,31 @@ dependency pins, or the base image, before the image replaces production.
 - Inside the container (with the LD_LIBRARY_PATH above) confirm
   `torch.cuda.is_available()` is `True` and `ctranslate2.get_cuda_device_count()`
   is at least 1. A CPU fallback runs, slowly, and looks like a decode problem.
+
+## 2026-09-07 - Speaker diarization removed
+
+pyannote speaker diarization and the multi-speaker MFA-skip branch in
+`run_forced_alignment` are gone. MFA is now always attempted, with the existing
+fallback to Whisper timings when it fails.
+
+- 98% of the recordings this service handles are single speaker, so the branch
+  had almost nothing to decide.
+- It never worked in production. The Dockerfile snapshotted only the
+  `pyannote/speaker-diarization-3.1` pipeline repo, not the gated sub-models it
+  loads (`pyannote/segmentation-3.0` and the embedding model), so every job hit
+  a 401 at load time, logged "assuming single speaker", and took the MFA path
+  anyway. Removal is therefore a no-op at runtime; the validated 2.78-2.82
+  words/sec numbers were produced in exactly this state.
+- Repairing it would have cost a GPU pass per job and would have been the first
+  code path to decode audio through the base image's conda torchcodec, which is
+  built against the base's CPU torch while pip replaced torch with 2.12.1+cu130.
+  That mismatch is untested and not worth exposing for a 2% case.
+- Dropping it removes the only build-time secret (`HUGGINGFACE_TOKEN_BUILD`),
+  so the CI weekly image refresh can run unattended, and `pyannote.audio` leaves
+  the pinned requirements along with its dependency tree.
+
+If multi-speaker handling is ever wanted again, treat it as a new feature with
+its own validation on the GPU host, not as a restore of this code.
 
 ## 2026-09-07 - Service is stateless by design
 
