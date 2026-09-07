@@ -282,3 +282,18 @@ comments?" with timings spanning 0 to 754.7 s. Environment inside the image:
 Python 3.13.14, torch 2.12.1+cu130 with CUDA available on the RTX 3060,
 ctranslate2 4.8.0 seeing one device, MFA 3.4.2.dev0 (what the v3.4.1 image tag
 actually ships), Ubuntu 20.04.5. Whole job about 3.5 minutes end to end.
+
+## 2026-09-07 - 0.5.0 validation record
+
+0.5.0-rc1, from-scratch build on the same v3.4.1 base and pins as 0.4.0, on the
+reference file tcf.20240213b.mp3: 2081 words, 2.756 words/sec, 127 timings, MFA
+aligned on the first attempt, 145 s for the five Whisper passes and 180 s end to
+end. The completed status body and the /transcriptions row both carried the
+additive fields (processing_seconds 180.0, words_per_second 2.756, attempt_count
+0, mfa_applied true). GPU-only checks: /health returned 200 six seconds after
+start and Docker reported healthy; /health showed worker_busy true with status ok
+while a job ran; zero <guid>_mfa_input directories remained under /mfa after the
+job; corrupt and wrong-extension uploads returned 400; a duplicate GUID returned
+409 in both lower and upper case; no worker sleep/wake lines in the log. The
+upstream client resubmitted its in-flight jobs within minutes of the container
+swap, as the stateless design intends.
