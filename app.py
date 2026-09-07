@@ -851,10 +851,12 @@ if __name__ == "__main__":
     worker_thread.start()
     app.logger.info("Transcription worker thread started successfully.")
     
-    # Run the app
+    # Run the app. Debug mode is off: the Werkzeug debugger exposes an interactive
+    # console on unhandled exceptions, which must never be reachable on a service
+    # bound to 0.0.0.0. Set FLASK_DEBUG=1 in the environment for local debugging.
     app.run(
-        host='0.0.0.0', 
-        port=5000, 
-        debug=True, 
+        host='0.0.0.0',
+        port=5000,
+        debug=os.getenv("FLASK_DEBUG", "0") == "1",
         use_reloader=False
     )
