@@ -1,0 +1,29 @@
+# Hotfix overlay: rebuild only the application source on top of a retained image.
+#
+# Why this exists instead of a plain `docker build -f Dockerfile`:
+# the main Dockerfile pins the base to mmcauliffe/montreal-forced-aligner:v3.4.1,
+# but the image that has been serving production was built from an earlier
+# `:latest` base and, until the 2026-09-07 release, from an unversioned
+# requirements.txt. A from-scratch rebuild therefore swaps the aligner, the CUDA
+# stack, and every Python dependency at the same time as the code change, which
+# makes a transcription result impossible to attribute to either.
+#
+# This overlay rebuilds ONLY the application source on top of the exact image
+# that was serving production, so the deployed difference is the code change and
+# nothing else. BASE_IMAGE has no default on purpose: pass an existing, retained
+# tag explicitly, never `:latest`, e.g.
+#
+#   docker build -f Dockerfile.release \
+#       --build-arg BASE_IMAGE=transcription-api:rollback-20260907 \
+#       -t transcription-api:0.4.0 .
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+WORKDIR /app
+
+# transcribe.py carries the fix; the others are copied so the image source always
+# matches the repo working tree it was built from.
+COPY app.py transcribe.py checkQueue.py requirements.txt ./
+
+EXPOSE 5000
+CMD ["python", "app.py"]
