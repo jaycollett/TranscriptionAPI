@@ -7,6 +7,7 @@ import time
 import json
 import shutil
 import subprocess
+from contextlib import closing
 from flask import Flask, request, jsonify  # Web framework and request handling
 from werkzeug.exceptions import HTTPException
 from transcribe import (  # Custom transcription logic
@@ -187,8 +188,10 @@ def ensure_schema(cursor):
 def init_db():
     # Initialize the SQLite database schema and performance settings
     """Initialize the database with necessary tables."""
-    # Use a temporary connection specifically for initialization to avoid impacting thread-local storage
-    with sqlite3.connect(db_file, timeout=db_connection_timeout) as conn:
+    # A dedicated connection for initialisation, kept out of thread-local storage.
+    # sqlite3's context manager only commits or rolls back; closing() is what
+    # actually releases the connection.
+    with closing(sqlite3.connect(db_file, timeout=db_connection_timeout)) as conn:
         cursor = conn.cursor()
 
         # Create/migrate schema (tables, indexes, additive columns)
