@@ -341,3 +341,181 @@ words of Psalm 91 on the retreat file), per-utterance MFA aligns the 1369 s file
 that whole-file MFA cannot, and no human-corrected transcript exists so none of
 this is a word error rate. The proposal defines release 0.6.0 and its
 acceptance thresholds against that results directory.
+
+
+## 2026-09-07 - 0.6.0: single-pass decode, anomaly gate, per-utterance alignment
+
+The first release that changes what the service transcribes. Everything here
+implements a measured winner from `docs/QUALITY_PROPOSAL.md`; the numbers cited
+are from `tools/quality_harness/results/2026-09-07/`, and nothing was adopted
+that the harness had not run on all six reference files.
+
+**One pass replaces five.** `beam_size=5`, `best_of=5`, `patience=1.0`, ladder
+(0.0, 0.2, 0.4, 0.6, 0.8, 1.0), `condition_on_previous_text=True`,
+`prompt_reset_on_temperature=0.5`, `word_timestamps=True`, no prompt, no
+hotwords, `num_workers=1`. The five-pass loop was never doing what it looked
+like it was doing: passes 1, 4 and 5 sampled at temperature 0.2-0.3, where
+faster-whisper ignores `beam_size` and `patience` entirely, so the selector was
+ranking four noisy variants of a single beam decode. The single pass agrees
+0.987-1.000 with the production winner and produces more words on every file, at
+20 s instead of 103 s on the 755 s file and 70 s instead of 360 s on the
+2783 s file. Every parameter is an environment variable, so the decode can be
+retuned on a running container; the defaults are the measured configuration and
+changing one invalidates the harness baseline.
+
+**The VAD threshold has to depend on the file's level.** The conservative C4
+settings (threshold 0.5, `min_silence_duration_ms` 1000, `speech_pad_ms` 300)
+cut seams 3-4x and were the best-aligning decode of any config on the 755 s
+file. On the one quiet file in the 655-file archive they are a disaster: at
+-28.6 dBFS the 0.5 threshold fragments speech into 2171 segments averaging
+1.4 s (against 435 at 7.7 s), mean log-probability falls from -0.056 to -0.141,
+290 words are lost and wall time rises 30 percent. So the threshold is chosen
+per file from an `ffmpeg -af volumedetect` measurement: 0.5 at or above
+-26 dBFS, 0.35 below it. The cutover sits between the quietest file that worked
+at 0.5 (-24.5 dBFS) and the one that failed (-28.6 dBFS). An unmeasurable level
+takes the 0.35 branch, because fragmenting quiet speech loses words while
+cutting extra seams on loud speech does not. The measurement costs a full decode
+of the audio, a few seconds on a sermon, and the level and the branch taken are
+logged on every job. `hallucination_silence_threshold` is 0.5, not the 2.0 the
+punchlist proposed: the VAD pads every gap by 300 ms each side, so a 2.0 s
+threshold can never fire.
+
+**The anomaly score replaces the duration-weighted word probability.** The old
+metric weighted each word's probability by its duration, which up-weights
+exactly the words to distrust, since Whisper gives hallucinated words in silence
+long durations. It disagreed with the anomaly rule on four of the six files and
+in every disagreement it preferred the pass with fewer words; on the retreat
+recording it ranked the passes in reverse order of word count and its winner had
+dropped two runs of Psalm 91 that the losing pass contained. `anomaly_count`
+counts segments at temperature 0.5 or above, compression ratio over 2.4, average
+log-probability under -1.0, or `no_speech_prob` over 0.5 with non-empty text.
+`anomaly_windows` counts 60 s windows of speech carrying under 1.2 words/sec,
+which is the only signal that sees a partial collapse: a file that transcribes
+normally for forty minutes and produces nothing for ten still clears the
+whole-file `MIN_WORDS_PER_SEC` floor.
+
+The window clock skips silence, or a ten-minute break before the Q&A would read
+as a collapse. faster-whisper does not hand back the VAD chunks it used and
+re-running the VAD would mean decoding the audio a second time, so the segments'
+own spans stand in for them: under `vad_filter` a segment only exists where the
+VAD found speech. This is a deliberate approximation and it is the one place the
+production metric differs in construction from the harness's, which had the real
+chunks.
+
+**A rescue pass, not five of them.** The redundancy the five-pass design was
+reaching for is kept, but paid for only where it is needed. If the primary pass
+scores any anomaly at all (`RESCUE_ANOMALY_SEGMENTS` 1, `RESCUE_ANOMALY_WINDOWS`
+1) exactly one rescue pass runs, so the worst case is two passes. The rescue
+changes two things and nothing else: `condition_on_previous_text=False`, which is
+the one lever that stops a repetition loop feeding itself from window to window,
+and a ladder starting at 0.2, because the primary already decoded this audio at
+0.0 and produced the anomalies, so repeating that rung is the one outcome
+guaranteed not to help. Model, beam, VAD threshold and every faster-whisper
+threshold are identical, so a difference in the result is attributable to those
+two changes rather than to noise. Selection is on the anomaly score: lower
+`anomaly_count + anomaly_windows`, then more words, then higher mean
+`avg_logprob`, with an exact tie keeping the primary. Word count is the first
+tie-break precisely because every disagreement the retired confidence rule got
+wrong was one where it preferred the shorter transcript.
+
+The order is primary, maybe rescue, select, then gate. The quarantine thresholds
+(`ANOMALY_WINDOWS_MAX` 2, `ANOMALY_SEGMENTS_MAX` 5) see the selected result, so a
+file only the rescue could save is not requeued on the primary's score. The
+rescue trigger sits far below the gate on purpose: a second opinion is cheap and
+a requeue is not.
+
+**The loop flag is a marker, never a rejection.** Segments whose repeated 4-gram
+rate exceeds 0.3 are flagged `loop`. All six such segments across the reference
+set were genuine rhetorical repetition ("Eternal life is knowing God. Eternal
+life is knowing God.", "willing to open your home, willing to open your home");
+no decoder loop occurred on any file. So the flag is surfaced in
+`flagged_segments` for review and is deliberately excluded from the count that
+can requeue a job. If a first-week job is flagged for a real loop, that is the
+evidence needed to promote it.
+
+**Text and timings are one sequence again.** `clean_boundary_duplicates` is
+deleted. It ran a repeated-phrase regex over the transcript string and left the
+timings untouched, so `" ".join(t["text"] for t in timings) == transcription` was
+false on every production job (2-27 words per file) and a second regex in
+`run_forced_alignment` made MFA's word sequence a third variant. It was also
+position-free, so it deleted legitimate repetition anywhere in the file: "He is
+risen. He is risen indeed." became "He is risen.  indeed.", "pray without
+ceasing. Pray without ceasing." became "pray without ceasing. .", and "day by day
+by day" became "day by  day". The replacement only ever looks across a segment
+seam, trims a 2-5 word phrase repeated there, moves the start to the first
+surviving word's timestamp, and edits the segments themselves. The invariant is
+now a test.
+
+**Alignment: the utterance is the unit of failure.** Production wrote one `.txt`
+beside the WAV, so a 20-60 minute file was a single alignment graph and one
+mismatch could take the whole thing down. It did: the 1369 s file failed both
+beam attempts in 279 s and produced no alignment at all, and the 1463 s file
+needed the 100/400 retry at 195 s. A TextGrid of 8-30 s utterances, split only at
+gaps of 0.4 s or more and padded 0.15 s into the gap, aligned all six files on
+the first attempt at MFA's default beams in 24-35 s, including the file
+whole-file MFA could not do. Failure is now bounded by the utterance: on the
+1369 s file, 43 of 326 segments keep Whisper timings where the old path lost
+everything. The WAV goes through `ffmpeg -ac 1 -ar 16000 -sample_fmt s16` instead
+of a source-rate pydub export, which takes the 2783 s file from 534 MB to 89 MB
+and means MFA hears the same channel mix Whisper decoded.
+
+Words are assigned to segments by `difflib.SequenceMatcher` over normalised
+tokens rather than by "MFA word start falls inside the Whisper span". The window
+rule double-assigned boundary words, started segments on their second word, and
+degraded to nonsense under drift (p95 start delta 17.5 s on the class file under
+the old path against 0.65 s under this one). Sequence matching lifted agree250
+from 0.44-0.65 to 0.52-0.79 and produced zero non-monotonic or overlapping
+segments on any run. A segment MFA did not cover falls back to Whisper's own word
+timestamps, not the segment bounds, which carry the VAD's padding. agree250 is
+logged per job so a drop is visible without rerunning the harness.
+
+**No ground truth exists.** Every transcript in the archive was produced by this
+service and none has been human-corrected, so nothing here is a word error rate.
+Agreement between configurations is a consistency measure. Where two configs
+disagreed the differing runs were read by hand; that is how the Psalm 91 loss was
+found, and it is the only reason word count is trusted as a tie-break.
+
+**Environment variables added.** Decode: `WHISPER_BEAM_SIZE`, `WHISPER_BEST_OF`,
+`WHISPER_PATIENCE`, `WHISPER_TEMPERATURE_BASE`, `WHISPER_TEMPERATURE_STEP`,
+`WHISPER_COMPRESSION_RATIO_THRESHOLD`, `WHISPER_LOG_PROB_THRESHOLD`,
+`WHISPER_NO_SPEECH_THRESHOLD`, `WHISPER_PROMPT_RESET_ON_TEMPERATURE`,
+`WHISPER_HALLUCINATION_SILENCE_THRESHOLD`, `WHISPER_NUM_WORKERS`,
+`WHISPER_LANGUAGE`. VAD: `VAD_THRESHOLD`, `VAD_THRESHOLD_QUIET`,
+`VAD_LEVEL_CUTOVER_DBFS`, `VAD_MIN_SPEECH_DURATION_MS`,
+`VAD_MIN_SILENCE_DURATION_MS`, `VAD_SPEECH_PAD_MS`. Rescue: `RESCUE_ENABLED`,
+`RESCUE_ANOMALY_SEGMENTS`, `RESCUE_ANOMALY_WINDOWS`, `RESCUE_TEMPERATURE_BASE`.
+Gate: `ANOMALY_WINDOWS_MAX`, `ANOMALY_SEGMENTS_MAX`. Alignment:
+`MFA_UTTERANCE_GAP_SEC`, `MFA_UTTERANCE_PAD_SEC`, `MFA_UTTERANCE_MIN_SEC`,
+`MFA_UTTERANCE_MAX_SEC`, `MFA_TIMEOUT_FLOOR_SEC`, `MFA_TIMEOUT_BASE_SEC`,
+`MFA_TIMEOUT_PER_SEC`. Estimate: `PROCESSING_REALTIME_FACTOR`,
+`PROCESSING_FIXED_OVERHEAD_SEC`.
+
+**API.** The `/upload`, `/status` and `/transcriptions` contract is unchanged.
+Five additive fields on completed rows: `anomaly_count`, `anomaly_windows`,
+`flagged_segments`, `rescue_attempted`, `rescue_selected`, all null on rows
+written before 0.6.0 (`flagged_segments` reads back as `[]` so a client need not
+tell a pre-0.6.0 row from a clean one). The estimate formula is
+`ceil(duration * 0.06) + 60`; `PROCESSING_SPEED_FACTOR` is retired.
+
+**A requeue now clears its evidence.** `_count_failed_attempt` deletes
+`<guid>_aligned` and nulls the diagnostic columns, because `run_forced_alignment`
+skips MFA when its output already exists and a retry would otherwise refine its
+new transcript against the previous attempt's word list.
+
+**The harness measures what ships.** `RC060` and `RC060_RESCUE` import
+`transcribe.py` for the level rule, the post-decode stage, the rescue trigger and
+the selection rule, rather than reimplementing them, so a validation run cannot
+pass against a second implementation that has drifted. That means a
+release-candidate run needs `transcribe.py` and `textnorm.py` copied into
+`/home/jay/harness` alongside the harness; every other config is self-contained.
+`tools/quality_harness/prod_replica.py` deliberately keeps its own copy of
+`clean_boundary_duplicates`, because the PROD control has to stay bug-for-bug
+identical to 0.5.x for the 2026-09-07 baseline to remain reproducible.
+
+**What to watch in the first week.** `words_per_second` should sit at 2.4-3.0
+over speech. No job should be requeued by `anomaly_windows` on normal material.
+`flagged_segments` should read as rhetorical repetition. `rescue_attempted`
+should be rare; if it fires on most jobs the trigger is too tight, and if it
+fires and `rescue_selected` is always false the rescue is not earning its
+runtime. A flagged segment that is a real loop, or a normal recording requeued by
+the window check, is a threshold to revisit before 0.6.1.

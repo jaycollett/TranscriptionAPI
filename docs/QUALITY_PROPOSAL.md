@@ -216,10 +216,63 @@ Concrete changes against `transcribe.py` and `app.py` as they stand on
 `word_timestamps=True`, `language="en"`, no prompt, no hotwords. Construct the
 model with `num_workers=1` [19]. Keep the per-segment `Segment` fields
 (`temperature`, `compression_ratio`, `avg_logprob`, `no_speech_prob`) on the
-returned segments; the harness's C1 is exactly this configuration. A second
-pass runs only if the first fails the gate below, with
-`condition_on_previous_text=False` and the ladder starting at 0.4, and the
-pass with the lower anomaly score is kept.
+returned segments; the harness's C1 is exactly this configuration. A second pass runs only when the
+first shows an anomaly; see 3.1 below.
+
+### 3.1 The anomaly-triggered rescue pass
+
+The five-pass decode was buying redundancy, and the measurements say it was
+buying it in the wrong place: passes 1, 4 and 5 sampled at temperature 0.2-0.3,
+where faster-whisper ignores `beam_size` and `patience` (F3), so four of the five
+passes were noisy variants of one beam decode, and no pass on any of the six
+reference files tripped an anomaly. The service paid 5x runtime on every file for
+redundancy that never fired.
+
+The rescue keeps the redundancy and moves the cost to where the evidence is. If
+the primary pass scores any anomaly at all, `anomaly_count >=
+RESCUE_ANOMALY_SEGMENTS` (default 1) or `anomaly_windows >=
+RESCUE_ANOMALY_WINDOWS` (default 1), exactly one rescue pass runs. Never more
+than one, so the worst case is two passes and the common case, on the evidence
+of the reference set, is one.
+
+The rescue differs from the primary in two settings and nothing else:
+
+- `condition_on_previous_text=False`. Previous-text conditioning is the mechanism
+  by which a repetition loop propagates from window to window, and a loop is what
+  the compression-ratio and temperature flags actually describe. Disabling it is
+  the one lever that addresses the failure mode rather than merely producing a
+  different decode. It is also what C8 (batched) gets for free by construction,
+  and the reason C8 was worth considering as a second opinion (2.8) even though
+  it is not worth having as a primary.
+- Temperature ladder from 0.2 rather than 0.0. The primary already decoded this
+  audio at 0.0 and produced the anomalies, so repeating that rung is the one
+  outcome guaranteed not to help; C10 showed that coarsening the ladder changes
+  nothing, so the change here is the base, not the spacing.
+
+Model, beam, `best_of`, patience, VAD threshold and every faster-whisper
+threshold are identical, so any difference between the two passes is
+attributable to those two settings and not to sampling noise.
+
+Selection is the C2 anomaly score, never the retired duration-weighted word
+probability: lowest `anomaly_count + anomaly_windows` wins, ties break on higher
+word count, then on higher mean `avg_logprob`, and an exact tie keeps the
+primary. Word count is the first tie-break because of 2.2: on every file where
+the production metric disagreed with the anomaly rule it preferred the pass with
+fewer words, and on the retreat recording its winner had dropped two runs of
+Psalm 91 that the losing pass contained.
+
+Ordering is primary, maybe rescue, select, then gate. The quarantine thresholds
+in `process_pending_job` see the selected result, so a file that only the rescue
+could save is not requeued on the primary pass's score. The rescue trigger (1
+anomaly) sits far below the quarantine gate (5 anomalous segments or 2 low
+windows) deliberately: a second opinion costs one decode and a requeue costs a
+whole job plus a queue slot.
+
+`rescue_attempted` and `rescue_selected` are returned by `transcribe_audio`,
+stored, and exposed on `/status` and `/transcriptions`, so the firing rate and
+the hit rate are observable in production rather than assumed. The harness config
+`RC060_RESCUE` is `RC060` plus the rescue and differs in nothing else, so the two
+can be compared directly.
 
 **Selection and gate (`transcribe.py` and `app.py`, `process_pending_job`).**
 Delete `calculate_weighted_confidence` and the 1.4 words-per-second scaler.
