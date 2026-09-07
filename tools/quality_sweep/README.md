@@ -120,10 +120,18 @@ The container the sweep talks to:
 docker run -d --name transcription-api-sweep --gpus device=0 -p 5031:5000 \
   -e DB_FILE=/data/sweep.db \
   -e UPLOAD_FOLDER=/data/uploads \
-  -e MFA_ROOT_DIR=/data/mfa_tmp \
+  -e MFA_ROOT_DIR=/data/mfa_root \
   -v /home/jay/sweep/service:/data \
   transcription-api:<tag>
 ```
+
+`run_sweep.sh <tag>` does all of that, with the guards, and then runs the sweep and the
+analysis. One trap it handles: a private `MFA_ROOT_DIR` must be seeded with the image's
+pretrained models. MFA resolves `english_mfa` under `$MFA_ROOT_DIR/pretrained_models`, so
+pointing the variable at an empty directory makes every alignment fail with "Could not
+find a model named english_mfa for acoustic" while the job still completes on Whisper
+timings and reports `mfa_applied=false`. The 90 MB model directory is copied out of the
+image once.
 
 ## Running it
 
@@ -174,6 +182,7 @@ image reports the new fields as absent rather than as clean.
 
 | file | what it is |
 |---|---|
+| `run_sweep.sh` | starts the isolated service with every guard, runs the sweep, analyses it |
 | `levels.sh` | measures `levels.csv` over the archive with volumedetect and ffprobe |
 | `extract_legacy.py` | builds `legacy_baseline.json` from a read-only copy of the orchestrator database |
 | `strata.py` | bucket boundaries, era mapping, the VAD rule, and the three input readers |
