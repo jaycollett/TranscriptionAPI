@@ -888,6 +888,13 @@ def process_pending_job(cursor, guid, filename):
         flagged_segments = result.get("flagged_segments") or []
         rescue_attempted = bool(result.get("rescue_attempted"))
         rescue_selected = bool(result.get("rescue_selected"))
+        # The primary pass's figures. It decodes at temperature 0.0 and beam-searches,
+        # so it is the only pass that reproduces itself; the rescue samples. Both the
+        # retry fingerprint and the quarantine decision are taken from it. They fall
+        # back to the selected pass's values when the decode did not report them.
+        primary_words = result.get("primary_words", len(transcription.split()))
+        primary_mean_logprob = result.get("primary_mean_logprob", result.get("mean_logprob"))
+        primary_anomaly_count = result.get("primary_anomaly_count", anomaly_count)
 
         # Check for garbage transcription
         if is_garbage_transcription(transcription):
@@ -925,20 +932,41 @@ def process_pending_job(cursor, guid, filename):
                 f"{'rescue' if rescue_selected else 'primary'} pass was published. "
                 f"Review the transcript for a dropped passage."
             )
-        if (anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX:
+        # Both passes have to be over the cap. The selection rule ranks on anomaly
+        # count plus windows while this gate reads the count alone, so a rescue that
+        # trades segment flags for windows (four flags and three windows against six
+        # flags and none) wins selection and then trips the cap, quarantining a file
+        # the primary would have published. The retention guards do not catch it
+        # because that rescue has more words, not fewer.
+        if ((anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX
+                and (primary_anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX):
             reason = (
-                f"anomaly gate: {anomaly_count} flagged segments "
-                f"(max {ANOMALY_SEGMENTS_MAX - 1})"
+                f"anomaly gate: {anomaly_count} flagged segments on the published pass "
+                f"and {primary_anomaly_count} on the primary (max {ANOMALY_SEGMENTS_MAX - 1})"
             )
-            fingerprint = anomaly_fingerprint(len(transcription.split()),
-                                              result.get("mean_logprob"))
+            # Fingerprint the primary, which is reproducible, not the selected pass,
+            # which may be a sampled rescue and never matches itself.
+            fingerprint = anomaly_fingerprint(primary_words, primary_mean_logprob)
             cursor.execute(
-                "SELECT last_anomaly_fingerprint FROM transcriptions WHERE guid = ?", (guid,)
+                "SELECT last_anomaly_fingerprint, attempt_count FROM transcriptions WHERE guid = ?",
+                (guid,),
             )
             row = cursor.fetchone()
             previous_fingerprint = row[0] if row else None
+            attempts_so_far = (row[1] if row else 0) or 0
+            final_attempt = attempts_so_far + 1 >= max_garbage_retries
 
-            if same_anomaly_result(previous_fingerprint, fingerprint):
+            if final_attempt and not same_anomaly_result(previous_fingerprint, fingerprint):
+                # Belt and braces for a decode that does vary. Quarantine on the last
+                # attempt would deliver nothing at all, and nothing is worse than a
+                # flagged transcript: the garbage check and the word-rate floor above
+                # have already rejected genuinely unusable output.
+                app.logger.warning(
+                    f"Publishing {guid} despite the {reason}: this was the final attempt "
+                    f"({attempts_so_far + 1} of {max_garbage_retries}) and quarantining would "
+                    f"deliver nothing for a transcript of {len(transcription.split())} words."
+                )
+            elif same_anomaly_result(previous_fingerprint, fingerprint):
                 # The decode is deterministic, so retrying cannot change the verdict.
                 # tcf.20150424 proved the point: three identical re-decodes, 510 s of
                 # GPU, and a quarantined row with nothing published against a legacy

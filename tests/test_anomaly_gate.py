@@ -195,12 +195,154 @@ def test_the_publish_despite_anomalies_is_logged(app_module, db, upload_dir, stu
     assert "8292 words" in caplog.text
 
 
-def test_a_changing_anomalous_result_still_quarantines(app_module, db, upload_dir,
-                                                       monkeypatch):
-    """A decode that differs each time has not proved retrying is futile.
+def test_a_rescue_published_file_still_matches_across_attempts(app_module, db, upload_dir,
+                                                              monkeypatch):
+    """H1: the retry stop must key on the pass that reproduces itself.
 
-    Quarantine still exists; what it no longer does is consume a deterministic result
-    three times and deliver nothing.
+    The primary decodes at temperature 0.0 and beam-searches, so it is
+    deterministic. The rescue decodes from 0.2, where faster-whisper samples, and no
+    seed is set anywhere, so a rescue-published transcript differs on every attempt.
+    Fingerprinting the selected pass would therefore never match on exactly the files
+    the rescue exists for, and they would burn three decode pairs and quarantine with
+    nothing published.
+    """
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    counter = {"n": 0}
+
+    def rescue_published(path, guid):
+        counter["n"] += 1
+        return {
+            # The published transcript is the sampled rescue: different every time.
+            "transcription": _prose(8290 + counter["n"]),
+            "timings": TIMINGS, "segments": TIMINGS, "duration_sec": 3000.0,
+            "anomaly_count": 9, "anomaly_windows": 0, "flagged_segments": [],
+            "rescue_attempted": True, "rescue_selected": True,
+            "mean_logprob": -0.30 - counter["n"] * 0.001,
+            # The primary is identical on every attempt, which is the point.
+            "primary_words": 8100,
+            "primary_mean_logprob": -0.412345678901,
+            "primary_anomaly_count": 9,
+        }
+
+    monkeypatch.setattr(app_module, "transcribe_audio", rescue_published)
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed", \
+        "the primary reproduced itself, so the second attempt must publish"
+
+    row = get_row(db, guid)
+    assert row["transcription"] is not None
+    assert row["anomaly_count"] == 9
+
+
+def test_the_final_attempt_publishes_even_when_the_decode_varies(app_module, db, upload_dir,
+                                                                 monkeypatch):
+    """H1, belt and braces: a varying decode must not run out of attempts into silence."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    counter = {"n": 0}
+
+    def varying(path, guid):
+        counter["n"] += 1
+        return {
+            "transcription": _prose(5000 + counter["n"]),
+            "timings": TIMINGS, "segments": TIMINGS, "duration_sec": 2000.0,
+            "anomaly_count": 9, "anomaly_windows": 0, "flagged_segments": [],
+            # Even the primary differs every time, so the fingerprint never matches.
+            "primary_words": 5000 + counter["n"],
+            "primary_mean_logprob": -0.4 - counter["n"],
+            "primary_anomaly_count": 9,
+        }
+
+    monkeypatch.setattr(app_module, "transcribe_audio", varying)
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    # Third attempt is the last; quarantine here would deliver nothing at all.
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    assert get_row(db, guid)["transcription"] is not None
+
+
+def test_a_rescue_must_not_quarantine_a_file_the_primary_would_clear(app_module, db,
+                                                                     upload_dir, monkeypatch):
+    """H2: selection ranks on count plus windows, the gate reads the count alone.
+
+    A rescue that trades segment flags for windows (four flags and three windows
+    against six flags and none) wins selection on the total and then trips the segment
+    cap. The retention guards do not catch it because that rescue has more words.
+    """
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(4200), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 1500.0,
+            # The published rescue: six flags, no windows. Over the cap.
+            "anomaly_count": 6, "anomaly_windows": 0, "flagged_segments": [],
+            "rescue_attempted": True, "rescue_selected": True,
+            "mean_logprob": -0.2,
+            # The primary: four flags, three windows. Under the cap.
+            "primary_words": 4000, "primary_mean_logprob": -0.25,
+            "primary_anomaly_count": 4,
+        },
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed", \
+        "the primary was under the cap, so the rescue must not cause a quarantine"
+    assert get_row(db, guid)["attempt_count"] == 0
+
+
+def test_both_passes_over_the_cap_still_requeues(app_module, db, upload_dir, monkeypatch):
+    """The gate is not disabled, only narrowed to cases the primary agrees with."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(4200), "timings": TIMINGS, "segments": TIMINGS,
+            "duration_sec": 1500.0,
+            "anomaly_count": 7, "anomaly_windows": 0, "flagged_segments": [],
+            "mean_logprob": -0.2,
+            "primary_words": 4200, "primary_mean_logprob": -0.2,
+            "primary_anomaly_count": 7,
+        },
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+
+
+def test_a_changing_anomalous_result_requeues_then_publishes(app_module, db, upload_dir,
+                                                             monkeypatch):
+    """The anomaly gate can requeue, but it can no longer end in silence.
+
+    A decode that differs each time has not proved retrying is futile, so it gets its
+    retries. What changed is the terminal state: on the final attempt it publishes
+    with the anomaly fields set instead of quarantining, because a flagged transcript
+    beats no transcript and the genuinely unusable cases are rejected upstream.
     """
     monkeypatch.setattr(app_module, "max_garbage_retries", 2)
     counter = {"n": 0}
@@ -216,16 +358,60 @@ def test_a_changing_anomalous_result_still_quarantines(app_module, db, upload_di
             "anomaly_windows": 4,
             "flagged_segments": [],
             "mean_logprob": -0.5 - counter["n"],
+            "primary_words": 200 + counter["n"],
+            "primary_mean_logprob": -0.5 - counter["n"],
+            "primary_anomaly_count": 9,
         }
 
     monkeypatch.setattr(app_module, "transcribe_audio", varying)
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
 
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
     insert_job(db, guid, filename=filename, status="pending")
 
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "quarantined"
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+
+    row = get_row(db, guid)
+    assert row["transcription"] is not None
+    assert row["anomaly_count"] == 9, "and it is flagged, so it can be found"
+
+
+def test_the_anomaly_gate_never_quarantines(app_module, db, upload_dir, monkeypatch):
+    """Whatever the counts, this signal cannot end with nothing published.
+
+    Quarantine is reserved for the garbage check and the word-rate floor, which
+    reject output that is genuinely unusable rather than merely suspect.
+    """
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    counter = {"n": 0}
+
+    def varying(path, guid):
+        counter["n"] += 1
+        return {
+            "transcription": _prose(300 + counter["n"]), "timings": TIMINGS,
+            "segments": TIMINGS, "duration_sec": 120.0,
+            "anomaly_count": 99, "anomaly_windows": 99, "flagged_segments": [],
+            "mean_logprob": -0.5 - counter["n"],
+            "primary_words": 300 + counter["n"],
+            "primary_mean_logprob": -0.5 - counter["n"],
+            "primary_anomaly_count": 99,
+        }
+
+    monkeypatch.setattr(app_module, "transcribe_audio", varying)
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    statuses = [app_module.process_pending_job(db.cursor(), guid, filename)
+                for _ in range(3)]
+    assert "quarantined" not in statuses
+    assert statuses[-1] == "completed"
 
 
 def test_the_garbage_check_and_word_rate_floor_still_quarantine(app_module, db, upload_dir,

@@ -190,8 +190,8 @@ LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 # it on every file, including the 99 percent that never needed it; this buys the same
 # redundancy only where the primary pass shows evidence of trouble. Worst case is two
 # passes, still well under five. The trigger is deliberately far below the quarantine
-# gate (ANOMALY_SEGMENTS_MAX / ANOMALY_WINDOWS_MAX in app.py): a second opinion is
-# cheap and a requeue is not, so the rescue fires long before the job is at risk.
+# gate (ANOMALY_SEGMENTS_MAX in app.py): a second opinion is cheap and a requeue is
+# not, so the rescue fires long before the job is at risk.
 RESCUE_ENABLED = os.getenv("RESCUE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
 # 2, not 1. At 1 the trigger sits at the minimum representable value, so a single
 # flipped segment decides the code path, and the decode is measurably not
@@ -1352,6 +1352,18 @@ def transcribe_audio(file_path, guid):
         # The retry check in app.py compares these across attempts: a decode that
         # reproduces itself exactly cannot be argued out of a gate by running again.
         "mean_logprob": selected["mean_logprob"],
+        # The PRIMARY pass's figures, reported separately because the selected pass
+        # is not always a usable identity. The primary decodes at temperature 0.0,
+        # where faster-whisper beam-searches, so it is reproducible; the rescue
+        # decodes from 0.2, where faster-whisper samples, and no seed is set anywhere,
+        # so a rescue-published file differs on every attempt. Fingerprinting the
+        # selected pass would therefore never match on exactly the files the rescue
+        # exists for, and they would quarantine after burning three decode pairs.
+        # app.py also needs the primary's anomaly count, so a rescue that trades
+        # segment flags for windows cannot quarantine a file the primary would clear.
+        "primary_words": primary["words"],
+        "primary_mean_logprob": primary["mean_logprob"],
+        "primary_anomaly_count": primary["anomaly_count"],
         "uncovered_s": selected["uncovered_s"],
         "uncovered_max_gap_s": selected["uncovered_max_gap_s"],
         "speech_seconds": speech_seconds,

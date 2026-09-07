@@ -604,7 +604,7 @@ such rule in this service needs a content floor beside it. A discarded rescue is
 logged with both word counts and both scores.
 
 The order is primary, maybe rescue, select, then gate. The quarantine thresholds
-(`ANOMALY_WINDOWS_MAX` 2, `ANOMALY_SEGMENTS_MAX` 5) see the selected result, so a
+(`ANOMALY_SEGMENTS_MAX` 5) see the selected result, so a
 file only the rescue could save is not requeued on the primary's score. The
 rescue trigger sits far below the gate on purpose: a second opinion is cheap and
 a requeue is not.
@@ -705,7 +705,7 @@ found, and it is the only reason word count is trusted as a tie-break.
 Anomaly windows: `ANOMALY_UNCOVERED_TOLERANCE`. De-duplication:
 `BOUNDARY_DEDUPE_ENABLED`, `BOUNDARY_DEDUPE_MIN_WORDS`,
 `BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC`.
-Gate: `ANOMALY_WINDOWS_MAX`, `ANOMALY_SEGMENTS_MAX`. Alignment:
+Gate: `ANOMALY_SEGMENTS_MAX`, `ANOMALY_RETRY_EPSILON`. Alignment:
 `MFA_UTTERANCE_GAP_SEC`, `MFA_UTTERANCE_PAD_SEC`, `MFA_UTTERANCE_MIN_SEC`,
 `MFA_UTTERANCE_MAX_SEC`, `MFA_TIMEOUT_FLOOR_SEC`, `MFA_TIMEOUT_BASE_SEC`,
 `MFA_TIMEOUT_PER_SEC`. Estimate: `PROCESSING_REALTIME_FACTOR`,
@@ -931,6 +931,20 @@ its ladder starting at 0.2. Those are precisely the two most effective variants
 combined, which is a coincidence worth naming: the rescue was designed for repetition
 loops and happens to be the right treatment for confident omission as well, because
 both are failures of the primary decode's path rather than of its parameters.
+
+**The retry stop fingerprints the primary pass, not the published one.** The primary
+decodes at temperature 0.0, where faster-whisper beam-searches, so it reproduces
+itself. The rescue decodes from 0.2, where faster-whisper samples, and no seed is set
+anywhere, so a rescue-published transcript differs on every attempt. Fingerprinting
+the selected pass therefore never matched on exactly the files the rescue exists for,
+and they burned three decode pairs before quarantining with nothing: the black hole
+returning through the door built to close it. And because the gate reads the
+per-segment count while selection ranks on count plus windows, a rescue that traded
+segment flags for windows could win selection and then trip the cap, quarantining a
+file the primary would have cleared. So the quarantine decision now needs BOTH the
+published pass and the primary over the cap, and on the final attempt it publishes
+with the flags set regardless. The anomaly gate can requeue; it can no longer end in
+silence.
 
 **A low-rate window never requeues, however many there are.** The decode is
 deterministic, so a requeue re-runs the identical decode and burns three attempts
