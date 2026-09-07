@@ -238,9 +238,23 @@ def parse(lines):
             job(current)["decode_durations_s"].append(round(_seconds(processing), 3))
 
     for record in jobs.values():
-        record["trim_count"] = len(record["trims"])
+        # A file whose rescue pass ran logs the same trim once per decode, and the
+        # selection log line can repeat it again, so the raw line count multiplies by the
+        # number of passes. Only the distinct (timestamp, phrase) pairs correspond to
+        # text actually missing from the transcript.
+        seen = set()
+        distinct = []
+        for trim in record["trims"]:
+            key = (trim.get("at_s"), trim.get("overlap_words"), trim.get("removed"))
+            if key in seen:
+                continue
+            seen.add(key)
+            distinct.append(trim)
+        record["trims_logged"] = len(record["trims"])
+        record["trims"] = distinct
+        record["trim_count"] = len(distinct)
         record["trimmed_words"] = sum(
-            t["overlap_words"] for t in record["trims"] if t["overlap_words"]
+            t["overlap_words"] for t in distinct if t["overlap_words"]
         )
         # The first decode is the primary; a second entry means the rescue pass ran.
         record["vad_removed_first_s"] = (

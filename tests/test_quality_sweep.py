@@ -1012,3 +1012,24 @@ def test_a_reworded_trim_line_is_still_captured_as_a_loose_match():
     assert job["trim_count"] == 1
     assert job["trims"][0]["matched"] == "loose"
     assert job["loose_trim_matches"] == 1
+
+
+def test_a_trim_logged_once_per_pass_is_counted_once():
+    # When the rescue pass runs, the dedupe runs again and logs the same trim a second
+    # time. Only the distinct phrases correspond to text missing from the transcript.
+    line = (f"INFO - transcribe - Boundary dedupe for {GUID_A}: dropped 4 words repeated "
+            f"across the seam at 2297.68s: 'I want to love,' (segment emptied and dropped)")
+    job = service_log.parse([line, line, line])[GUID_A]
+    assert job["trims_logged"] == 3
+    assert job["trim_count"] == 1
+    assert job["trimmed_words"] == 4
+
+
+def test_two_trims_at_different_times_stay_separate():
+    a = (f"INFO - transcribe - Boundary dedupe for {GUID_A}: dropped 4 words repeated "
+         f"across the seam at 100.00s: 'the lord he is'")
+    b = (f"INFO - transcribe - Boundary dedupe for {GUID_A}: dropped 5 words repeated "
+         f"across the seam at 200.00s: 'the lord he is god'")
+    job = service_log.parse([a, b])[GUID_A]
+    assert job["trim_count"] == 2
+    assert job["trimmed_words"] == 9
