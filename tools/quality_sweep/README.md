@@ -133,6 +133,13 @@ find a model named english_mfa for acoustic" while the job still completes on Wh
 timings and reports `mfa_applied=false`. The 90 MB model directory is copied out of the
 image once.
 
+The service runs as root, so the uploaded copy of each file and the `_aligned` directory
+it writes are root-owned inside root-owned directories: the runner, running as the login
+user, cannot unlink them and its per-job cleanup is best effort. `run_sweep.sh` clears
+them at the end with a throwaway container on the same volume. The uploaded copies of
+the whole hundred come to 1.6 GB, and the transient 16 kHz WAV MFA is given is deleted by
+the service after each job, so this is tidiness rather than a disk risk on 39 GB free.
+
 ## Running it
 
 Three steps, all from the repo root on the GPU host with `tools/quality_sweep/` copied

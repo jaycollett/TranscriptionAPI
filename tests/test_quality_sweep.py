@@ -400,3 +400,33 @@ def test_summarise_checks_the_transcript_against_the_timings():
 
     payload["timings"][1]["text"] = "planet"
     assert runner.summarise(payload, 60.0)["timings"]["text_matches"] is False
+
+
+def test_scratch_sweep_removes_only_the_jobs_guid(tmp_path):
+    out = tmp_path / "out"
+    scratch = tmp_path / "scratch"
+    out.mkdir()
+    scratch.mkdir()
+    guid = "11111111-2222-3333-4444-555555555555"
+    (scratch / f"{guid}.mp3").write_bytes(b"x" * 100)
+    (scratch / f"{guid}.txt").write_text("hello")
+    nested = scratch / f"{guid}_mfa_input"
+    nested.mkdir()
+    (nested / "audio.wav").write_bytes(b"y" * 500)
+    keeper = scratch / "someone-elses.mp3"
+    keeper.write_bytes(b"z" * 10)
+
+    r = runner.Runner("http://127.0.0.1:1", str(tmp_path), str(out), scratch_dirs=[str(scratch)])
+    freed = r.sweep_scratch(guid)
+
+    assert freed >= 600
+    assert keeper.exists()
+    assert not (scratch / f"{guid}.mp3").exists()
+    assert not nested.exists()
+
+
+def test_scratch_sweep_is_a_no_op_without_scratch_dirs(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    r = runner.Runner("http://127.0.0.1:1", str(tmp_path), str(out))
+    assert r.sweep_scratch("any-guid") == 0

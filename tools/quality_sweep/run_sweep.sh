@@ -105,7 +105,9 @@ python3 "${HERE}/runner.py" \
     --audio-dir "${AUDIO_DIR}" \
     --base-url "http://127.0.0.1:${PORT}" \
     --out-dir "${OUT_DIR}" \
-    --poll-interval 10
+    --poll-interval 10 \
+    --scratch-dir "${SERVICE_DIR}/uploads" \
+    --scratch-dir "${SERVICE_DIR}/mfa_root"
 
 python3 "${HERE}/analyze.py" \
     --results "${OUT_DIR}/state.json" \
@@ -114,8 +116,12 @@ python3 "${HERE}/analyze.py" \
     --out-json "${SWEEP_ROOT}/analysis.json" \
     --out-md "${SWEEP_ROOT}/report.md"
 
-# The service deletes its own uploads; clear anything MFA left behind so the sweep does
-# not sit on gigabytes of transient WAV.
-find "${SERVICE_DIR}/mfa_root" -mindepth 1 -maxdepth 1 -name '*_mfa_input' -exec rm -rf {} + 2>/dev/null || true
-find "${SERVICE_DIR}/uploads" -mindepth 1 -maxdepth 1 -name '*_mfa_input' -exec rm -rf {} + 2>/dev/null || true
+# The container runs as root, so the uploaded copies and the _aligned directories it
+# leaves behind are root-owned inside root-owned directories and the runner (running as
+# the login user) cannot unlink them. Clear them with a throwaway container on the same
+# volume. Only the sweep's own directory is mounted, and pretrained_models is kept.
+docker run --rm -v "${SERVICE_DIR}:/data" --entrypoint sh "${IMAGE}" -c '
+    rm -rf /data/uploads/* /data/mfa_root/*_mfa_input /data/mfa_root/extracted_models            /data/mfa_root/joblib_cache
+' || true
+du -sh "${SERVICE_DIR}"
 df -h / | tail -1

@@ -162,11 +162,19 @@ def summarise(payload, duration_s):
 
 
 class Runner:
-    def __init__(self, base_url, audio_dir, out_dir, poll_interval=10.0):
+    def __init__(self, base_url, audio_dir, out_dir, poll_interval=10.0, scratch_dirs=()):
         self.base_url = base_url.rstrip("/")
         self.audio_dir = audio_dir
         self.out_dir = out_dir
         self.poll_interval = poll_interval
+        # Directories the sweep service works in, on this host. After each job the
+        # runner removes everything named after that job's GUID: the uploaded copy of
+        # the audio, the 16 kHz WAV MFA was given, and the alignment output. Over a
+        # hundred files that is several gigabytes of transient data on a disk with 40 GB
+        # free. Only the sweep's own directories are ever passed here. Best effort: the
+        # service runs as root, so anything it wrote inside a root-owned subdirectory
+        # cannot be unlinked from here and is left for run_sweep.sh's final pass.
+        self.scratch_dirs = tuple(scratch_dirs)
         self.state_path = os.path.join(out_dir, "state.json")
         os.makedirs(os.path.join(out_dir, "records"), exist_ok=True)
         self.state = self._load_state()
@@ -185,6 +193,32 @@ class Runner:
 
     def free_bytes(self):
         return shutil.disk_usage(self.out_dir).free
+
+    def sweep_scratch(self, guid):
+        """Remove every scratch entry named after `guid`. Returns the bytes freed."""
+        freed = 0
+        for directory in self.scratch_dirs:
+            if not os.path.isdir(directory):
+                continue
+            for name in os.listdir(directory):
+                if not name.startswith(guid):
+                    continue
+                path = os.path.join(directory, name)
+                try:
+                    if os.path.isdir(path):
+                        freed += sum(
+                            os.path.getsize(os.path.join(root, f))
+                            for root, _, files in os.walk(path)
+                            for f in files
+                            if os.path.exists(os.path.join(root, f))
+                        )
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        freed += os.path.getsize(path)
+                        os.remove(path)
+                except OSError:
+                    continue
+        return freed
 
     def submit(self, filename, guid):
         path = os.path.join(self.audio_dir, filename)
@@ -277,6 +311,7 @@ class Runner:
                 break
             print(f"[{index}/{len(entries)}] {filename} ({entry.get('duration_s')} s) ...", flush=True)
             record = self.run_one(entry)
+            record["scratch_freed_bytes"] = self.sweep_scratch(record["guid"])
             self.state["files"][filename] = record
             self._save_state()
             with open(os.path.join(self.out_dir, "records", filename + ".json"), "w") as handle:
@@ -312,6 +347,13 @@ def main(argv=None):
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--poll-interval", type=float, default=10.0)
+    parser.add_argument(
+        "--scratch-dir",
+        action="append",
+        default=[],
+        help="a sweep-owned directory to clear of per-GUID files after each job; "
+             "pass the sweep service's upload folder and MFA root, never production's",
+    )
     parser.add_argument("--limit", type=int, default=0, help="run only the first N entries")
     parser.add_argument("--only", action="append", default=[], help="run only these filenames")
     parser.add_argument("--force", action="append", default=[], help="rerun these filenames")
@@ -325,7 +367,9 @@ def main(argv=None):
     if args.limit:
         entries = entries[: args.limit]
 
-    runner = Runner(args.base_url, args.audio_dir, args.out_dir, args.poll_interval)
+    runner = Runner(
+        args.base_url, args.audio_dir, args.out_dir, args.poll_interval, args.scratch_dir
+    )
     print(f"{len(entries)} entries, {runner.free_bytes() / 1024 ** 3:.1f} GB free at start")
     processed = runner.run(entries, force=args.force)
     print(f"processed {processed} files, {runner.free_bytes() / 1024 ** 3:.1f} GB free at end")
