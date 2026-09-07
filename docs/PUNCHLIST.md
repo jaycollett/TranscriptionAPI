@@ -33,7 +33,8 @@ Verification legend: **Mac** means a unit test with the existing conftest stubs
 (no GPU, no MFA binary); **GPU** means it needs the devmachine container.
 
 Status values: `Open`, `Resolved in 0.4.0 (...)`, `Deferred to a GPU-validated
-release`, `Done in 0.5.0 (<commit subject>)`.
+release`, `Done in 0.5.0 (<commit subject>)`, `Measured 2026-09-07, see
+docs/QUALITY_PROPOSAL.md (<one-line verdict>)`.
 
 ## Service
 
@@ -425,7 +426,7 @@ stopping; 3.5 is pure cost). Effect: deterministic beam decodes, lower WER on
 hard words. Risk: low; beam 5 at T 0 is the reference Whisper configuration.
 Verify: GPU, run pass 1 twice on the reference file; outputs should be identical
 and the log should show T 0 attempts.
-Status: Open
+Status: Resolved in 0.6.0 (one beam-5 pass at ladder base 0.0 and patience 1.0; the sampled passes and their dead beam sizes are gone)
 
 **2. Speaker diarization has never run: every job 401s on the gated sub-model and silently assumes one speaker**
 `app.py:detect_speakers` (removed in 0.4.0). Logs at 06:30:04 and 06:39:33:
@@ -449,7 +450,7 @@ phoneme instead of up to a second early. Risk: none. Verify: GPU,
 `jq '.tiers.words.entries[:12]' /tmp/audio_files/<guid>_aligned/<guid>.json` on
 the reference job; count empty labels before and after. A Mac unit test can
 cover the filter itself.
-Status: Open
+Status: Measured 2026-09-07, see docs/QUALITY_PROPOSAL.md (withdrawn, MFA 3.4 strips silence intervals on export and the harness saw no empty labels; superseded by the I2 assignment)
 
 **4. Word-to-segment assignment by start-time window is wrong for shifted, overlapping or drifting segments**
 `app.py:run_forced_alignment` (`whisper_start <= word["start"] <= whisper_end`).
@@ -469,7 +470,7 @@ whose edges are the true first and last word. Risk: low with the fallback.
 Verify: GPU, on the reference job assert no `timings[i+1].start < timings[i].end`
 and that every segment's refined span differs from Whisper's by under 0.5 s.
 The mapping itself is Mac-testable with a fixture JSON.
-Status: Open
+Status: Resolved in 0.6.0 (difflib sequence matching in app.match_mfa_words with monotonicity enforced; a segment MFA did not cover falls back to Whisper's word timestamps, not its VAD-padded bounds)
 
 **5. Boundary de-duplication edits the transcript string but not the timings, and it deletes deliberate repetition**
 `transcribe.py:clean_boundary_duplicates` and the `final_timings` loop.
@@ -488,7 +489,7 @@ Risk: fewer cross-segment stutter removals; acceptable now that temperature
 fallback handles loops. Verify: Mac for the function;
 GPU `" ".join(t["text"] for t in timings) == transcription` on the reference
 job and grep the output for rhetorical repeats that used to vanish.
-Status: Open
+Status: Resolved in 0.6.0 (clean_boundary_duplicates deleted; transcribe.deduplicate_segment_boundaries trims a 2-5 word phrase repeated across a seam and edits the segments, so join(timings) == transcription is a tested invariant)
 
 ### P1 - measurable quality or runtime win
 
@@ -508,7 +509,7 @@ the logged evidence. Risk: a regional error in a clean-looking pass is no longer
 outvoted; the window check mitigates. Verify: GPU, reference file wps 2.5-2.8
 and WER under 2 percent against the current 5-pass output
 (`pip install jiwer`).
-Status: Open
+Status: Resolved in 0.6.0 (one primary pass, plus exactly one anomaly-triggered rescue pass with condition_on_previous_text=False and the ladder from 0.2; selection is fewest anomalies, then more words, then mean avg_logprob)
 
 **7. Use BatchedInferencePipeline as the second-opinion pass and as the speed path**
 `transcribe.py:transcribe_audio`.
@@ -524,7 +525,7 @@ decode for arbitration, or a 10 s primary pass if speed outranks cross-window
 context. Risk: weaker proper-noun consistency without context; possible OOM at
 batch 16, so start at 8. Verify: GPU, time and wps on the reference file at
 batch 8 and 16; `nvidia-smi` peak.
-Status: Open
+Status: Measured 2026-09-07, see docs/QUALITY_PROPOSAL.md (C8 batched is 2-3x faster than C1 but loses 1-4 percent of words and overlaps timings; deferred)
 
 **8. Best-pass metric: duration-weighted word probability rewards hallucinations and cannot see partial collapse**
 `transcribe.py:calculate_weighted_confidence` and the 1.4 wps penalty. Whisper
@@ -540,7 +541,7 @@ when two passes exist. Effect: selection tracks real defects instead of 0.002
 noise. Risk: none. Verify: Mac, inject a synthetic collapse (truncate one
 pass's segments at 70 percent) and confirm it is not selected; GPU for the
 reference file.
-Status: Open
+Status: Resolved in 0.6.0 (calculate_weighted_confidence and the 1.4 wps scaler deleted; the anomaly score selects between passes and feeds the quarantine gate)
 
 **9. Enable hallucination_silence_threshold and set the decode thresholds explicitly**
 `transcribe.py:transcribe_audio` model.transcribe call. 1.2.1 defaults in force
@@ -559,7 +560,7 @@ phrases after pauses. Risk: low; a real word after a very long pause could be
 skipped, observable in the window check. Verify: GPU, count segments with
 `no_speech_prob > 0.5` and non-empty text on the reference file before and
 after.
-Status: Open
+Status: Resolved in 0.6.0 (hallucination_silence_threshold 0.5, which can fire under 300 ms VAD padding where 2.0 could not, and the three decode thresholds written explicitly as env-tunable values; no-VAD (C3) still deferred)
 
 **10. VAD settings create many seams and admit non-speech**
 `transcribe.py:transcribe_audio` vad_parameters. 1.2.1 `VadOptions` defaults:
@@ -577,7 +578,7 @@ speech_pad_ms 300, keep min_speech_duration_ms 250. Effect: fewer seams, less
 non-speech decoded. Risk: quiet speakers below 0.5 on a distant mic; check the
 "VAD filter removed" line stays under 5 percent. Verify: GPU, the
 removed-duration log line and word-timestamp continuity at former seam points.
-Status: Open
+Status: Resolved in 0.6.0 (threshold 0.5 with 1000 ms minimum silence and 300 ms padding above -26 dBFS, 0.35 below it, from a per-file ffmpeg volumedetect measurement; the level and the branch taken are logged per job)
 
 **11. CUDA_LAUNCH_BLOCKING=1 is baked into the image and serialises every kernel launch**
 `Dockerfile` ENV. This is a debugging switch; it forces synchronous launches for
@@ -619,7 +620,7 @@ smaller, faster MFA load). Effect: drift bounded to a segment, fewer timeouts,
 faster MFA. Risk: low; interval bounds come from Whisper's segment times.
 Verify: GPU, `alignment_analysis.csv` per-utterance log-likelihoods, MFA wall
 time vs the 24 s baseline on the reference file.
-Status: Open
+Status: Resolved in 0.6.0 (a TextGrid of 8-30 s utterances split at 0.4 s gaps, a 16 kHz mono WAV, and one MFA run at default beams with a duration-scaled timeout)
 
 **15. Word-level timestamps are computed five times and then thrown away**
 `transcribe.py:run_transcription_pass` (`word_timestamps` on, used only for
@@ -633,7 +634,7 @@ and the `/status` shape unchanged). Effect: downstream gets word timing for
 free. Risk: `timings` JSON grows about 5x in the DB; still small. Verify: GPU,
 every `words[].start` lies within its segment and words are monotonic on the
 reference job.
-Status: Open
+Status: Measured 2026-09-07, see docs/QUALITY_PROPOSAL.md (Whisper word timestamps are kept internally as the I2 fallback in 0.6.0; the API `words` field is deferred)
 
 ### P2 - polish
 
@@ -647,7 +648,10 @@ RTFs (sequential beam 5 about 0.045, greedy 0.03, MFA about 0.035), and use the
 per-job `processing_seconds` column from service item 19 for a rolling median.
 `estimated_completion_utc` format unchanged. Verify: GPU, estimate vs
 `completed_at - created_at` over a week.
-Status: Open
+Status: Resolved in 0.6.0 (`ceil(d * 0.06) + 60`; PROCESSING_SPEED_FACTOR is retired
+and both constants are env-tunable. The rolling median off `processing_seconds`
+remains open: revisit once a week of 0.6.0 jobs exists, and note the estimate now
+has to cover the rescue pass on the files that trigger it.)
 
 **17. Stale MFA output is reused after a post-alignment garbage requeue**
 `app.py:run_forced_alignment` ("alignment already exists" branch). A retry
@@ -655,14 +659,16 @@ re-transcribes but reuses `<guid>.json` built from the previous transcript.
 Recommended change: delete `<guid>_aligned` on requeue or key the cache by a
 transcript hash. Verify: Mac, force a requeue and confirm the aligned directory
 is gone; GPU to confirm MFA reruns.
-Status: Open
+Status: Resolved in 0.6.0 (`_count_failed_attempt` removes `<guid>_aligned` and clears
+the diagnostic columns whenever a job is requeued, so a retry can never refine its new
+transcript against the previous attempt's word list)
 
 **18. Transcript cleaning regex before MFA changes the word count**
 `app.py:run_forced_alignment` (`\b(\w+)\s+\1\s+\1\s+\1+`). Case-sensitive, only
 4+ repeats, and it desynchronises MFA's word sequence from the segments (breaks
 item 4's index mapping).
 Recommended change: drop it; loops are handled upstream now. Verify: Mac.
-Status: Open
+Status: Resolved in 0.6.0 (the regex is gone; MFA is built from the same segments the API publishes, so the three word sequences are one)
 
 **19. Model construction hygiene**
 `transcribe.py:load_whisper_model` and the transcribe call. `num_workers=2` adds
@@ -671,7 +677,7 @@ a ctranslate2 replica for a strictly sequential worker (`LIMIT 1`); set 1.
 `True`. `suppress_tokens=[-1]` is the default. `get_audio_duration` decodes the
 whole MP3 with pydub; `ffprobe` is instant (the duration part is service item
 10 and ships in 0.5.0; the model arguments are gated).
-Status: Open
+Status: Resolved in 0.6.0 (num_workers 1, word_timestamps True, suppress_tokens dropped as the default it already was; get_audio_duration went to ffprobe in 0.5.0)
 
 **20. Language pinning is correct; keep it**
 `language="en"` skips per-pass detection and prevents mid-file language flips on
@@ -679,7 +685,7 @@ Hebrew/Greek terms. Keep `task="transcribe"` and `multilingual=False`
 (defaults). For consistently misspelled congregation names, A/B `hotwords`
 (inserted into every window prompt, so watch for the priming effect the old
 `initial_prompt` had) rather than an initial prompt.
-Status: Open
+Status: Measured 2026-09-07, see docs/QUALITY_PROPOSAL.md (C9 hotwords rejected, agreement with C1 fell to 0.834-0.927 and the repeated 4-gram rate rose 3-5x with no spelling gain; language pinning kept)
 
 **21. OOV proper names align as spn in MFA**
 `app.py:run_forced_alignment`. Biblical names outside `english_mfa` get `spn`
@@ -694,4 +700,4 @@ Status: Open
 collapse after minute two. The wps floor covers total collapse; the per-window
 check in item 6 should also feed this gate so partial collapse is requeued
 rather than published.
-Status: Open
+Status: Resolved in 0.6.0 for the case that mattered (ANOMALY_WINDOWS_MAX 2 and ANOMALY_SEGMENTS_MAX 5 requeue a partial collapse the 1000-character preview cannot see). The whole-transcript alphanumeric ratio is still deferred.

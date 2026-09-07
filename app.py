@@ -5,6 +5,7 @@ import sqlite3
 import threading  # For background processing and thread-local DB connections
 import time
 import json
+import difflib
 import shutil
 import subprocess
 from contextlib import closing
@@ -16,8 +17,9 @@ from transcribe import (  # Custom transcription logic
     get_audio_duration,
     estimate_processing_seconds,
     whisper_model_loaded,
+    whisper_span,
 )
-from pydub import AudioSegment  # Audio file manipulation (WAV export for MFA)
+from textnorm import norm_words
 from datetime import datetime, timedelta, timezone
 import logging  # Logging for debugging and monitoring
 
@@ -54,16 +56,45 @@ db_connection_timeout = 30  # Connection timeout in seconds
 # single bad sermon from permanently blocking the head of the FIFO queue.
 max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
 # Words-per-second floor for the post-transcription quality gate. Normal sermon
-# material runs 2.5-2.8 words/sec; the 2026-09 decode collapse produced 0.54 and the
-# per-pass penalty in transcribe.py already treats anything under 1.4 as low. The
+# material runs 2.5-2.8 words/sec; the 2026-09 decode collapse produced 0.54. The
 # alphanumeric-ratio check alone is blind to coherent prose at half length.
 MIN_WORDS_PER_SEC = float(os.getenv("MIN_WORDS_PER_SEC", "1.0"))
+
 
 # Where Montreal Forced Aligner keeps its per-corpus working directory. MFA names
 # it after the corpus directory basename, so a job's tree is <root>/<guid>_mfa_input.
 MFA_ROOT_DIR = os.getenv("MFA_ROOT_DIR", "/mfa")
 MFA_DICTIONARY_PATH = "/mfa/pretrained_models/dictionary/english_mfa.dict"
 MFA_ACOUSTIC_MODEL = "english_mfa"
+# Utterance construction for the per-utterance TextGrid (harness I1). Whisper
+# segments are merged into utterances split only at gaps of MFA_UTTERANCE_GAP_SEC or
+# more, each padded MFA_UTTERANCE_PAD_SEC into the surrounding silence.
+MFA_UTTERANCE_GAP_SEC = float(os.getenv("MFA_UTTERANCE_GAP_SEC", "0.4"))
+MFA_UTTERANCE_PAD_SEC = float(os.getenv("MFA_UTTERANCE_PAD_SEC", "0.15"))
+MFA_UTTERANCE_MIN_SEC = float(os.getenv("MFA_UTTERANCE_MIN_SEC", "8.0"))
+MFA_UTTERANCE_MAX_SEC = float(os.getenv("MFA_UTTERANCE_MAX_SEC", "30.0"))
+# One attempt at MFA's default beams. The 40/100 then 100/400 ladder cost 279 s on
+# the 1369 s file and still failed; per-utterance alignment did it in 30 s at the
+# defaults. The timeout scales with the file and never drops below the floor.
+MFA_TIMEOUT_FLOOR_SEC = float(os.getenv("MFA_TIMEOUT_FLOOR_SEC", "120"))
+MFA_TIMEOUT_BASE_SEC = float(os.getenv("MFA_TIMEOUT_BASE_SEC", "60"))
+MFA_TIMEOUT_PER_SEC = float(os.getenv("MFA_TIMEOUT_PER_SEC", "0.5"))
+# A refined edge this far from Whisper's own word timestamp counts as agreement.
+ALIGNMENT_AGREE_SEC = 0.25
+# A refined span shorter than this share of the Whisper span means the aligner
+# covered only part of the segment, so its answer is discarded for that segment.
+SPAN_RATIO_FLOOR = 0.5
+
+
+def _percentile(values, pct):
+    """Linear-interpolated percentile; None on an empty list."""
+    if not values:
+        return None
+    data = sorted(values)
+    k = (len(data) - 1) * pct / 100.0
+    low = int(k)
+    high = min(low + 1, len(data) - 1)
+    return round(data[low] + (data[high] - data[low]) * (k - low), 4)
 
 # Worker timing. The poll interval only applies when the queue is empty; a worker
 # that just finished a job checks for the next one immediately.
@@ -162,7 +193,13 @@ def ensure_schema(cursor):
             attempt_count INTEGER DEFAULT 0,
             processing_seconds REAL DEFAULT NULL,
             words_per_second REAL DEFAULT NULL,
-            mfa_applied INTEGER DEFAULT NULL
+            mfa_applied INTEGER DEFAULT NULL,
+            anomaly_count INTEGER DEFAULT NULL,
+            anomaly_windows INTEGER DEFAULT NULL,
+            flagged_segments TEXT DEFAULT NULL,
+            rescue_attempted INTEGER DEFAULT NULL,
+            rescue_selected INTEGER DEFAULT NULL,
+            speech_seconds REAL DEFAULT NULL
         )
     ''')
 
@@ -179,6 +216,13 @@ def ensure_schema(cursor):
         ('processing_seconds', 'REAL DEFAULT NULL'),
         ('words_per_second', 'REAL DEFAULT NULL'),
         ('mfa_applied', 'INTEGER DEFAULT NULL'),
+        # 0.6.0 decode diagnostics.
+        ('anomaly_count', 'INTEGER DEFAULT NULL'),
+        ('anomaly_windows', 'INTEGER DEFAULT NULL'),
+        ('flagged_segments', 'TEXT DEFAULT NULL'),
+        ('rescue_attempted', 'INTEGER DEFAULT NULL'),
+        ('rescue_selected', 'INTEGER DEFAULT NULL'),
+        ('speech_seconds', 'REAL DEFAULT NULL'),
     ]
     for column, definition in migrations:
         if not column_exists(cursor, 'transcriptions', column):
@@ -214,6 +258,23 @@ def is_garbage_transcription(text, threshold=0.2, min_length=50):
     ratio = alnum_chars / total_chars if total_chars else 0
     return ratio < threshold
 
+def parse_flagged_segments(raw):
+    """Decode the stored flagged_segments JSON for an API response.
+
+    Always a list: the column is null on every row written before 0.6.0 and on any
+    job that has not completed, and a client should not have to tell those apart from
+    a job with nothing flagged.
+    """
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        app.logger.warning(f"Ignoring unparseable flagged_segments value: {raw!r}")
+        return []
+    return value if isinstance(value, list) else []
+
+
 def _count_failed_attempt(cursor, guid, reason, terminal_status):
     """Increment the job's attempt counter, then requeue it or move it to terminal_status.
 
@@ -239,9 +300,19 @@ def _count_failed_attempt(cursor, guid, reason, terminal_status):
         return terminal_status
 
     cursor.execute(
-        "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL WHERE guid = ?",
+        "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL, "
+        "anomaly_count = NULL, anomaly_windows = NULL, flagged_segments = NULL, "
+        "rescue_attempted = NULL, rescue_selected = NULL, speech_seconds = NULL "
+        "WHERE guid = ?",
         (guid,)
     )
+    # run_forced_alignment skips MFA when <guid>_aligned already holds output, so a
+    # requeued job would otherwise refine its new transcript against the previous
+    # attempt's word list.
+    stale_alignment = os.path.join(app.config['UPLOAD_FOLDER'], f"{guid}_aligned")
+    if os.path.isdir(stale_alignment):
+        shutil.rmtree(stale_alignment, ignore_errors=True)
+        app.logger.info(f"Removed stale alignment output for requeued job {guid}")
     app.logger.warning(
         f"Transcription {guid} failed ({reason}). Resetting to 'pending' "
         f"(attempt {attempt_count} of {max_garbage_retries})."
@@ -308,18 +379,306 @@ def remove_path(path):
         app.logger.error(f"Failed to delete {path}: {file_err}")
     return False
 
-def run_forced_alignment(audio_path, whisper_segments, guid):
-    # Use Montreal Forced Aligner to refine Whisper's segment timings
-    """
-    Runs Montreal Forced Aligner (MFA) to refine the timestamps from the Whisper transcript,
-    ensuring they align with Whisper's segment structure. MFA is always attempted; if it
-    fails for any reason the Whisper segments are returned unchanged.
+def build_utterances(segments, duration,
+                     gap_s=None, pad_s=None, min_len=None, max_len=None):
+    """Merge Whisper segments into MFA utterances, split only at real pauses.
 
-    Returns (segments, mfa_applied): mfa_applied is True only when MFA output was
-    parsed and used, False on every fallback path.
+    Production used to hand MFA one utterance per file, so a 20-60 minute recording
+    was a single alignment graph and one mismatch could fail or distort the whole
+    thing: on the 1369 s reference file that cost 279 s and produced no alignment at
+    all. Splitting at gaps of `gap_s` or more bounds the damage to one utterance and
+    aligned the same file in 30 s.
+
+    A split happens at a qualifying gap once the utterance is at least `min_len`
+    long, or when adding the next segment would push it past `max_len`. Each
+    utterance is padded `pad_s` into the adjacent silence without ever overlapping
+    its neighbours. Returns dicts with start, end, text and the segment indices.
+    """
+    gap_s = MFA_UTTERANCE_GAP_SEC if gap_s is None else gap_s
+    pad_s = MFA_UTTERANCE_PAD_SEC if pad_s is None else pad_s
+    min_len = MFA_UTTERANCE_MIN_SEC if min_len is None else min_len
+    max_len = MFA_UTTERANCE_MAX_SEC if max_len is None else max_len
+
+    numbered = [(i, s) for i, s in enumerate(segments) if s.get("text", "").strip()]
+    groups = []
+    current = []
+    for i, seg in numbered:
+        if current:
+            previous = current[-1][1]
+            gap = seg["start"] - previous["end"]
+            length = previous["end"] - current[0][1]["start"]
+            would_be = seg["end"] - current[0][1]["start"]
+            if gap >= gap_s and (length >= min_len or would_be > max_len):
+                groups.append(current)
+                current = []
+        current.append((i, seg))
+    if current:
+        groups.append(current)
+
+    utterances = [
+        {
+            "start": g[0][1]["start"],
+            "end": g[-1][1]["end"],
+            "text": " ".join(s["text"].strip() for _, s in g),
+            "segments": [i for i, _ in g],
+        }
+        for g in groups
+    ]
+    edges = [(u["start"], u["end"]) for u in utterances]
+    for k, u in enumerate(utterances):
+        start, end = edges[k]
+        previous_end = edges[k - 1][1] if k > 0 else 0.0
+        next_start = edges[k + 1][0] if k + 1 < len(utterances) else duration
+        # Pad into the gap but never past its midpoint, so neighbours cannot overlap.
+        u["start"] = round(max(0.0, start - pad_s, (previous_end + start) / 2.0 if k > 0 else 0.0), 4)
+        u["end"] = round(min(duration, end + pad_s,
+                             (end + next_start) / 2.0 if k + 1 < len(utterances) else duration), 4)
+        if u["end"] - u["start"] < 0.1:
+            u["end"] = round(min(duration, u["start"] + 0.1), 4)
+    for k in range(1, len(utterances)):
+        if utterances[k]["start"] < utterances[k - 1]["end"]:
+            utterances[k]["start"] = utterances[k - 1]["end"]
+    return utterances
+
+
+def write_textgrid(utterances, duration, path, tier="speaker"):
+    """Write a one-tier TextGrid tiling [0, duration] with the utterances as intervals.
+
+    MFA reads a TextGrid beside the WAV as a multi-utterance corpus; the empty
+    intervals between utterances are the silences it is told not to align through.
+    """
+    intervals = []
+    cursor = 0.0
+    for u in utterances:
+        if u["start"] > cursor + 1e-6:
+            intervals.append((cursor, u["start"], ""))
+        intervals.append((u["start"], u["end"], u["text"]))
+        cursor = u["end"]
+    if cursor < duration - 1e-6:
+        intervals.append((cursor, duration, ""))
+
+    lines = [
+        'File type = "ooTextFile"',
+        'Object class = "TextGrid"',
+        "",
+        "xmin = 0",
+        f"xmax = {duration:.4f}",
+        "tiers? <exists>",
+        "size = 1",
+        "item []:",
+        "    item [1]:",
+        '        class = "IntervalTier"',
+        f'        name = "{tier}"',
+        "        xmin = 0",
+        f"        xmax = {duration:.4f}",
+        f"        intervals: size = {len(intervals)}",
+    ]
+    for k, (start, end, text) in enumerate(intervals, 1):
+        lines += [
+            f"        intervals [{k}]:",
+            f"            xmin = {start:.4f}",
+            f"            xmax = {end:.4f}",
+            f'            text = "{text.replace(chr(34), chr(34) * 2)}"',
+        ]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
+def export_wav_for_mfa(audio_path, wav_path):
+    """Decode to 16 kHz mono signed 16-bit PCM, the rate MFA's models expect.
+
+    pydub's default export kept the source rate and channel count, which made a
+    534 MB WAV of the 2783 s stereo file and let MFA hear a channel mix Whisper
+    never saw. The same file is 89 MB through this path.
+    """
+    subprocess.run(
+        ["ffmpeg", "-y", "-nostdin", "-loglevel", "error", "-i", audio_path,
+         "-vn", "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", wav_path],
+        check=True, capture_output=True, text=True, timeout=600,
+    )
+
+
+def load_mfa_words(alignment_json_path):
+    """Word entries from MFA's JSON output, silences and epsilons dropped."""
+    with open(alignment_json_path, "r") as fh:
+        data = json.load(fh)
+    tiers = data.get("tiers")
+    if not isinstance(tiers, dict):
+        raise ValueError("MFA output has no tiers")
+    words_tier = tiers.get("words")
+    if words_tier is None:
+        words_tier = next((v for k, v in tiers.items() if k.endswith("words")), None)
+    if words_tier is None:
+        raise ValueError("MFA output has no words tier")
+    return [
+        {"start": float(entry[0]), "end": float(entry[1]), "text": entry[2]}
+        for entry in words_tier.get("entries", [])
+        if entry[2] and entry[2] not in {"<eps>", "sil", "spn"}
+    ]
+
+
+def match_mfa_words(segments, mfa_words):
+    """Assign MFA words to Whisper segments by sequence match (harness I2).
+
+    The rule this replaces took every MFA word whose start fell inside a Whisper
+    segment's span. That double-assigns a word sitting on a boundary, starts a
+    segment on its second word when the first drifted, and degrades to nonsense once
+    MFA and Whisper disagree about where in the file they are. Matching the two token
+    streams with difflib instead means a word is owned by the segment whose text it
+    actually came from, whatever the timings say.
+
+    Returns a list of per-Whisper-token records: {"seg", "mfa"} where "mfa" is the
+    index into `mfa_words` or None.
+    """
+    whisper_tokens = []  # (segment index, token)
+    for index, segment in enumerate(segments):
+        words = segment.get("words")
+        if words:
+            for word in words:
+                for token in norm_words(word["word"]):
+                    whisper_tokens.append((index, token))
+        else:
+            for token in norm_words(segment.get("text", "")):
+                whisper_tokens.append((index, token))
+
+    # An MFA label that normalises to several tokens is matched on its first one.
+    mfa_tokens = []
+    for word in mfa_words:
+        tokens = norm_words(word["text"])
+        mfa_tokens.append(tokens[0] if tokens else "")
+
+    matcher = difflib.SequenceMatcher(None, mfa_tokens, [t for _, t in whisper_tokens], autojunk=False)
+    matched = [None] * len(whisper_tokens)
+    for block in matcher.get_matching_blocks():
+        for k in range(block.size):
+            matched[block.b + k] = block.a + k
+    return [{"seg": seg, "mfa": mfa} for (seg, _), mfa in zip(whisper_tokens, matched)]
+
+
+def refine_segment_timings(segments, mfa_words):
+    """Refine each segment's edges from its own MFA words, then enforce monotonicity.
+
+    A segment MFA did not cover, or covered so partially that its refined span is
+    under half the Whisper span, keeps Whisper's word timestamps rather than its
+    VAD-padded segment bounds. Returns (timings, empty_fallbacks, short_fallbacks).
+    """
+    owned = {}
+    for record in match_mfa_words(segments, mfa_words):
+        if record["mfa"] is not None:
+            owned.setdefault(record["seg"], []).append(record["mfa"])
+
+    refined = []
+    empty_fallbacks = 0
+    short_fallbacks = 0
+    span_ratios = []
+    for index, segment in enumerate(segments):
+        indices = owned.get(index)
+        whisper_start, whisper_end = whisper_span(segment)
+        whisper_length = whisper_end - whisper_start
+        if indices:
+            start = mfa_words[min(indices)]["start"]
+            end = mfa_words[max(indices)]["end"]
+            # Owning some words is not the same as being aligned. A segment that owns
+            # 2 of its 30 words gets a span covering those two, so a 20 second stretch
+            # of text would be published against a 0.6 second timing. Treat a refined
+            # span under half the Whisper span as a failure to cover the segment.
+            if whisper_length > 0:
+                # Recorded before the substitution, so the distribution describes what
+                # the aligner produced rather than what was published.
+                span_ratios.append((end - start) / whisper_length)
+                if (end - start) < SPAN_RATIO_FLOOR * whisper_length:
+                    short_fallbacks += 1
+                    start, end = whisper_start, whisper_end
+        else:
+            empty_fallbacks += 1
+            start, end = whisper_start, whisper_end
+        refined.append({"start": float(start), "end": float(end), "text": segment["text"].strip()})
+
+    # One pass to make the sequence monotonic: a later segment can never start
+    # before its predecessor ended, and no segment can be empty or inverted. A timing
+    # the clamp had to move is not the aligner's answer, so it is counted separately.
+    clamped = 0
+    previous_end = 0.0
+    for entry in refined:
+        start = max(entry["start"], previous_end)
+        end = max(entry["end"], start + 0.05)
+        if start != entry["start"] or end != entry["end"]:
+            clamped += 1
+        entry["start"], entry["end"] = start, end
+        previous_end = end
+
+    stats = {
+        "empty_fallbacks": empty_fallbacks,
+        "short_fallbacks": short_fallbacks,
+        "clamped": clamped,
+        "span_ratio_p5": _percentile(span_ratios, 5),
+        "span_ratio_median": _percentile(span_ratios, 50),
+    }
+    return refined, stats
+
+
+def alignment_agreement(segments, refined):
+    """Fraction of segments whose refined edges are both within 250 ms of Whisper's.
+
+    Logged per job as agree250: the harness measured 0.44-0.65 under the old rule
+    and 0.52-0.79 under this one, so a sharp drop in production is the signal that
+    something upstream has changed.
+    """
+    if not segments:
+        return None
+    agree = 0
+    for segment, entry in zip(segments, refined):
+        start, end = whisper_span(segment)
+        if abs(entry["start"] - start) <= ALIGNMENT_AGREE_SEC and abs(entry["end"] - end) <= ALIGNMENT_AGREE_SEC:
+            agree += 1
+    return round(agree / len(segments), 4)
+
+
+def whisper_timings(segments):
+    """The fallback timings: Whisper's own word timestamps, monotonic, no MFA."""
+    refined = []
+    previous_end = 0.0
+    for segment in segments:
+        text = segment.get("text", "").strip()
+        if not text:
+            continue
+        start, end = whisper_span(segment)
+        start = max(float(start), previous_end)
+        end = max(float(end), start + 0.05)
+        refined.append({"start": start, "end": end, "text": text})
+        previous_end = end
+    return refined
+
+
+def alignment_log_fields(stats):
+    """The alignment counters as `key=value` pairs for the per-job log line.
+
+    One place builds them so the alignment line and the completion line cannot
+    disagree, and so the sweep's parser sees the same names on either.
+    """
+    return (
+        f"agree250={stats.get('agree250')} "
+        f"empty_fallbacks={stats.get('empty_fallbacks')} "
+        f"span_ratio_lt_0_5={stats.get('short_fallbacks')} "
+        f"span_ratio_p5={stats.get('span_ratio_p5')} "
+        f"span_ratio_median={stats.get('span_ratio_median')} "
+        f"clamped={stats.get('clamped')}"
+    )
+
+
+def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
+    """Refine Whisper's segment timings with Montreal Forced Aligner.
+
+    MFA is always attempted. It gets a 16 kHz mono WAV and a TextGrid of utterances
+    built from the Whisper segments, runs once at its default beams, and its words
+    are assigned back to segments by sequence match. Every failure path falls back to
+    Whisper's own word timestamps rather than losing the job.
+
+    Returns (timings, mfa_applied, stats). `timings` is the API's list of
+    {start, end, text}; `stats` carries agree250, the utterance count, the MFA wall
+    time and the number of segments MFA did not cover.
     """
     upload_folder = app.config['UPLOAD_FOLDER']
-    transcript_path = os.path.join(upload_folder, f"{guid}.txt")
     aligned_output_dir = os.path.join(upload_folder, f"{guid}_aligned")
     alignment_json_path = os.path.join(aligned_output_dir, f"{guid}.json")
     # Assigned before the try so the finally can always clean up, whichever step raised.
@@ -329,6 +688,23 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
     # finally removes it afterwards so nothing accumulates in the container layer.
     mfa_work_dir = os.path.join(MFA_ROOT_DIR, f"{guid}_mfa_input")
 
+    segments = [s for s in whisper_segments if s.get("text", "").strip()]
+    # Every counter the sweep parses off the log line, defaulted so a fallback path
+    # still emits the full set.
+    stats = {"agree250": None, "utterances": 0, "mfa_wall_s": None,
+             "empty_fallbacks": None, "short_fallbacks": None, "clamped": None,
+             "span_ratio_p5": None, "span_ratio_median": None}
+    if not segments:
+        return [], False, stats
+
+    def fallback():
+        timings = whisper_timings(segments)
+        stats["agree250"] = alignment_agreement(segments, timings)
+        return timings, False, stats
+
+    if duration_sec is None or duration_sec <= 0:
+        duration_sec = max(s["end"] for s in segments)
+
     # If alignment already exists, avoid re-running MFA
     if os.path.exists(alignment_json_path):
         app.logger.info(f"MFA alignment already exists for {guid}. Skipping re-run.")
@@ -337,132 +713,90 @@ def run_forced_alignment(audio_path, whisper_segments, guid):
             # Verify the actual audio file exists and get its correct path
             if not os.path.exists(audio_path):
                 app.logger.error(f"Audio file not found for {guid}: {audio_path}")
-                return whisper_segments, False
+                return fallback()
 
-            # Save transcript to a file for MFA (remove extra spaces and clean up text)
-            transcript_content = " ".join(seg["text"].strip() for seg in whisper_segments if seg["text"].strip())
-
-            # Remove repeated words/phrases that might confuse alignment
-            transcript_content = re.sub(r'\b(\w+)\s+\1\s+\1\s+\1+', r'\1', transcript_content)
-
-            with open(transcript_path, "w") as f:
-                f.write(transcript_content)
-
-            # Ensure output directory exists
             os.makedirs(aligned_output_dir, exist_ok=True)
-
-            # Create a temporary directory with properly named files for MFA
             os.makedirs(temp_mfa_dir, exist_ok=True)
 
-            # Copy files with consistent naming for MFA
             temp_audio_path = os.path.join(temp_mfa_dir, f"{guid}.wav")
-            temp_transcript_path = os.path.join(temp_mfa_dir, f"{guid}.txt")
-
-            # Convert audio to WAV format for MFA compatibility
             try:
-                audio = AudioSegment.from_file(audio_path)
-                audio.export(temp_audio_path, format="wav")
-                shutil.copy2(transcript_path, temp_transcript_path)
-                app.logger.info(f"Created MFA input files for {guid}: {temp_audio_path}, {temp_transcript_path}")
+                export_wav_for_mfa(audio_path, temp_audio_path)
+                utterances = build_utterances(segments, duration_sec)
+                write_textgrid(utterances, duration_sec, os.path.join(temp_mfa_dir, f"{guid}.TextGrid"))
+                stats["utterances"] = len(utterances)
+                app.logger.info(
+                    f"Prepared MFA input for {guid}: {len(utterances)} utterances from "
+                    f"{len(segments)} segments, {os.path.getsize(temp_audio_path) / 1e6:.0f} MB WAV"
+                )
             except Exception as prep_error:
                 app.logger.error(f"Error preparing MFA input files for {guid}: {prep_error}")
-                return whisper_segments, False
+                return fallback()
 
-            # Run MFA command with progressive beam sizes (fallback strategy)
-            beam_configs = [
-                {"beam": "40", "retry_beam": "100"},  # First try: moderate increase
-                {"beam": "100", "retry_beam": "400"}   # Fallback: large increase
+            timeout = max(MFA_TIMEOUT_FLOOR_SEC, MFA_TIMEOUT_BASE_SEC + MFA_TIMEOUT_PER_SEC * duration_sec)
+            mfa_command = [
+                "mfa", "align",
+                temp_mfa_dir,          # Directory holding the WAV and its TextGrid
+                MFA_DICTIONARY_PATH,   # Pronunciation dictionary
+                MFA_ACOUSTIC_MODEL,    # Acoustic model
+                aligned_output_dir,    # Output directory
+                "--output_format", "json",
+                "--include_original_text",
+                "--no_tokenization",
+                "--clean",             # Start from an empty working directory every run
+                "--overwrite",
             ]
-
-            mfa_success = False
-            for i, config in enumerate(beam_configs):
-                mfa_command = [
-                    "mfa", "align",
-                    temp_mfa_dir,  # Directory containing properly named audio & transcript
-                    MFA_DICTIONARY_PATH,  # Pronunciation dictionary
-                    MFA_ACOUSTIC_MODEL,  # Acoustic model
-                    aligned_output_dir, # Output directory
-                    "--output_format", "json",
-                    "--beam", config["beam"],
-                    "--retry_beam", config["retry_beam"],
-                    "--clean",  # Start from an empty working directory every run
-                ]
-
-                app.logger.info(
-                    f"MFA attempt {i+1} for {guid} with beam={config['beam']}, retry_beam={config['retry_beam']}"
+            app.logger.info(f"Running MFA for {guid} at default beams (timeout {timeout:.0f}s)")
+            started = time.monotonic()
+            try:
+                result = subprocess.run(mfa_command, check=True, capture_output=True, text=True, timeout=timeout)
+                stats["mfa_wall_s"] = round(time.monotonic() - started, 1)
+                # Full MFA output (progress bars included) is only useful when
+                # something went wrong, so it stays at DEBUG on success.
+                app.logger.debug(f"MFA stdout for {guid}: {result.stdout}")
+            except subprocess.TimeoutExpired:
+                stats["mfa_wall_s"] = round(time.monotonic() - started, 1)
+                app.logger.error(f"MFA for {guid} timed out after {timeout:.0f}s; using Whisper timings.")
+                return fallback()
+            except subprocess.CalledProcessError as e:
+                stats["mfa_wall_s"] = round(time.monotonic() - started, 1)
+                app.logger.error(
+                    f"MFA for {guid} failed with return code {e.returncode}; using Whisper timings. "
+                    f"stderr: {e.stderr}\nstdout: {e.stdout}"
                 )
-                try:
-                    result = subprocess.run(mfa_command, check=True, capture_output=True, text=True, timeout=300)
-                    mfa_success = True
-                    # Full MFA output (progress bars included) is only useful when
-                    # something went wrong, so it stays at DEBUG on success.
-                    app.logger.debug(f"MFA stdout for {guid}: {result.stdout}")
-                    break
-                except subprocess.TimeoutExpired:
-                    app.logger.warning(f"MFA attempt {i+1} for {guid} timed out after 5 minutes")
-                except subprocess.CalledProcessError as e:
-                    app.logger.warning(
-                        f"MFA attempt {i+1} for {guid} failed with return code {e.returncode}. "
-                        f"stderr: {e.stderr}\nstdout: {e.stdout}"
-                    )
-
-            if not mfa_success:
-                app.logger.error(f"All MFA attempts failed for {guid}; using Whisper timings.")
-                return whisper_segments, False
+                return fallback()
 
             if not os.path.exists(alignment_json_path):
                 app.logger.error(f"MFA output file not found for {guid}: {alignment_json_path}")
                 app.logger.error(f"Command used: {' '.join(mfa_command)}")
-                return whisper_segments, False  # Return original Whisper segments if no output
+                return fallback()
 
         except Exception as e:
             app.logger.error(f"Unexpected error running MFA for {guid}: {str(e)}")
-            return whisper_segments, False  # Fallback to Whisper segments
+            return fallback()
 
         finally:
             for path in (temp_mfa_dir, mfa_work_dir):
                 if os.path.isdir(path):
                     shutil.rmtree(path, ignore_errors=True)
 
-    # Read MFA output file
     try:
-        with open(alignment_json_path, "r") as f:
-            alignment_data = json.load(f)
-
-        # Ensure MFA output format is valid
-        if "tiers" not in alignment_data or "words" not in alignment_data["tiers"]:
-            app.logger.error(f"'words' tier missing in MFA output for {guid}: {alignment_data}")
-            return whisper_segments, False  # Fallback to Whisper's segment timings
-
-        # Extract word-level alignments
-        word_entries = alignment_data["tiers"]["words"]["entries"]
-        words = [{"start": entry[0], "end": entry[1], "text": entry[2]} for entry in word_entries]
-
-        # Align MFA words within Whisper's segment-level structure
-        refined_segments = []
-        for segment in whisper_segments:
-            whisper_start, whisper_end, segment_text = segment["start"], segment["end"], segment["text"]
-
-            # Find words within the Whisper segment boundary
-            segment_words = [word for word in words if whisper_start <= word["start"] <= whisper_end]
-
-            if segment_words:
-                refined_start = segment_words[0]["start"]
-                refined_end = segment_words[-1]["end"]
-            else:
-                refined_start, refined_end = whisper_start, whisper_end  # Fallback to Whisper timings
-
-            refined_segments.append({
-                "start": refined_start,
-                "end": refined_end,
-                "text": segment_text
-            })
-
-        return refined_segments, True  # Return segment-level alignment
-
+        mfa_words = load_mfa_words(alignment_json_path)
     except Exception as e:
         app.logger.error(f"Error processing MFA output for {guid}: {str(e)}")
-        return whisper_segments, False  # Fallback to Whisper segments if JSON parsing fails
+        return fallback()
+
+    if not mfa_words:
+        app.logger.error(f"MFA returned no words for {guid}; using Whisper timings.")
+        return fallback()
+
+    refined, refine_stats = refine_segment_timings(segments, mfa_words)
+    stats.update(refine_stats)
+    stats["agree250"] = alignment_agreement(segments, refined)
+    app.logger.info(
+        f"Alignment for {guid}: {len(mfa_words)} MFA words over {len(segments)} segments, "
+        + alignment_log_fields(stats)
+    )
+    return refined, True, stats
 
 
 def process_pending_job(cursor, guid, filename):
@@ -501,6 +835,17 @@ def process_pending_job(cursor, guid, filename):
 
         transcription = result["transcription"]
         whisper_segment_timings = result["timings"]
+        # Full diagnostic segments carry the word timestamps the aligner needs; a
+        # stubbed or older transcribe_audio only returns the API timings.
+        decode_segments = result.get("segments") or whisper_segment_timings
+        # Every count describes the pass transcribe_audio selected: when the primary
+        # pass looked bad it ran one rescue pass and kept the better of the two, so
+        # the gate below must not judge a file on a score the rescue already fixed.
+        anomaly_count = result.get("anomaly_count")
+        anomaly_windows = result.get("anomaly_windows")
+        flagged_segments = result.get("flagged_segments") or []
+        rescue_attempted = bool(result.get("rescue_attempted"))
+        rescue_selected = bool(result.get("rescue_selected"))
 
         # Check for garbage transcription
         if is_garbage_transcription(transcription):
@@ -510,18 +855,46 @@ def process_pending_job(cursor, guid, filename):
         # alphanumeric check but is still a collapsed decode. Skip clips under
         # 30 s, where a pause or two swings the rate, and unknown durations.
         duration_sec = result.get("duration_sec", 0) or 0
-        wps = len(transcription.split()) / duration_sec if duration_sec > 0 else 0
+        # Rate over the speech the decoder was actually given, not over the whole
+        # file. A recording that is half silence reads as half rate against total
+        # duration, which is why the floor had to sit so low to be safe; over speech
+        # the same floor means what it says. Falls back to total duration when the
+        # decode did not report duration_after_vad.
+        speech_seconds = result.get("speech_seconds") or 0
+        denom = speech_seconds or duration_sec
+        wps = len(transcription.split()) / denom if denom > 0 else 0
         if duration_sec >= 30 and wps < MIN_WORDS_PER_SEC:
             return handle_garbage_result(
                 cursor, guid,
-                f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
+                f"word rate {wps:.2f} words/sec over {denom:.0f}s of "
+                f"{'speech' if speech_seconds else 'audio'} below floor {MIN_WORDS_PER_SEC}"
+            )
+
+        # No anomaly signal can quarantine a job any more, so there is no gate here.
+        #
+        # The low-rate window never could: the decode is deterministic on its first
+        # ladder rung, so requeueing re-derives the same result, which is how
+        # tcf.20150424 spent 510 s of GPU to publish nothing. The per-segment anomaly
+        # count was then measured across 102 recordings and retired: it never exceeded
+        # 1, identified none of the seven confirmed bad transcripts, and flagged six
+        # healthy ones. Quarantine is reserved for the garbage check and the word-rate
+        # floor above, which reject output that is unusable rather than merely
+        # suspect. Everything else publishes with its diagnostics set.
+        if (anomaly_windows or 0) > 0:
+            app.logger.warning(
+                f"{guid} has {anomaly_windows} low speech window(s); the rescue "
+                f"{'ran' if rescue_attempted else 'did not run'} and the "
+                f"{'rescue' if rescue_selected else 'primary'} pass was published. "
+                f"Review the transcript for a dropped passage."
             )
 
         # Step 2: Run Forced Alignment (MFA). An alignment problem is not a
         # transcription problem: fall back to Whisper's own timings without
         # spending a retry on it.
         app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
-        refined_timings, mfa_applied = run_forced_alignment(file_path, whisper_segment_timings, guid)
+        refined_timings, mfa_applied, alignment_stats = run_forced_alignment(
+            file_path, decode_segments, guid, duration_sec
+        )
         if not refined_timings or all(not seg.get("text") for seg in refined_timings):
             app.logger.warning(f"Alignment returned no usable timings for {guid}; using Whisper timings.")
             refined_timings, mfa_applied = whisper_segment_timings, False
@@ -534,21 +907,34 @@ def process_pending_job(cursor, guid, filename):
         cursor.execute(
             "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', "
             "processing_seconds = ?, words_per_second = ?, mfa_applied = ?, "
+            "anomaly_count = ?, anomaly_windows = ?, flagged_segments = ?, "
+            "rescue_attempted = ?, rescue_selected = ?, speech_seconds = ?, "
             "completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
             (
                 transcription,
                 json.dumps(refined_timings),
                 processing_seconds,
-                round(wps, 3) if duration_sec > 0 else None,
+                round(wps, 3) if denom > 0 else None,
                 1 if mfa_applied else 0,
+                anomaly_count,
+                anomaly_windows,
+                json.dumps(flagged_segments),
+                1 if rescue_attempted else 0,
+                1 if rescue_selected else 0,
+                round(speech_seconds, 2) if speech_seconds else None,
                 guid,
             )
         )
         app.logger.info(
             f"Transcription completed for {filename} (GUID: {guid}): "
             f"{len(transcription.split())} words in {duration_sec:.1f}s "
-            f"({wps:.2f} words/sec, floor {MIN_WORDS_PER_SEC}), "
-            f"{processing_seconds:.1f}s processing, mfa_applied={mfa_applied}"
+            f"({speech_seconds:.1f}s speech, {wps:.2f} words/sec over "
+            f"{'speech' if speech_seconds else 'audio'}, floor {MIN_WORDS_PER_SEC}), "
+            f"{processing_seconds:.1f}s processing, mfa_applied={mfa_applied}, "
+            f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows}, "
+            f"flagged_segments={len(flagged_segments)}, "
+            f"rescue_attempted={rescue_attempted}, rescue_selected={rescue_selected}, "
+            + alignment_log_fields(alignment_stats)
         )
         return 'completed'
 
@@ -660,7 +1046,9 @@ def get_all_transcriptions():
     # Order by created_at to ensure consistent ordering
     cursor.execute("""
         SELECT guid, filename, status, created_at, completed_at, processing_time_est,
-               processing_seconds, words_per_second, attempt_count, mfa_applied
+               processing_seconds, words_per_second, attempt_count, mfa_applied,
+               anomaly_count, anomaly_windows, flagged_segments,
+               rescue_attempted, rescue_selected, speech_seconds
         FROM transcriptions
         ORDER BY created_at DESC
     """)
@@ -679,6 +1067,13 @@ def get_all_transcriptions():
         'words_per_second': row[7],
         'attempt_count': row[8],
         'mfa_applied': None if row[9] is None else bool(row[9]),
+        # 0.6.0 decode diagnostics (null until the job completes)
+        'anomaly_count': row[10],
+        'anomaly_windows': row[11],
+        'flagged_segments': parse_flagged_segments(row[12]),
+        'rescue_attempted': None if row[13] is None else bool(row[13]),
+        'rescue_selected': None if row[14] is None else bool(row[14]),
+        'speech_seconds': row[15],
     } for row in records]
 
     return jsonify(result), 200
@@ -824,7 +1219,9 @@ def get_transcription(guid):
     # Retrieve the requested transcription details
     cursor.execute("""
         SELECT status, transcription, timings, created_at, processing_time_est,
-               processing_seconds, words_per_second, attempt_count, mfa_applied
+               processing_seconds, words_per_second, attempt_count, mfa_applied,
+               anomaly_count, anomaly_windows, flagged_segments,
+               rescue_attempted, rescue_selected, speech_seconds
         FROM transcriptions WHERE guid = ?
     """, (guid,))
     row = cursor.fetchone()
@@ -833,7 +1230,9 @@ def get_transcription(guid):
         return jsonify({'error': 'GUID not found'}), 404
 
     (status, transcription, timings, created_at, processing_time_est,
-     processing_seconds, words_per_second, attempt_count, mfa_applied) = row
+     processing_seconds, words_per_second, attempt_count, mfa_applied,
+     anomaly_count, anomaly_windows, flagged_segments,
+     rescue_attempted, rescue_selected, speech_seconds) = row
 
     # If already completed, return the results immediately
     if status == 'completed' or status == 'processed':  # Support both new and old status values during transition
@@ -846,6 +1245,13 @@ def get_transcription(guid):
             'words_per_second': words_per_second,
             'attempt_count': attempt_count,
             'mfa_applied': None if mfa_applied is None else bool(mfa_applied),
+            # 0.6.0 decode diagnostics
+            'anomaly_count': anomaly_count,
+            'anomaly_windows': anomaly_windows,
+            'flagged_segments': parse_flagged_segments(flagged_segments),
+            'rescue_attempted': None if rescue_attempted is None else bool(rescue_attempted),
+            'rescue_selected': None if rescue_selected is None else bool(rescue_selected),
+            'speech_seconds': speech_seconds,
         }), 200
 
     # Handle error / quarantined status (both terminal failures). 'quarantined' means the

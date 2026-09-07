@@ -21,12 +21,21 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 # --- Stub the heavy imports app.py pulls in at module import time ---------------------
+def _whisper_span(segment):
+    """Real behaviour of transcribe.whisper_span; app.py's alignment depends on it."""
+    words = segment.get("words")
+    if words:
+        return float(words[0]["start"]), float(words[-1]["end"])
+    return float(segment["start"]), float(segment["end"])
+
+
 _fake_transcribe = types.ModuleType("transcribe")
 _fake_transcribe.transcribe_audio = lambda *a, **k: {"transcription": "", "timings": []}
 _fake_transcribe.load_whisper_model = lambda *a, **k: None
 _fake_transcribe.get_audio_duration = lambda path: 60.0
 _fake_transcribe.estimate_processing_seconds = lambda duration_sec: 45
 _fake_transcribe.whisper_model_loaded = lambda: False
+_fake_transcribe.whisper_span = _whisper_span
 sys.modules.setdefault("transcribe", _fake_transcribe)
 
 
@@ -172,7 +181,9 @@ def get_row(conn, guid):
     cur = conn.cursor()
     cur.execute(
         "SELECT guid, filename, status, transcription, timings, attempt_count, completed_at, "
-        "processing_seconds, words_per_second, mfa_applied "
+        "processing_seconds, words_per_second, mfa_applied, "
+        "anomaly_count, anomaly_windows, flagged_segments, "
+        "rescue_attempted, rescue_selected, speech_seconds "
         "FROM transcriptions WHERE guid = ?",
         (guid,),
     )
@@ -181,7 +192,8 @@ def get_row(conn, guid):
         return None
     keys = ["guid", "filename", "status", "transcription", "timings",
             "attempt_count", "completed_at", "processing_seconds", "words_per_second",
-            "mfa_applied"]
+            "mfa_applied", "anomaly_count", "anomaly_windows", "flagged_segments",
+        "rescue_attempted", "rescue_selected", "speech_seconds"]
     return dict(zip(keys, row))
 
 

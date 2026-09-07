@@ -170,7 +170,7 @@ def test_good_transcription_completes_and_keeps_attempt_history(app_module, db, 
         app_module, "transcribe_audio",
         lambda path, guid: {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS},
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
 
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
@@ -230,7 +230,7 @@ def test_process_whisper_exception_retries_then_succeeds(app_module, db, upload_
         return {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS}
 
     monkeypatch.setattr(app_module, "transcribe_audio", flaky)
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
     insert_job(db, guid, filename=filename, status="pending")
@@ -297,7 +297,7 @@ def test_empty_alignment_falls_back_to_whisper_timings(app_module, db, upload_di
         app_module, "transcribe_audio",
         lambda path, guid: {"transcription": _prose(250), "timings": GOOD_TIMINGS, "duration_sec": 100.0},
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: ([], False))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: ([], False, {"agree250": None}))
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
     insert_job(db, guid, filename=filename, status="pending", attempt_count=0)
@@ -316,7 +316,7 @@ def test_completed_row_records_metrics(app_module, db, upload_dir, monkeypatch):
         app_module, "transcribe_audio",
         lambda path, guid: {"transcription": _prose(words), "timings": GOOD_TIMINGS, "duration_sec": 100.0},
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
     guid = str(uuid.uuid4())
     filename = _make_audio(upload_dir, guid)
     insert_job(db, guid, filename=filename, status="pending")
@@ -334,7 +334,7 @@ def test_uppercase_extension_is_found_on_disk(app_module, db, upload_dir, monkey
         app_module, "transcribe_audio",
         lambda path, guid: {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS},
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
     guid = str(uuid.uuid4())
     (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
     insert_job(db, guid, filename="Sermon.MP3", status="pending")
@@ -358,7 +358,7 @@ def _stub_transcription(app_module, monkeypatch, word_count, duration_sec):
             "duration_sec": duration_sec,
         },
     )
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
 
 
 def test_low_word_rate_on_long_file_is_requeued(app_module, db, upload_dir, monkeypatch):
