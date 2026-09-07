@@ -463,6 +463,29 @@ Deferred to 0.6.1: whether the primary pass should sample rather than beam-searc
 recovers all four passages but changes the core decode for every file on the evidence
 of seven passages, so it needs its own measured release.
 
+## 4.3 The per-segment anomaly count is retired
+
+Measured over 102 recordings and 204 decodes, `anomaly_count` never exceeded 1,
+identified none of the seven confirmed bad transcripts, and flagged six files that
+were all healthy and within 0.2 percent of their previous word counts. Every one of
+those six carried a temperature flag, so the only thing that creates an anomalous
+segment on this corpus is the ladder engaging, which is a property of the decode path
+rather than of the output. The window check caught six of the seven bad files and the
+two signals were perfectly disjoint; all twelve rescues came from the window trigger.
+
+`ANOMALY_SEGMENTS_MAX` and `RESCUE_ANOMALY_SEGMENTS` are deleted rather than left
+inert. The counts remain as published diagnostics. No anomaly signal can quarantine a
+job: that is reserved for the garbage check and the word-rate floor.
+
+Converting the cap to a rate was considered and rejected. One flag in a 34-segment
+recording is 2.94 per hundred against 0.027 for the same flag in a 3646-segment one,
+so normalising would make short files look catastrophic to fix a scale-dependence
+that this corpus never exhibits.
+
+Known and currently undetected, for 0.6.1: `tcf.20150424` publishes about 15 percent
+short of its legacy transcript with zero flagged segments, zero low-rate windows and
+no uncovered gap over 20 s. Neither signal sees it.
+
 ## 5. Deferred and rejected
 
 - C8 batched pipeline: deferred; 2-3x faster than C1 but loses 1-4 percent of

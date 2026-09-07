@@ -60,21 +60,6 @@ max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
 # alphanumeric-ratio check alone is blind to coherent prose at half length.
 MIN_WORDS_PER_SEC = float(os.getenv("MIN_WORDS_PER_SEC", "1.0"))
 
-# Anomaly gate (0.6.0). Only the per-segment count can requeue a job.
-#
-# The low-rate window count deliberately does not, however high it goes. The decode is
-# deterministic, so requeueing on it re-runs the identical decode and burns three
-# attempts into the same quarantine: that is precisely what happened to tcf.20150424,
-# which spent 510 s of GPU to publish nothing against a legacy transcript of 8292
-# words. A low-rate window instead fires the rescue pass in transcribe.py, which is
-# the actual remedy for the omission it detects; the better pass is selected and
-# published, with the window count stored on the row so the job can still be found.
-ANOMALY_SEGMENTS_MAX = int(os.getenv("ANOMALY_SEGMENTS_MAX", "5"))
-# Two decodes are "the same result" when the word counts match and the mean
-# log-probabilities agree to this. The decode is deterministic on most material, so a
-# job rejected by the anomaly gate usually re-decodes to the identical transcript and
-# retrying it is pure cost with a guaranteed outcome.
-ANOMALY_RETRY_EPSILON = float(os.getenv("ANOMALY_RETRY_EPSILON", "1e-6"))
 
 # Where Montreal Forced Aligner keeps its per-corpus working directory. MFA names
 # it after the corpus directory basename, so a job's tree is <root>/<guid>_mfa_input.
@@ -214,8 +199,7 @@ def ensure_schema(cursor):
             flagged_segments TEXT DEFAULT NULL,
             rescue_attempted INTEGER DEFAULT NULL,
             rescue_selected INTEGER DEFAULT NULL,
-            speech_seconds REAL DEFAULT NULL,
-            last_anomaly_fingerprint TEXT DEFAULT NULL
+            speech_seconds REAL DEFAULT NULL
         )
     ''')
 
@@ -239,7 +223,6 @@ def ensure_schema(cursor):
         ('rescue_attempted', 'INTEGER DEFAULT NULL'),
         ('rescue_selected', 'INTEGER DEFAULT NULL'),
         ('speech_seconds', 'REAL DEFAULT NULL'),
-        ('last_anomaly_fingerprint', 'TEXT DEFAULT NULL'),
     ]
     for column, definition in migrations:
         if not column_exists(cursor, 'transcriptions', column):
@@ -274,29 +257,6 @@ def is_garbage_transcription(text, threshold=0.2, min_length=50):
         return True
     ratio = alnum_chars / total_chars if total_chars else 0
     return ratio < threshold
-
-def anomaly_fingerprint(word_count, mean_logprob):
-    """A compact identity for a decode result, for comparing attempt to attempt."""
-    if mean_logprob is None:
-        return f"{int(word_count)}:none"
-    return f"{int(word_count)}:{float(mean_logprob):.12f}"
-
-
-def same_anomaly_result(previous, current):
-    """True when two fingerprints describe materially the same decode."""
-    if not previous or not current:
-        return False
-    previous_words, _, previous_logprob = previous.partition(":")
-    current_words, _, current_logprob = current.partition(":")
-    if previous_words != current_words:
-        return False
-    if previous_logprob == "none" or current_logprob == "none":
-        return previous_logprob == current_logprob
-    try:
-        return abs(float(previous_logprob) - float(current_logprob)) <= ANOMALY_RETRY_EPSILON
-    except ValueError:
-        return False
-
 
 def parse_flagged_segments(raw):
     """Decode the stored flagged_segments JSON for an API response.
@@ -343,8 +303,6 @@ def _count_failed_attempt(cursor, guid, reason, terminal_status):
         "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL, "
         "anomaly_count = NULL, anomaly_windows = NULL, flagged_segments = NULL, "
         "rescue_attempted = NULL, rescue_selected = NULL, speech_seconds = NULL "
-        # last_anomaly_fingerprint is deliberately NOT cleared: it is how the next
-        # attempt recognises that it has produced this exact result before.
         "WHERE guid = ?",
         (guid,)
     )
@@ -888,13 +846,6 @@ def process_pending_job(cursor, guid, filename):
         flagged_segments = result.get("flagged_segments") or []
         rescue_attempted = bool(result.get("rescue_attempted"))
         rescue_selected = bool(result.get("rescue_selected"))
-        # The primary pass's figures. It decodes at temperature 0.0 and beam-searches,
-        # so it is the only pass that reproduces itself; the rescue samples. Both the
-        # retry fingerprint and the quarantine decision are taken from it. They fall
-        # back to the selected pass's values when the decode did not report them.
-        primary_words = result.get("primary_words", len(transcription.split()))
-        primary_mean_logprob = result.get("primary_mean_logprob", result.get("mean_logprob"))
-        primary_anomaly_count = result.get("primary_anomaly_count", anomaly_count)
 
         # Check for garbage transcription
         if is_garbage_transcription(transcription):
@@ -919,12 +870,16 @@ def process_pending_job(cursor, guid, filename):
                 f"{'speech' if speech_seconds else 'audio'} below floor {MIN_WORDS_PER_SEC}"
             )
 
-        # Anomaly gate. Only the per-segment count reaches this: a decode that fell
-        # back to high temperatures or repeatedly tripped faster-whisper's own
-        # compression and log-probability thresholds has produced something suspect
-        # everywhere, and a retry may genuinely differ. The low-rate window count is
-        # handled upstream by the rescue pass instead, because requeueing a
-        # deterministic decode cannot change its verdict.
+        # No anomaly signal can quarantine a job any more, so there is no gate here.
+        #
+        # The low-rate window never could: the decode is deterministic on its first
+        # ladder rung, so requeueing re-derives the same result, which is how
+        # tcf.20150424 spent 510 s of GPU to publish nothing. The per-segment anomaly
+        # count was then measured across 102 recordings and retired: it never exceeded
+        # 1, identified none of the seven confirmed bad transcripts, and flagged six
+        # healthy ones. Quarantine is reserved for the garbage check and the word-rate
+        # floor above, which reject output that is unusable rather than merely
+        # suspect. Everything else publishes with its diagnostics set.
         if (anomaly_windows or 0) > 0:
             app.logger.warning(
                 f"{guid} has {anomaly_windows} low speech window(s); the rescue "
@@ -932,61 +887,6 @@ def process_pending_job(cursor, guid, filename):
                 f"{'rescue' if rescue_selected else 'primary'} pass was published. "
                 f"Review the transcript for a dropped passage."
             )
-        # Both passes have to be over the cap. The selection rule ranks on anomaly
-        # count plus windows while this gate reads the count alone, so a rescue that
-        # trades segment flags for windows (four flags and three windows against six
-        # flags and none) wins selection and then trips the cap, quarantining a file
-        # the primary would have published. The retention guards do not catch it
-        # because that rescue has more words, not fewer.
-        if ((anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX
-                and (primary_anomaly_count or 0) >= ANOMALY_SEGMENTS_MAX):
-            reason = (
-                f"anomaly gate: {anomaly_count} flagged segments on the published pass "
-                f"and {primary_anomaly_count} on the primary (max {ANOMALY_SEGMENTS_MAX - 1})"
-            )
-            # Fingerprint the primary, which is reproducible, not the selected pass,
-            # which may be a sampled rescue and never matches itself.
-            fingerprint = anomaly_fingerprint(primary_words, primary_mean_logprob)
-            cursor.execute(
-                "SELECT last_anomaly_fingerprint, attempt_count FROM transcriptions WHERE guid = ?",
-                (guid,),
-            )
-            row = cursor.fetchone()
-            previous_fingerprint = row[0] if row else None
-            attempts_so_far = (row[1] if row else 0) or 0
-            final_attempt = attempts_so_far + 1 >= max_garbage_retries
-
-            if final_attempt and not same_anomaly_result(previous_fingerprint, fingerprint):
-                # Belt and braces for a decode that does vary. Quarantine on the last
-                # attempt would deliver nothing at all, and nothing is worse than a
-                # flagged transcript: the garbage check and the word-rate floor above
-                # have already rejected genuinely unusable output.
-                app.logger.warning(
-                    f"Publishing {guid} despite the {reason}: this was the final attempt "
-                    f"({attempts_so_far + 1} of {max_garbage_retries}) and quarantining would "
-                    f"deliver nothing for a transcript of {len(transcription.split())} words."
-                )
-            elif same_anomaly_result(previous_fingerprint, fingerprint):
-                # The decode is deterministic, so retrying cannot change the verdict.
-                # tcf.20150424 proved the point: three identical re-decodes, 510 s of
-                # GPU, and a quarantined row with nothing published against a legacy
-                # transcript of 8292 words. A quality signal must not black-hole a
-                # recording that produced a plausible transcript; quarantine is for
-                # results that are unusable, which the garbage check and the word-rate
-                # floor above already decide. Publish, with the anomaly fields and the
-                # flags set so it can be found and reviewed.
-                app.logger.warning(
-                    f"Publishing {guid} despite the {reason}: the re-decode reproduced the "
-                    f"previous attempt exactly ({fingerprint}), so retrying cannot clear the "
-                    f"gate and quarantining would deliver nothing for a transcript of "
-                    f"{len(transcription.split())} words."
-                )
-            else:
-                cursor.execute(
-                    "UPDATE transcriptions SET last_anomaly_fingerprint = ? WHERE guid = ?",
-                    (fingerprint, guid),
-                )
-                return handle_garbage_result(cursor, guid, reason)
 
         # Step 2: Run Forced Alignment (MFA). An alignment problem is not a
         # transcription problem: fall back to Whisper's own timings without

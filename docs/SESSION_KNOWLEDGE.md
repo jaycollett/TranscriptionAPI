@@ -576,7 +576,10 @@ is not a tolerance, so the default is 15 percent. All six measured coverages are
 pinned as tests. Six files is still not a distribution and the sweep should set
 this from the corpus.
 
-**A rescue pass, not five of them.** The redundancy the five-pass design was
+**A rescue pass, not five of them.** (The segment-count half of the trigger and the
+quarantine gate described in this section were retired later the same day; see the
+entry on retiring the per-segment anomaly count. What follows is the state as first
+built.) The redundancy the five-pass design was
 reaching for is kept, but paid for only where it is needed. If the primary pass
 scores any anomaly at all (`RESCUE_ANOMALY_SEGMENTS` 1, `RESCUE_ANOMALY_WINDOWS`
 1) exactly one rescue pass runs, so the worst case is two passes. The rescue
@@ -700,12 +703,12 @@ found, and it is the only reason word count is trusted as a tie-break.
 `VAD_LEVEL_CUTOVER_DBFS`, `VAD_MIN_SPEECH_DURATION_MS`,
 `VAD_MIN_SILENCE_DURATION_MS`, `VAD_SPEECH_PAD_MS`,
 `VAD_MIN_SILENCE_DURATION_MS_QUIET`, `VAD_SPEECH_PAD_MS_QUIET`. Rescue:
-`RESCUE_ENABLED`, `RESCUE_ANOMALY_SEGMENTS`, `RESCUE_ANOMALY_WINDOWS`,
+`RESCUE_ENABLED`, `RESCUE_ANOMALY_WINDOWS`,
 `RESCUE_TEMPERATURE_BASE`, `RESCUE_MIN_WORD_RETENTION`, `RESCUE_MAX_WORD_LOSS`.
 Anomaly windows: `ANOMALY_UNCOVERED_TOLERANCE`. De-duplication:
 `BOUNDARY_DEDUPE_ENABLED`, `BOUNDARY_DEDUPE_MIN_WORDS`,
 `BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC`.
-Gate: `ANOMALY_SEGMENTS_MAX`, `ANOMALY_RETRY_EPSILON`. Alignment:
+Alignment:
 `MFA_UTTERANCE_GAP_SEC`, `MFA_UTTERANCE_PAD_SEC`, `MFA_UTTERANCE_MIN_SEC`,
 `MFA_UTTERANCE_MAX_SEC`, `MFA_TIMEOUT_FLOOR_SEC`, `MFA_TIMEOUT_BASE_SEC`,
 `MFA_TIMEOUT_PER_SEC`. Estimate: `PROCESSING_REALTIME_FACTOR`,
@@ -976,3 +979,60 @@ to the earlier record: the C.S. Lewis quotation in tcf.20210604 was never lost. 
 scores 0.938 under the current configuration and its coverage gap was a timing
 artifact. Confirmed omissions are three, plus the two partial question-and-answer
 cases.
+
+
+## 2026-09-07 - 0.6.0: retiring the per-segment anomaly count
+
+Measured across 102 recordings and 204 decodes including repeats, `anomaly_count` was
+retired as a decision input. It never exceeded 1 on any file on either build. It
+identified **zero of seven** independently confirmed bad transcripts, while all six
+files that scored a flag were healthy and within 0.2 percent of their previous word
+counts, which makes it mildly *anti*-correlated with quality. Every one of those six
+carried a temperature flag, so the only thing that creates an anomalous segment on
+this corpus is that the ladder engaged: a fact about the decode path, not about the
+output. The window check caught six of the seven bad files, the two signals were
+perfectly disjoint (every file with a flagged segment had zero low-rate windows and
+the reverse), and all twelve rescues in the run came from the window trigger.
+
+So `ANOMALY_SEGMENTS_MAX` and `RESCUE_ANOMALY_SEGMENTS` are deleted rather than left
+configured and inert, along with the retry fingerprint machinery whose only consumer
+was the gate they fed. `anomaly_count`, `anomaly_windows` and `flagged_segments` stay
+as published diagnostics and in the log line: they cost nothing and are useful for
+review, they simply do not decide anything. **No anomaly signal can quarantine a job
+any more.** Quarantine belongs to the garbage check and the word-rate floor, which
+reject output that is unusable rather than merely suspect.
+
+**Why a threshold on that signal was never going to be stable.** A file varied by one
+word between two runs with no rescue on either, and that single word flipped its
+anomaly count. It carries a temperature flag, so the ladder engaged inside the primary
+pass, and that is the whole mechanism: the primary is reproducible only while the
+ladder stays on its first rung. Once it engages, the higher rungs sample unseeded and
+the primary itself varies. A signal that only fires when sampling occurred is
+therefore unstable exactly where it is non-zero, which is exactly where a threshold on
+it would be read. The signal is not noisy despite firing rarely; it is noisy *because*
+of what makes it fire.
+
+**Not done, deliberately: converting the cap to a rate.** One flag in a 34-segment
+recording is 2.94 per hundred while the same single flag in a 3646-segment recording
+is 0.027, so normalising would make short files look catastrophic. The
+scale-dependence is real in principle and invisible in this corpus, and the cure is
+worse than the disease.
+
+**Known gap, undetected, for 0.6.1: `tcf.20150424`.** It publishes about 15 percent
+short of its legacy transcript with zero flagged segments, zero low-rate windows and
+no uncovered gap over 20 seconds. It is the one bad file that neither signal sees.
+Publishing it is still better than the quarantine it used to receive, but the loss is
+real and nothing currently flags it for review. Any 0.6.1 work on detection should
+start here, because it is the counterexample that says the present signal set is
+incomplete rather than merely imperfect.
+
+**Harness anomaly numbers are a separate series from the service's.** Reference runs
+scored this corpus's oscillating file at 0, 1, 2 and once 5 anomalous segments, while
+the corpus run scored it 1 twice and could not reproduce a 5 across 102 files. The 5
+came from the harness path. The two are not configuration drift: the harness decode
+arguments and the service's were compared field by field and are identical, and a unit
+test pins them equal. But they are two copies of the same settings rather than one, so
+they are equal by test rather than by construction, and the harness does not exercise
+`transcribe_audio` itself. Treat harness anomaly counts as their own measurement
+series until that gap is closed, and note that the reference runs shared GPU 0 with
+the sweep container, which is the likeliest source of the extra spread.

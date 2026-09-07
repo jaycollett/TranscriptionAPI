@@ -46,11 +46,15 @@ def _clean(n=20):
 
 
 def _anomalous(n=20):
-    """A clean file with three segments that tripped the temperature ladder."""
+    """A file with a dropped passage: the shape that now fires the rescue.
+
+    Segments 8-13 carry almost no words over 60 s of speech. Their per-segment fields
+    are entirely normal, which is the point: a confident omission looks fine to every
+    signal except the word rate.
+    """
     segments = _clean(n)
-    for i in (5, 9, 14):
-        segments[i].temperature = 0.8
-        segments[i].compression_ratio = 3.1
+    for i in (8, 9, 10, 11, 12, 13):
+        segments[i] = _Seg(i * 10.0, i * 10.0 + 10.0, "and then")
     return segments
 
 
@@ -93,7 +97,7 @@ def test_an_anomalous_primary_pass_triggers_exactly_one_rescue(two_pass):
     assert result["rescue_attempted"] is True
 
 
-def test_a_rescue_that_is_still_anomalous_does_not_trigger_another(two_pass):
+def test_a_rescue_that_is_still_anomalous_does_not_trigger_another(two_pass):  # noqa: E501
     """A `while should_attempt_rescue(...)` regression would hang the worker.
 
     The assertion is the point: the failure has to be a red test, not a wedged
@@ -104,25 +108,21 @@ def test_a_rescue_that_is_still_anomalous_does_not_trigger_another(two_pass):
     assert result["rescue_attempted"] is True
 
 
-@pytest.mark.parametrize("count, windows, expected", [
-    (0, 0, False),
-    (1, 0, False),   # one flipped segment out of hundreds is not evidence
-    (2, 0, True),
-    (0, 1, True),
-    (3, 2, True),
-])
-def test_the_trigger_thresholds(transcribe_module, count, windows, expected):
-    assert transcribe_module.should_attempt_rescue(count, windows) is expected
+@pytest.mark.parametrize("windows, expected", [(0, False), (1, True), (3, True)])
+def test_the_trigger_thresholds(transcribe_module, windows, expected):
+    assert transcribe_module.should_attempt_rescue(windows) is expected
+
+
+def test_the_segment_count_no_longer_triggers_anything(transcribe_module):
+    """Measured across 102 recordings: it never exceeded 1, identified none of the
+    seven confirmed bad transcripts, and every one of the six files it flagged was
+    healthy. It is a diagnostic, not a decision."""
+    assert transcribe_module.should_attempt_rescue(0) is False
 
 
 def test_the_rescue_can_be_switched_off(transcribe_module, monkeypatch):
     monkeypatch.setattr(transcribe_module, "RESCUE_ENABLED", False)
-    assert transcribe_module.should_attempt_rescue(9, 9) is False
-
-
-def test_the_trigger_is_far_below_the_quarantine_gate(transcribe_module, app_module):
-    """A second opinion is cheap and a requeue is not, so the rescue must fire first."""
-    assert transcribe_module.RESCUE_ANOMALY_SEGMENTS < app_module.ANOMALY_SEGMENTS_MAX
+    assert transcribe_module.should_attempt_rescue(9) is False
 
 
 def test_a_single_low_window_is_enough_to_fire_the_rescue(transcribe_module):
@@ -133,7 +133,7 @@ def test_a_single_low_window_is_enough_to_fire_the_rescue(transcribe_module):
     above the first is ever tried. A stretch of speech carrying almost no words is the
     whole of the evidence, and the rescue is the remedy.
     """
-    assert transcribe_module.should_attempt_rescue(0, 1) is True
+    assert transcribe_module.should_attempt_rescue(1) is True
 
 
 # --------------------------------------------------------------------------------------
@@ -229,15 +229,8 @@ def test_the_returned_counts_describe_the_selected_pass(two_pass):
 
 
 def _with_dropped_passage(n=20):
-    """A clean decode with one 60 s stretch the model silently declined to transcribe.
-
-    Nothing about the segments looks wrong: normal temperature, normal compression
-    ratio, normal log-probability. Only the word rate over that stretch shows it.
-    """
-    segments = _clean(n)
-    for i in (8, 9, 10, 11, 12, 13):
-        segments[i] = _Seg(i * 10.0, i * 10.0 + 10.0, "and then")
-    return segments
+    """A clean decode with one 60 s stretch the model silently declined to transcribe."""
+    return _anomalous(n)
 
 
 def test_a_dropped_passage_fires_the_rescue_and_the_recovery_is_published(two_pass):
@@ -283,14 +276,14 @@ def test_a_rescue_that_does_not_recover_leaves_the_primary(two_pass):
 
 
 def test_a_worse_rescue_is_discarded(two_pass):
-    """A rescue that makes things worse must not be published."""
-    worse = _anomalous()
-    for segment in worse:
-        segment.temperature = 0.8
-    _calls, result = two_pass([_anomalous(), worse])
+    """A rescue that makes things worse must not be published.
+
+    Both passes drop the same passage, so the scores tie and the primary is kept.
+    """
+    _calls, result = two_pass([_anomalous(), _anomalous()])
     assert result["rescue_attempted"] is True
     assert result["rescue_selected"] is False
-    assert result["anomaly_count"] == 3
+    assert result["anomaly_windows"] >= 1
 
 
 def test_the_invariant_holds_on_the_selected_pass(two_pass):
@@ -433,7 +426,13 @@ def test_the_gate_judges_the_selected_pass_not_the_primary(app_module, db, uploa
     assert os.path.exists(str(upload_dir / f"{guid}.mp3"))
 
 
-def test_a_rescue_that_did_not_help_still_gates(app_module, db, upload_dir, monkeypatch):
+def test_a_rescue_that_did_not_help_still_publishes(app_module, db, upload_dir, monkeypatch):
+    """The rescue is the only thing an anomaly drives, and it gets exactly one go.
+
+    When it does not recover the passage the primary is kept and the file is
+    published with its counts, because a flagged transcript beats no transcript and
+    nothing about these signals is reliable enough to throw work away on.
+    """
     import uuid
 
     from conftest import get_row, insert_job
@@ -448,13 +447,19 @@ def test_a_rescue_that_did_not_help_still_gates(app_module, db, upload_dir, monk
             "rescue_attempted": True, "rescue_selected": False,
         },
     )
+    monkeypatch.setattr(app_module, "run_forced_alignment",
+                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
 
     guid = str(uuid.uuid4())
     (upload_dir / f"{guid}.mp3").write_bytes(b"fake audio")
     insert_job(db, guid, filename="sermon.mp3", status="pending")
 
-    assert app_module.process_pending_job(db.cursor(), guid, "sermon.mp3") == "pending"
-    assert get_row(db, guid)["attempt_count"] == 1
+    assert app_module.process_pending_job(db.cursor(), guid, "sermon.mp3") == "completed"
+    row = get_row(db, guid)
+    assert row["attempt_count"] == 0
+    assert row["anomaly_windows"] == 3
+    assert row["rescue_attempted"] == 1
+    assert row["rescue_selected"] == 0
 
 
 def test_the_rescue_fields_reach_both_endpoints(client, route_db):

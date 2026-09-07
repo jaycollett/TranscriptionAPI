@@ -79,25 +79,34 @@ def test_a_clean_decode_completes(app_module, db, upload_dir, stub_decode):
     assert row["anomaly_windows"] == 0
 
 
-def test_anomalies_below_the_thresholds_still_complete(app_module, db, upload_dir, stub_decode,
-                                                       monkeypatch):
-    """Four flagged segments and one low window is noise, not a collapse."""
-    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
-    stub_decode(anomaly_count=4, anomaly_windows=1)
+def test_no_anomaly_score_can_quarantine_a_job(app_module, db, upload_dir, stub_decode,
+                                              monkeypatch):
+    """Neither signal gates any more, so no combination of counts can end in silence.
+
+    The window count never could: the decode reproduces itself on its first ladder
+    rung, so requeueing re-derives the same result, which is how tcf.20150424 spent
+    510 s of GPU to publish nothing. The per-segment count was then measured across
+    102 recordings and retired, having identified none of the seven confirmed bad
+    transcripts while flagging six healthy ones.
+    """
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    stub_decode(anomaly_count=99, anomaly_windows=99)
+
     guid, status = _run(app_module, db, upload_dir)
+
     assert status == "completed"
-    assert get_row(db, guid)["anomaly_count"] == 4
+    row = get_row(db, guid)
+    assert row["attempt_count"] == 0
+    assert row["transcription"] is not None
+    # And the diagnostics are published with it, so it can still be found.
+    assert row["anomaly_count"] == 99
+    assert row["anomaly_windows"] == 99
 
 
 @pytest.mark.parametrize("windows", [1, 2, 9])
 def test_low_windows_never_requeue_however_many(app_module, db, upload_dir, stub_decode,
                                                 monkeypatch, windows):
-    """The decode is deterministic, so requeueing on this signal cannot help.
-
-    tcf.20150424 spent three attempts and 510 s of GPU re-deriving the identical
-    result and published nothing. A low-rate window now fires the rescue upstream and
-    the better pass is published; the count is stored so the job can still be found.
-    """
+    """A low-rate window fires the rescue upstream; it never sends a job back."""
     monkeypatch.setattr(app_module, "max_garbage_retries", 3)
     stub_decode(anomaly_count=0, anomaly_windows=windows)
 
@@ -106,7 +115,6 @@ def test_low_windows_never_requeue_however_many(app_module, db, upload_dir, stub
     assert status == "completed"
     row = get_row(db, guid)
     assert row["attempt_count"] == 0
-    assert row["transcription"] is not None
     assert row["anomaly_windows"] == windows
 
 
@@ -122,296 +130,34 @@ def test_a_published_low_window_is_logged_for_review(app_module, db, upload_dir,
     assert "Review the transcript for a dropped passage" in caplog.text
 
 
-def test_too_many_flagged_segments_requeues_the_job(app_module, db, upload_dir, stub_decode,
-                                                    monkeypatch):
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
-    stub_decode(anomaly_count=5, anomaly_windows=0)
+def test_flagged_segments_never_gate_but_are_still_published(app_module, db, upload_dir,
+                                                             stub_decode):
+    """The count is kept as a diagnostic precisely because it costs nothing.
 
+    It is mildly anti-correlated with quality on the corpus, so it must not decide
+    anything, but every file that scores one is worth a look.
+    """
+    stub_decode(anomaly_count=6, anomaly_windows=0,
+                flagged_segments=[{"index": 3, "start": 30.0, "end": 42.0,
+                                   "flags": ["temperature"]}])
     guid, status = _run(app_module, db, upload_dir)
 
-    assert status == "pending"
-    assert get_row(db, guid)["attempt_count"] == 1
-
-
-def test_the_gate_reason_names_the_segment_count(app_module, db, upload_dir, stub_decode,
-                                                 monkeypatch, caplog):
-    """The log line is the only record of why a good-looking transcript was thrown away."""
-    import logging
-
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    stub_decode(anomaly_count=7, anomaly_windows=3)
-    with caplog.at_level(logging.WARNING):
-        _run(app_module, db, upload_dir)
-    assert "anomaly gate" in caplog.text
-    assert "7 flagged segments" in caplog.text
-
-
-def test_an_identical_redecode_is_published_not_quarantined(app_module, db, upload_dir,
-                                                            stub_decode, monkeypatch):
-    """The tcf.20150424 case: three identical re-decodes, 510 s of GPU, nothing published.
-
-    The decode is deterministic, so a job the anomaly gate rejects re-decodes to the
-    same transcript and retrying cannot change the verdict. The first attempt still
-    requeues, because the result might not be reproducible; the second recognises
-    itself and publishes. A recording that produced 8292 plausible words must never be
-    black-holed by a quality signal.
-    """
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
-
+    assert status == "completed"
     row = get_row(db, guid)
-    assert row["status"] == "completed"
-    assert row["transcription"] is not None
-    assert len(row["transcription"].split()) == 8292
-    # The anomaly fields are published with it so the job can be found and reviewed.
-    assert row["anomaly_count"] == 9
-    assert row["anomaly_windows"] == 4
+    assert row["anomaly_count"] == 6
+    assert json.loads(row["flagged_segments"])[0]["flags"] == ["temperature"]
 
 
-def test_the_publish_despite_anomalies_is_logged(app_module, db, upload_dir, stub_decode,
-                                                 monkeypatch, caplog):
-    import logging
-
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    app_module.process_pending_job(db.cursor(), guid, filename)
-    with caplog.at_level(logging.WARNING):
-        app_module.process_pending_job(db.cursor(), guid, filename)
-
-    assert "Publishing" in caplog.text
-    assert "reproduced the previous attempt exactly" in caplog.text
-    assert "8292 words" in caplog.text
-
-
-def test_a_rescue_published_file_still_matches_across_attempts(app_module, db, upload_dir,
-                                                              monkeypatch):
-    """H1: the retry stop must key on the pass that reproduces itself.
-
-    The primary decodes at temperature 0.0 and beam-searches, so it is
-    deterministic. The rescue decodes from 0.2, where faster-whisper samples, and no
-    seed is set anywhere, so a rescue-published transcript differs on every attempt.
-    Fingerprinting the selected pass would therefore never match on exactly the files
-    the rescue exists for, and they would burn three decode pairs and quarantine with
-    nothing published.
-    """
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    counter = {"n": 0}
-
-    def rescue_published(path, guid):
-        counter["n"] += 1
-        return {
-            # The published transcript is the sampled rescue: different every time.
-            "transcription": _prose(8290 + counter["n"]),
-            "timings": TIMINGS, "segments": TIMINGS, "duration_sec": 3000.0,
-            "anomaly_count": 9, "anomaly_windows": 0, "flagged_segments": [],
-            "rescue_attempted": True, "rescue_selected": True,
-            "mean_logprob": -0.30 - counter["n"] * 0.001,
-            # The primary is identical on every attempt, which is the point.
-            "primary_words": 8100,
-            "primary_mean_logprob": -0.412345678901,
-            "primary_anomaly_count": 9,
-        }
-
-    monkeypatch.setattr(app_module, "transcribe_audio", rescue_published)
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed", \
-        "the primary reproduced itself, so the second attempt must publish"
-
-    row = get_row(db, guid)
-    assert row["transcription"] is not None
-    assert row["anomaly_count"] == 9
-
-
-def test_the_final_attempt_publishes_even_when_the_decode_varies(app_module, db, upload_dir,
-                                                                 monkeypatch):
-    """H1, belt and braces: a varying decode must not run out of attempts into silence."""
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    counter = {"n": 0}
-
-    def varying(path, guid):
-        counter["n"] += 1
-        return {
-            "transcription": _prose(5000 + counter["n"]),
-            "timings": TIMINGS, "segments": TIMINGS, "duration_sec": 2000.0,
-            "anomaly_count": 9, "anomaly_windows": 0, "flagged_segments": [],
-            # Even the primary differs every time, so the fingerprint never matches.
-            "primary_words": 5000 + counter["n"],
-            "primary_mean_logprob": -0.4 - counter["n"],
-            "primary_anomaly_count": 9,
-        }
-
-    monkeypatch.setattr(app_module, "transcribe_audio", varying)
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    # Third attempt is the last; quarantine here would deliver nothing at all.
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
-    assert get_row(db, guid)["transcription"] is not None
-
-
-def test_a_rescue_must_not_quarantine_a_file_the_primary_would_clear(app_module, db,
-                                                                     upload_dir, monkeypatch):
-    """H2: selection ranks on count plus windows, the gate reads the count alone.
-
-    A rescue that trades segment flags for windows (four flags and three windows
-    against six flags and none) wins selection on the total and then trips the segment
-    cap. The retention guards do not catch it because that rescue has more words.
-    """
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
-    monkeypatch.setattr(
-        app_module, "transcribe_audio",
-        lambda path, guid: {
-            "transcription": _prose(4200), "timings": TIMINGS, "segments": TIMINGS,
-            "duration_sec": 1500.0,
-            # The published rescue: six flags, no windows. Over the cap.
-            "anomaly_count": 6, "anomaly_windows": 0, "flagged_segments": [],
-            "rescue_attempted": True, "rescue_selected": True,
-            "mean_logprob": -0.2,
-            # The primary: four flags, three windows. Under the cap.
-            "primary_words": 4000, "primary_mean_logprob": -0.25,
-            "primary_anomaly_count": 4,
-        },
-    )
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed", \
-        "the primary was under the cap, so the rescue must not cause a quarantine"
-    assert get_row(db, guid)["attempt_count"] == 0
-
-
-def test_both_passes_over_the_cap_still_requeues(app_module, db, upload_dir, monkeypatch):
-    """The gate is not disabled, only narrowed to cases the primary agrees with."""
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    monkeypatch.setattr(app_module, "ANOMALY_SEGMENTS_MAX", 5)
-    monkeypatch.setattr(
-        app_module, "transcribe_audio",
-        lambda path, guid: {
-            "transcription": _prose(4200), "timings": TIMINGS, "segments": TIMINGS,
-            "duration_sec": 1500.0,
-            "anomaly_count": 7, "anomaly_windows": 0, "flagged_segments": [],
-            "mean_logprob": -0.2,
-            "primary_words": 4200, "primary_mean_logprob": -0.2,
-            "primary_anomaly_count": 7,
-        },
-    )
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-
-
-def test_a_changing_anomalous_result_requeues_then_publishes(app_module, db, upload_dir,
-                                                             monkeypatch):
-    """The anomaly gate can requeue, but it can no longer end in silence.
-
-    A decode that differs each time has not proved retrying is futile, so it gets its
-    retries. What changed is the terminal state: on the final attempt it publishes
-    with the anomaly fields set instead of quarantining, because a flagged transcript
-    beats no transcript and the genuinely unusable cases are rejected upstream.
-    """
-    monkeypatch.setattr(app_module, "max_garbage_retries", 2)
-    counter = {"n": 0}
-
-    def varying(path, guid):
-        counter["n"] += 1
-        return {
-            "transcription": _prose(200 + counter["n"]),
-            "timings": TIMINGS,
-            "segments": TIMINGS,
-            "duration_sec": 100.0,
-            "anomaly_count": 9,
-            "anomaly_windows": 4,
-            "flagged_segments": [],
-            "mean_logprob": -0.5 - counter["n"],
-            "primary_words": 200 + counter["n"],
-            "primary_mean_logprob": -0.5 - counter["n"],
-            "primary_anomaly_count": 9,
-        }
-
-    monkeypatch.setattr(app_module, "transcribe_audio", varying)
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
-    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
-
-    row = get_row(db, guid)
-    assert row["transcription"] is not None
-    assert row["anomaly_count"] == 9, "and it is flagged, so it can be found"
-
-
-def test_the_anomaly_gate_never_quarantines(app_module, db, upload_dir, monkeypatch):
-    """Whatever the counts, this signal cannot end with nothing published.
-
-    Quarantine is reserved for the garbage check and the word-rate floor, which
-    reject output that is genuinely unusable rather than merely suspect.
-    """
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    counter = {"n": 0}
-
-    def varying(path, guid):
-        counter["n"] += 1
-        return {
-            "transcription": _prose(300 + counter["n"]), "timings": TIMINGS,
-            "segments": TIMINGS, "duration_sec": 120.0,
-            "anomaly_count": 99, "anomaly_windows": 99, "flagged_segments": [],
-            "mean_logprob": -0.5 - counter["n"],
-            "primary_words": 300 + counter["n"],
-            "primary_mean_logprob": -0.5 - counter["n"],
-            "primary_anomaly_count": 99,
-        }
-
-    monkeypatch.setattr(app_module, "transcribe_audio", varying)
-    monkeypatch.setattr(app_module, "run_forced_alignment",
-                        lambda p, t, g, d=None: (TIMINGS, True, {"agree250": 0.6}))
-
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    statuses = [app_module.process_pending_job(db.cursor(), guid, filename)
-                for _ in range(3)]
-    assert "quarantined" not in statuses
-    assert statuses[-1] == "completed"
+def test_the_retired_knobs_are_gone(app_module, transcribe_module):
+    """Deleted rather than left inert, so nobody tunes a dead threshold."""
+    assert not hasattr(app_module, "ANOMALY_SEGMENTS_MAX")
+    assert not hasattr(app_module, "ANOMALY_RETRY_EPSILON")
+    assert not hasattr(app_module, "anomaly_fingerprint")
+    assert not hasattr(app_module, "same_anomaly_result")
+    assert not hasattr(transcribe_module, "RESCUE_ANOMALY_SEGMENTS")
+    # The two that carry the work are kept.
+    assert hasattr(transcribe_module, "RESCUE_ANOMALY_WINDOWS")
+    assert hasattr(transcribe_module, "ANOMALY_WINDOW_MIN_WPS")
 
 
 def test_the_garbage_check_and_word_rate_floor_still_quarantine(app_module, db, upload_dir,
@@ -434,37 +180,6 @@ def test_the_garbage_check_and_word_rate_floor_still_quarantine(app_module, db, 
 
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "quarantined"
-
-
-@pytest.mark.parametrize("previous, current, same", [
-    ("8292:-0.123456789012", "8292:-0.123456789012", True),
-    ("8292:-0.123456789012", "8292:-0.123456700000", True),    # inside the epsilon
-    ("8292:-0.123456789012", "8292:-0.223456789012", False),
-    ("8292:-0.123456789012", "8291:-0.123456789012", False),   # a different word count
-    (None, "8292:-0.1", False),
-    ("", "8292:-0.1", False),
-    ("8292:none", "8292:none", True),
-    ("8292:none", "8292:-0.1", False),
-    ("8292:garbage", "8292:-0.1", False),
-])
-def test_same_anomaly_result(app_module, previous, current, same):
-    assert app_module.same_anomaly_result(previous, current) is same
-
-
-def test_the_fingerprint_survives_the_requeue(app_module, db, upload_dir, stub_decode,
-                                              monkeypatch):
-    """It is cleared with the transcript and the whole check stops working."""
-    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
-    stub_decode(anomaly_count=9, anomaly_windows=4, words=8292)
-    guid = str(uuid.uuid4())
-    filename = _make_audio(upload_dir, guid)
-    insert_job(db, guid, filename=filename, status="pending")
-
-    app_module.process_pending_job(db.cursor(), guid, filename)
-
-    cur = db.cursor()
-    cur.execute("SELECT last_anomaly_fingerprint FROM transcriptions WHERE guid = ?", (guid,))
-    assert cur.fetchone()[0] is not None
 
 
 def test_a_missing_anomaly_count_does_not_gate(app_module, db, upload_dir, monkeypatch):

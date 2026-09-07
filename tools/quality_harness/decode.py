@@ -303,7 +303,7 @@ def run_with_rescue(model, audio, kwargs, duration, result, speech_intervals=Non
                              speech_intervals=speech_intervals)
     passes, runs = [primary], [primary_run]
 
-    attempted = should_attempt_rescue(primary["anomaly_count"], primary["anomaly_windows"])
+    attempted = should_attempt_rescue(primary["anomaly_windows"])
     if attempted:
         log.info(
             "primary scored anomaly_count=%d anomaly_windows=%d; running the rescue pass",

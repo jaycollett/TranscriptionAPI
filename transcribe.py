@@ -189,15 +189,18 @@ LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 # Anomaly-triggered rescue pass. The five-pass decode bought redundancy by paying for
 # it on every file, including the 99 percent that never needed it; this buys the same
 # redundancy only where the primary pass shows evidence of trouble. Worst case is two
-# passes, still well under five. The trigger is deliberately far below the quarantine
-# gate (ANOMALY_SEGMENTS_MAX in app.py): a second opinion is cheap and a requeue is
-# not, so the rescue fires long before the job is at risk.
+# passes, still well under five. Nothing downstream can quarantine on an anomaly any
+# more, so this is the only thing either signal now drives: the rescue is the remedy,
+# not the punishment.
 RESCUE_ENABLED = os.getenv("RESCUE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
-# 2, not 1. At 1 the trigger sits at the minimum representable value, so a single
-# flipped segment decides the code path, and the decode is measurably not
-# bit-reproducible on long files: two runs of the identical configuration on
-# tcf.20240319b gave 3599 and 3598 words with 1 and 0 anomalous segments.
-RESCUE_ANOMALY_SEGMENTS = _env_int("RESCUE_ANOMALY_SEGMENTS", 2)
+# The low-rate window is the whole trigger. The per-segment anomaly count was measured
+# across 102 recordings and 204 decodes and retired: it never exceeded 1 on any file,
+# identified zero of seven independently confirmed bad transcripts, and all six files
+# that scored a flag were healthy and within 0.2 percent of their previous word
+# counts, so it was mildly anti-correlated with quality. Every one of those six
+# carried a temperature flag, which means the only thing that creates an anomalous
+# segment on this corpus is that the ladder engaged: a fact about the decode path, not
+# about the output. All twelve rescues in that run came from the window trigger.
 RESCUE_ANOMALY_WINDOWS = _env_int("RESCUE_ANOMALY_WINDOWS", 1)
 # The rescue ladder starts above 0.0: the primary pass already decoded this audio at
 # that rung and produced the anomalies, so repeating it is the one outcome guaranteed
@@ -1072,18 +1075,17 @@ def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=No
     }
 
 
-def should_attempt_rescue(anomaly_count, anomaly_windows):
+def should_attempt_rescue(anomaly_windows):
     """True when the primary pass looks bad enough to be worth a second opinion.
 
-    A low-rate window is deliberately enough on its own. It is the only signal that
-    can see a confident omission, and the rescue is the remedy for one: it decodes
-    with previous-text conditioning off and its ladder starting at 0.2, which are the
-    two changes measured to recover the lost read-aloud passages. A signal wired only
-    to the quarantine gate would punish the file without ever trying the fix.
+    The low-rate window is the only input. It is the only signal that can see a
+    confident omission, and the rescue is the remedy for one: it decodes with
+    previous-text conditioning off and its ladder starting at 0.2, the two changes
+    measured to recover the lost read-aloud passages.
     """
     if not RESCUE_ENABLED:
         return False
-    return anomaly_count >= RESCUE_ANOMALY_SEGMENTS or anomaly_windows >= RESCUE_ANOMALY_WINDOWS
+    return anomaly_windows >= RESCUE_ANOMALY_WINDOWS
 
 
 def rescue_decode_kwargs(primary_kwargs):
@@ -1298,11 +1300,10 @@ def transcribe_audio(file_path, guid):
     primary, speech_seconds = run_pass(decode_kwargs, "primary")
     passes = [primary]
 
-    rescue_attempted = should_attempt_rescue(primary["anomaly_count"], primary["anomaly_windows"])
+    rescue_attempted = should_attempt_rescue(primary["anomaly_windows"])
     if rescue_attempted:
         logger.warning(
-            f"Primary pass for {guid} scored anomaly_count={primary['anomaly_count']} "
-            f"(trigger {RESCUE_ANOMALY_SEGMENTS}) and anomaly_windows={primary['anomaly_windows']} "
+            f"Primary pass for {guid} scored anomaly_windows={primary['anomaly_windows']} "
             f"(trigger {RESCUE_ANOMALY_WINDOWS}); running one rescue pass with "
             f"condition_on_previous_text=False from temperature {RESCUE_TEMPERATURE_BASE}"
         )
@@ -1349,21 +1350,11 @@ def transcribe_audio(file_path, guid):
         "flagged_segments": selected["flagged_segments"],
         "rescue_attempted": rescue_attempted,
         "rescue_selected": rescue_selected,
-        # The retry check in app.py compares these across attempts: a decode that
-        # reproduces itself exactly cannot be argued out of a gate by running again.
         "mean_logprob": selected["mean_logprob"],
-        # The PRIMARY pass's figures, reported separately because the selected pass
-        # is not always a usable identity. The primary decodes at temperature 0.0,
-        # where faster-whisper beam-searches, so it is reproducible; the rescue
-        # decodes from 0.2, where faster-whisper samples, and no seed is set anywhere,
-        # so a rescue-published file differs on every attempt. Fingerprinting the
-        # selected pass would therefore never match on exactly the files the rescue
-        # exists for, and they would quarantine after burning three decode pairs.
-        # app.py also needs the primary's anomaly count, so a rescue that trades
-        # segment flags for windows cannot quarantine a file the primary would clear.
+        # The primary's own figures, for review: they say what the file looked like
+        # before the rescue ran, which is not recoverable from the published pass.
         "primary_words": primary["words"],
-        "primary_mean_logprob": primary["mean_logprob"],
-        "primary_anomaly_count": primary["anomaly_count"],
+        "primary_anomaly_windows": primary["anomaly_windows"],
         "uncovered_s": selected["uncovered_s"],
         "uncovered_max_gap_s": selected["uncovered_max_gap_s"],
         "speech_seconds": speech_seconds,

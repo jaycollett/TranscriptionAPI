@@ -411,7 +411,9 @@ def test_harness_rescue_path_uses_the_production_rule(monkeypatch, transcribe_mo
     body = ("and so the word of the Lord came to him once again saying "
             "behold I will send my messenger before your face to prepare the way")
     clean = [seg(i * 10.0, i * 10.0 + 10.0, body) for i in range(20)]
-    dirty = [seg(i * 10.0, i * 10.0 + 10.0, body, temp=0.8 if i in (2, 5) else 0.0)
+    # A dropped passage, which is what fires the rescue now: normal per-segment
+    # fields, almost no words over 60 s of speech.
+    dirty = [seg(i * 10.0, i * 10.0 + 10.0, body if i not in (8, 9, 10, 11, 12, 13) else "and then")
              for i in range(20)]
 
     runs = []
