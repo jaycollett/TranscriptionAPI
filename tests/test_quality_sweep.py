@@ -24,6 +24,7 @@ import determinism  # noqa: E402
 import legacy_eras  # noqa: E402
 import runner  # noqa: E402
 import select_files  # noqa: E402
+import service_log  # noqa: E402
 import strata  # noqa: E402
 
 
@@ -628,3 +629,196 @@ def test_stratified_comparison_handles_no_usable_cells():
     result = legacy_eras.stratified_comparison(rows)
     assert result["usable_cells"] == 0
     assert result["pooled_difference"] is None
+
+
+# --- service log harvesting ---------------------------------------------------------------
+
+GUID_A = "7e02caa2-a1a9-4ba0-9cde-c072a68d9a26"
+GUID_B = "7be50407-9e38-44ee-ad6e-c07f8dba392b"
+
+LOG_LINES = [
+    f"2026-09-07 15:40:50 - INFO - app - File a.mp3 received and saved as {GUID_A}.mp3 "
+    f"with GUID {GUID_A}. Duration: 5095.7s. Estimated processing time: 4.88 min",
+    "2026-09-07 15:41:00 - INFO - faster_whisper - Processing audio with duration 84:55.700",
+    "2026-09-07 15:41:01 - INFO - faster_whisper - VAD filter removed 01:35.500 of audio",
+    f"2026-09-07 15:41:30 - INFO - app - Seam trim for {GUID_A}: removed 2-word overlap "
+    f"'he is risen' from segment 41 following 'he is risen indeed'",
+    f"2026-09-07 15:41:31 - INFO - app - Seam trim for {GUID_A}: removed 3-word overlap "
+    f"'pray without ceasing' from segment 88 following 'pray without ceasing'",
+    f"2026-09-07 15:44:28 - INFO - app - Alignment for {GUID_A}: 11648 MFA words over 758 "
+    f"segments, agree250=0.7718, clamped=4, 103 segments on Whisper word timings",
+    f"2026-09-07 15:44:28 - INFO - app - Transcription completed for a.mp3 (GUID: {GUID_A}): "
+    "13457 words in 5095.7s (2.64 words/sec, floor 1.0), 196.1s processing, "
+    "mfa_applied=True, anomaly_count=0, anomaly_windows=0, flagged_segments=1, "
+    "rescue_attempted=False, rescue_selected=False, speech_seconds=5000.2",
+    f"2026-09-07 15:44:34 - INFO - app - File b.mp3 received and saved as {GUID_B}.mp3 "
+    f"with GUID {GUID_B}. Duration: 3875.1s.",
+    "2026-09-07 15:44:40 - INFO - faster_whisper - VAD filter removed 00:10.000 of audio",
+    f"2026-09-07 15:48:00 - INFO - app - Transcription completed for b.mp3 (GUID: {GUID_B}): "
+    "9000 words in 3875.1s (2.32 words/sec, floor 1.0), 180.0s processing, "
+    "mfa_applied=True, anomaly_count=2, rescue_attempted=True, rescue_selected=True",
+]
+
+
+def test_parse_builds_one_record_per_guid():
+    jobs = service_log.parse(LOG_LINES)
+    assert list(jobs) == [GUID_A, GUID_B]
+    assert jobs[GUID_A]["file"] == "a.mp3"
+    assert jobs[GUID_B]["file"] == "b.mp3"
+
+
+def test_parse_reads_the_completion_key_value_pairs_generically():
+    fields = service_log.parse(LOG_LINES)[GUID_A]["fields"]
+    assert fields["anomaly_count"] == 0
+    assert fields["mfa_applied"] is True
+    assert fields["rescue_selected"] is False
+    assert fields["speech_seconds"] == 5000.2
+    # A key the module never lists is still captured.
+    assert fields["flagged_segments"] == 1
+
+
+def test_parse_captures_the_alignment_counters():
+    alignment = service_log.parse(LOG_LINES)[GUID_A]["alignment"]
+    assert alignment["mfa_words"] == 11648
+    assert alignment["mfa_segments"] == 758
+    assert alignment["whisper_fallback_segments"] == 103
+    assert alignment["agree250"] == 0.7718
+    assert alignment["clamped"] == 4
+
+
+def test_parse_collects_every_dedupe_trim_with_its_overlap_and_text():
+    job = service_log.parse(LOG_LINES)[GUID_A]
+    assert job["trim_count"] == 2
+    assert job["trimmed_words"] == 5
+    first = job["trims"][0]
+    assert first["overlap_words"] == 2
+    assert "he is risen" in first["quoted"]
+    assert "he is risen indeed" in first["quoted"]
+
+
+def test_parse_attributes_vad_lines_to_the_current_job():
+    jobs = service_log.parse(LOG_LINES)
+    assert jobs[GUID_A]["vad_removed_first_s"] == pytest.approx(95.5)
+    assert jobs[GUID_B]["vad_removed_first_s"] == pytest.approx(10.0)
+
+
+def test_speech_seconds_prefers_the_logged_value_then_falls_back():
+    jobs = service_log.parse(LOG_LINES)
+    # a.mp3 logs speech_seconds directly.
+    assert jobs[GUID_A]["speech_seconds"] == pytest.approx(5000.2)
+    # b.mp3 does not, so it is duration minus what VAD removed.
+    assert jobs[GUID_B]["speech_seconds"] == pytest.approx(3875.1 - 10.0)
+
+
+def test_speech_seconds_is_none_without_either_source():
+    record = {"fields": {}, "duration_logged_s": None, "decode_duration_s": None,
+              "vad_removed_first_s": None}
+    assert service_log.speech_seconds(record) is None
+
+
+def test_by_file_keys_records_on_the_filename():
+    indexed = service_log.by_file(service_log.parse(LOG_LINES))
+    assert set(indexed) == {"a.mp3", "b.mp3"}
+    assert indexed["a.mp3"]["guid"] == GUID_A
+
+
+def test_parse_ignores_a_log_with_nothing_it_recognises():
+    assert service_log.parse(["hello", "2026-09-07 - INFO - werkzeug - GET /health 200"]) == {}
+
+
+# --- coverage and dedupe in the analyzer ---------------------------------------------------
+
+
+def service_jobs_fixture():
+    return {
+        "hold.mp3": {
+            "guid": "g1", "file": "hold.mp3", "fields": {"speech_seconds": 380.0},
+            "alignment": {"clamped": 2, "whisper_fallback_segments": 5},
+            "trim_count": 1, "trimmed_words": 3, "speech_seconds": 380.0,
+        },
+        "drop.mp3": {
+            "guid": "g2", "file": "drop.mp3", "fields": {"speech_seconds": 390.0},
+            "alignment": {}, "trim_count": 0, "trimmed_words": 0, "speech_seconds": 390.0,
+        },
+        "quiet.mp3": {
+            "guid": "g3", "file": "quiet.mp3", "fields": {"speech_seconds": 395.0},
+            "alignment": {}, "trim_count": 0, "trimmed_words": 0, "speech_seconds": 395.0,
+        },
+    }
+
+
+def state_with_spans():
+    state = fixture_state()
+    for name, span, count in (("hold.mp3", 370.0, 40), ("drop.mp3", 180.0, 20),
+                              ("quiet.mp3", 350.0, 45)):
+        state["files"][name]["derived"]["timings"] = {
+            "count": count, "non_monotonic": 0, "overlaps": 0, "text_matches": True,
+            "seg_mean_s": span / count, "seg_max_s": 20.0, "span_total_s": span,
+        }
+    return state
+
+
+def test_attach_service_log_computes_coverage_and_the_speech_rate():
+    rows = {r["file"]: r for r in analyze.build_rows(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), service_jobs_fixture()
+    )}
+    hold = rows["hold.mp3"]
+    assert hold["speech_seconds"] == 380.0
+    assert hold["coverage"] == pytest.approx(370.0 / 380.0, abs=1e-4)
+    assert hold["new_wps_speech"] == pytest.approx(1010 / 380.0, abs=1e-4)
+    assert hold["legacy_wps_speech"] == pytest.approx(1000 / 380.0, abs=1e-4)
+    assert hold["clamped"] == 2
+    assert hold["whisper_fallback_segments"] == 5
+
+
+def test_attach_service_log_leaves_everything_none_without_a_record():
+    rows = {r["file"]: r for r in analyze.build_rows(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), None
+    )}
+    assert rows["hold.mp3"]["coverage"] is None
+    assert rows["hold.mp3"]["trimmed_words"] is None
+
+
+def test_coverage_summary_counts_the_files_below_each_band():
+    rows = analyze.build_rows(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), service_jobs_fixture()
+    )
+    cov = analyze.coverage_summary(rows)
+    assert cov["measured"] == 3
+    # drop.mp3 covers 180 of 390 speech seconds, well under half; quiet.mp3 covers
+    # 350 of 395, under the 0.95 band but nowhere near the 0.5 one.
+    assert cov["counts"]["under_0.5"] == 1
+    assert cov["counts"]["under_0.95"] == 2
+    assert cov["counts"]["under_0.7"] == 1
+    assert cov["worst"][0]["file"] == "drop.mp3"
+
+
+def test_dedupe_summary_separates_the_trim_from_the_decode():
+    rows = analyze.build_rows(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), service_jobs_fixture()
+    )
+    ded = analyze.dedupe_summary(rows)
+    assert ded["measured"] == 3
+    assert ded["files_trimmed"] == 1
+    assert ded["words_removed_total"] == 3
+    entry = ded["files"][0]
+    assert entry["file"] == "hold.mp3"
+    assert entry["words"] == 1010
+    assert entry["words_before_dedupe"] == 1013
+
+
+def test_analyse_and_render_survive_a_run_with_a_service_log():
+    analysis = analyze.analyse(
+        state_with_spans(), fixture_baseline(), fixture_file_list(), service_jobs_fixture()
+    )
+    assert analysis["populations"]["overall"]["coverage"]["measured"] == 3
+    text = analyze.render_markdown(analysis)
+    assert "## Segment coverage of the VAD speech seconds" in text
+    assert "## Seam de-duplication" in text
+    assert "words before" in text
+
+
+def test_analyse_and_render_survive_a_run_without_a_service_log():
+    analysis = analyze.analyse(fixture_state(), fixture_baseline(), fixture_file_list())
+    text = analyze.render_markdown(analysis)
+    assert "Not measured: no service log was supplied." in text

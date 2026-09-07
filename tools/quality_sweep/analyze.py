@@ -31,6 +31,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import service_log  # noqa: E402
 from strata import VAD_CUTOVER_DBFS, vad_branch  # noqa: E402
 
 # A file is a regression when 0.6.0 returns more than this fraction fewer words than the
@@ -126,8 +127,8 @@ def choose_wps_split(values, floor_pct=1.0, ceiling_pct=25.0):
     }
 
 
-def build_rows(state, baseline, file_list):
-    """One flat row per attempted file, joining result, baseline and strata."""
+def build_rows(state, baseline, file_list, service_jobs=None):
+    """One flat row per attempted file, joining result, baseline, strata and the log."""
     strata = {entry["file"]: entry for entry in file_list.get("files", [])}
     for entry in file_list.get("supplementary", []):
         strata[entry["file"]] = entry
@@ -169,12 +170,56 @@ def build_rows(state, baseline, file_list):
             "timings": derived.get("timings") or {},
             "segments": (derived.get("timings") or {}).get("count"),
             "seg_mean_s": (derived.get("timings") or {}).get("seg_mean_s"),
+            "span_total_s": (derived.get("timings") or {}).get("span_total_s"),
         }
         for field in ADDITIVE_FIELDS:
             row[field] = payload.get(field, None)
             row[field + "_present"] = field in payload
+        attach_service_log(row, (service_jobs or {}).get(filename))
         rows.append(row)
     return rows
+
+
+def attach_service_log(row, job):
+    """Fold one job's harvested log record into its row.
+
+    Three things come only from the log. `speech_seconds` is what the VAD actually kept,
+    which turns into the second words-per-second figure and into the coverage ratio.
+    `coverage` is the share of that speech the emitted segments claim to cover: audio the
+    decoder emitted nothing for lands here as a shortfall, which is the omission the
+    anomaly window check was blind to. `trimmed_words` is what the seam de-duplication
+    removed, so a word delta can be split into what the decode produced and what the
+    dedupe took away afterwards.
+    """
+    row["speech_seconds"] = None
+    row["coverage"] = None
+    row["new_wps_speech"] = None
+    row["legacy_wps_speech"] = None
+    row["trim_count"] = None
+    row["trimmed_words"] = None
+    row["alignment_log"] = {}
+    row["service_log_fields"] = {}
+    if not job:
+        return row
+
+    row["service_log_fields"] = job.get("fields") or {}
+    row["alignment_log"] = job.get("alignment") or {}
+    row["trim_count"] = job.get("trim_count")
+    row["trimmed_words"] = job.get("trimmed_words")
+    speech = job.get("speech_seconds")
+    if speech:
+        row["speech_seconds"] = speech
+        if row["span_total_s"] is not None:
+            row["coverage"] = round(row["span_total_s"] / speech, 4)
+        if row["new_words"] is not None:
+            row["new_wps_speech"] = round(row["new_words"] / speech, 4)
+        if row["legacy_words"]:
+            row["legacy_wps_speech"] = round(row["legacy_words"] / speech, 4)
+    for key in ("clamped", "clamped_timings", "span_ratio_lt_0_5", "whisper_fallback_segments",
+                "mfa_words", "mfa_segments", "agree250", "utterances"):
+        if key in row["alignment_log"]:
+            row[key] = row["alignment_log"][key]
+    return row
 
 
 def completed(rows):
@@ -194,6 +239,75 @@ def regressions(rows, tolerance=REGRESSION_TOLERANCE):
     ]
     out.sort(key=lambda r: r["word_delta_pct"])
     return out
+
+
+# Coverage bands. A file whose segments cover less than this share of the VAD's speech
+# seconds has audio the decoder emitted nothing for, which is the omission the anomaly
+# window check could not see because it built its speech clock from those same segments.
+COVERAGE_BANDS = (0.5, 0.7, 0.8, 0.9, 0.95)
+
+
+def coverage_summary(rows):
+    """Segment-span coverage of the VAD's speech seconds, over the files that have both."""
+    values = [r["coverage"] for r in completed(rows) if r.get("coverage") is not None]
+    below = {
+        f"under_{band}": sum(1 for v in values if v < band) for band in COVERAGE_BANDS
+    }
+    worst = sorted(
+        (r for r in completed(rows) if r.get("coverage") is not None),
+        key=lambda r: r["coverage"],
+    )[:10]
+    return {
+        "measured": len(values),
+        "distribution": distribution(values, digits=4),
+        "counts": below,
+        "worst": [
+            {
+                "file": r["file"],
+                "coverage": r["coverage"],
+                "span_total_s": r["span_total_s"],
+                "speech_seconds": r["speech_seconds"],
+                "duration_s": r["duration_s"],
+                "anomaly_count": r.get("anomaly_count"),
+                "anomaly_windows": r.get("anomaly_windows"),
+            }
+            for r in worst
+        ],
+    }
+
+
+def dedupe_summary(rows):
+    """What the seam de-duplication removed, per file and in total.
+
+    The trim runs after the decode, so a file's word delta against the baseline is the
+    decode's contribution plus this. Separating them is the only way to tell a decode
+    that produced fewer words from a decode whose words were deleted afterwards.
+    """
+    measured = [r for r in completed(rows) if r.get("trim_count") is not None]
+    trimmed = [r for r in measured if (r.get("trim_count") or 0) > 0]
+    return {
+        "measured": len(measured),
+        "files_trimmed": len(trimmed),
+        "trims_total": sum(r["trim_count"] or 0 for r in measured),
+        "words_removed_total": sum(r["trimmed_words"] or 0 for r in measured),
+        "words_removed_per_file": distribution(
+            [r["trimmed_words"] for r in measured], digits=1
+        ),
+        "files": [
+            {
+                "file": r["file"],
+                "trim_count": r["trim_count"],
+                "trimmed_words": r["trimmed_words"],
+                "words": r["new_words"],
+                "words_before_dedupe": (
+                    (r["new_words"] or 0) + (r["trimmed_words"] or 0)
+                    if r["new_words"] is not None else None
+                ),
+                "word_delta_pct": r["word_delta_pct"],
+            }
+            for r in sorted(trimmed, key=lambda r: -(r["trimmed_words"] or 0))
+        ],
+    }
 
 
 def rescue_detail(rows):
@@ -296,6 +410,10 @@ def summarise_population(rows):
         "rescue_detail": rescue_detail(rows),
         "segments": distribution([r.get("segments") for r in completed(rows)], digits=1),
         "seg_mean_s": distribution([r.get("seg_mean_s") for r in completed(rows)]),
+        "coverage": coverage_summary(rows),
+        "new_wps_speech": distribution([r.get("new_wps_speech") for r in completed(rows)]),
+        "legacy_wps_speech": distribution([r.get("legacy_wps_speech") for r in comp]),
+        "dedupe": dedupe_summary(rows),
         "mfa_applied": rate(rows, "mfa_applied"),
         "attempt_count": counter_of(rows, "attempt_count"),
         "anomaly_count": counter_of(rows, "anomaly_count"),
@@ -339,6 +457,14 @@ def level_table(rows, lo=LEVEL_TABLE_LO, hi=LEVEL_TABLE_HI):
             "segments_median": percentile(
                 [r.get("segments") for r in completed(members)], 50
             ),
+            "coverage_median": percentile(
+                [r.get("coverage") for r in completed(members)], 50
+            ),
+            "vad_threshold_logged": sorted({
+                str(r["service_log_fields"].get("vad_threshold"))
+                for r in members
+                if (r.get("service_log_fields") or {}).get("vad_threshold") is not None
+            }) or None,
             "seg_mean_s_median": percentile(
                 [r.get("seg_mean_s") for r in completed(members)], 50
             ),
@@ -401,8 +527,8 @@ def cutover_view(rows, edge=VAD_CUTOVER_DBFS, band=2.0):
     }
 
 
-def analyse(state, baseline, file_list):
-    rows = build_rows(state, baseline, file_list)
+def analyse(state, baseline, file_list, service_jobs=None):
+    rows = build_rows(state, baseline, file_list, service_jobs)
     comp = comparable(rows)
     split = choose_wps_split([r["legacy_wps"] for r in comp])
 
@@ -480,7 +606,8 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     out.append("")
     headers = [
         "population", "files", "completed", "comparable", "word delta median",
-        "delta pct median", "legacy wps median", "new wps median", "regressions",
+        "delta pct median", "legacy wps median", "new wps median",
+        "new wps over speech", "regressions",
     ]
     body = []
     for name, pop in analysis["populations"].items():
@@ -493,6 +620,7 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
             _fmt(pop["word_delta_pct"].get("median"), 4),
             _fmt(pop["legacy_wps"].get("median")),
             _fmt(pop["new_wps"].get("median")),
+            _fmt(pop["new_wps_speech"].get("median")),
             str(pop["regressions"]["count"]),
         ])
     out.append(_table(headers, body))
@@ -528,12 +656,12 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     out.append("")
     headers = [
         "dBFS", "profile", "files", "done", "words", "legacy wps", "new wps",
-        "delta pct", "segments", "seg mean s", "anomaly mean", "regr", "flagged",
+        "delta pct", "segments", "seg mean s", "coverage", "anomaly mean", "regr", "flagged",
     ]
     body = []
     for entry in analysis["level_table"]:
         if entry.get("dbfs_lo") is None:
-            body.append(["unknown", "-", str(entry["files"])] + ["-"] * 10)
+            body.append(["unknown", "-", str(entry["files"])] + ["-"] * 11)
             continue
         body.append([
             f"{entry['dbfs_lo']} to {entry['dbfs_hi']}",
@@ -546,6 +674,7 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
             _fmt(entry["word_delta_pct_median"], 4),
             _fmt(entry["segments_median"], 0),
             _fmt(entry["seg_mean_s_median"], 2),
+            _fmt(entry["coverage_median"], 3),
             _fmt(entry["anomaly_count_mean"]),
             str(entry["regressions"]),
             str(entry["files_flagged"]),
@@ -575,6 +704,61 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
                 str(arm["regressions"]),
             ])
     out.append(_table(headers, body))
+    out.append("")
+
+    overall = analysis["populations"]["overall"]
+    cov = overall["coverage"]
+    out.append("## Segment coverage of the VAD speech seconds")
+    out.append("")
+    if cov["measured"]:
+        counts = ", ".join(f"{k.replace('under_', 'under ')}: {v}" for k, v in cov["counts"].items())
+        out.append(
+            f"Measured on {cov['measured']} files. Coverage median "
+            f"{_fmt(cov['distribution'].get('median'), 4)}, p5 "
+            f"{_fmt(cov['distribution'].get('p5'), 4)}, min "
+            f"{_fmt(cov['distribution'].get('min'), 4)}. Files below each band: {counts}."
+        )
+        out.append("")
+        out.append(
+            "Coverage is the total span of the emitted segments over the seconds VAD kept. "
+            "A shortfall is audio the decoder emitted nothing for, which is exactly what "
+            "the segment-derived speech clock could not see."
+        )
+        out.append("")
+        headers = ["file", "coverage", "span total s", "speech s", "dur s",
+                   "anomaly", "anomaly windows"]
+        body = [
+            [r["file"], _fmt(r["coverage"], 4), _fmt(r["span_total_s"], 1),
+             _fmt(r["speech_seconds"], 1), _fmt(r["duration_s"], 0),
+             _fmt(r["anomaly_count"], 0), _fmt(r["anomaly_windows"], 0)]
+            for r in cov["worst"]
+        ]
+        out.append(_table(headers, body))
+    else:
+        out.append("Not measured: no service log was supplied.")
+    out.append("")
+
+    ded = overall["dedupe"]
+    out.append("## Seam de-duplication")
+    out.append("")
+    if ded["measured"]:
+        out.append(
+            f"{ded['files_trimmed']} of {ded['measured']} files had a trim. "
+            f"{ded['trims_total']} trims removed {ded['words_removed_total']} words in total."
+        )
+        out.append("")
+        if ded["files"]:
+            headers = ["file", "trims", "words removed", "words after",
+                       "words before", "delta pct vs legacy"]
+            body = [
+                [r["file"], str(r["trim_count"]), str(r["trimmed_words"]),
+                 _fmt(r["words"], 0), _fmt(r["words_before_dedupe"], 0),
+                 _fmt(r["word_delta_pct"], 4)]
+                for r in ded["files"]
+            ]
+            out.append(_table(headers, body))
+    else:
+        out.append("Not measured: no service log was supplied.")
     out.append("")
 
     detail = analysis["populations"]["overall"]["rescue_detail"]
@@ -620,8 +804,8 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
     out.append("")
     headers = [
         "file", "outcome", "dur s", "dBFS", "era", "legacy words", "new words",
-        "delta pct", "legacy wps", "new wps", "segs", "seg mean s", "wall s", "anomaly",
-        "resc a/s", "flags", "mfa", "attempts",
+        "delta pct", "legacy wps", "new wps", "wps speech", "coverage", "trims",
+        "segs", "seg mean s", "wall s", "anomaly", "resc a/s", "flags", "mfa", "attempts",
     ]
     body = []
     for row in sorted(analysis["rows"], key=lambda r: (r["word_delta_pct"] is None,
@@ -638,6 +822,9 @@ def render_markdown(analysis, title="TranscriptionAPI 0.6.0 validation sweep"):
             _fmt(row["word_delta_pct"], 4),
             _fmt(row["legacy_wps"]),
             _fmt(row["new_wps"]),
+            _fmt(row.get("new_wps_speech")),
+            _fmt(row.get("coverage"), 3),
+            _fmt(row.get("trimmed_words"), 0),
             _fmt(row.get("segments"), 0),
             _fmt(row.get("seg_mean_s"), 2),
             _fmt(row["wall_s"], 1),
@@ -660,6 +847,11 @@ def main(argv=None):
     parser.add_argument("--out-json", required=True)
     parser.add_argument("--out-md", required=True)
     parser.add_argument("--title", default="TranscriptionAPI 0.6.0 validation sweep")
+    parser.add_argument(
+        "--service-log",
+        help="the sweep container's captured log, for speech seconds, the "
+             "de-duplication trims and the alignment counters",
+    )
     args = parser.parse_args(argv)
 
     with open(args.results) as handle:
@@ -669,7 +861,13 @@ def main(argv=None):
     with open(args.file_list) as handle:
         file_list = json.load(handle)
 
-    analysis = analyse(state, baseline, file_list)
+    service_jobs = None
+    if args.service_log and os.path.exists(args.service_log):
+        with open(args.service_log, errors="replace") as handle:
+            service_jobs = service_log.by_file(service_log.parse(handle))
+        print(f"harvested {len(service_jobs)} jobs from {args.service_log}")
+
+    analysis = analyse(state, baseline, file_list, service_jobs)
     with open(args.out_json, "w") as handle:
         json.dump(analysis, handle, indent=1, sort_keys=False)
         handle.write("\n")

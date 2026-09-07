@@ -206,6 +206,31 @@ python3 determinism.py --run-a /home/jay/sweep/run/state.json \
     --out-json /home/jay/sweep/determinism.json --out-md /home/jay/sweep/determinism.md
 ```
 
+### What the container log adds
+
+Three of the measurements are not in the `/status` payload at all, so `run_sweep.sh`
+captures the sweep container's whole log to `run/service.log` and `service_log.py` turns
+it into one record per GUID.
+
+- **Speech seconds**, from the service's own field where it logs one and otherwise from
+  the duration minus what the VAD filter removed. This gives words per second computed
+  both ways, over total duration and over speech, so the quarantine floor can be
+  recalibrated before it moves.
+- **Segment-span coverage**: the total span of the emitted segments over those speech
+  seconds. A shortfall is audio the decoder emitted nothing for. This is the measurement
+  that says whether the omission the anomaly window check was blind to happens in real
+  recordings, and how often: a check that builds its speech clock from the segments
+  themselves can never see it, so it has to be measured from outside.
+- **Every seam de-duplication trim**, with the overlap length and both segments' text,
+  summed per file. A file's word delta against its baseline is the decode's contribution
+  plus whatever the trim removed afterwards, and those are different failures; the report
+  separates them and lists every trimmed phrase so a deletion of genuine repetition can
+  be recognised on sight.
+
+The log parser scans `key=value` pairs generically rather than listing the keys it knows,
+so a counter the image starts reporting (a VAD profile, a clamp count, a span ratio) is
+picked up without a change here.
+
 The runner records every key `/status` returns, so the additive 0.6.0 fields
 (`anomaly_count`, `anomaly_windows`, `flagged_segments`, `rescue_attempted`,
 `rescue_selected`) land in the results without a code change here. The analyzer
@@ -224,6 +249,7 @@ image reports the new fields as absent rather than as clean.
 | `file_list.json` | the committed 100-file sample with every stratum label and reason |
 | `runner.py` | submit, poll, record; resumable, stdlib only |
 | `analyze.py` | joins results to the baseline, writes the report and the results JSON |
+| `service_log.py` | harvests speech seconds, de-duplication trims and alignment counters from the container log |
 | `determinism.py` | pairs two runs of the same files: word, anomaly and rescue-decision spread |
 | `legacy_eras.py` | single-pass against multi-pass legacy words per second, raw and stratified |
 | `norm.py` | the harness's word normalisation, so both sides normalise identically |

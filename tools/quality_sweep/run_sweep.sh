@@ -93,12 +93,19 @@ docker run -dit \
     "${IMAGE}" >/dev/null
 
 cleanup() {
+    kill "${LOG_PID:-0}" 2>/dev/null || true
     if [ "${KEEP}" != "--keep-running" ]; then
         docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
         echo "removed ${CONTAINER}"
     fi
 }
 trap cleanup EXIT
+
+# Capture the container's whole log for the run. Speech seconds, the de-duplication
+# trims and the alignment counters are only there, not in the /status payload.
+SERVICE_LOG="${OUT_DIR}/service.log"
+docker logs -f "${CONTAINER}" > "${SERVICE_LOG}" 2>&1 &
+LOG_PID=$!
 
 deadline=$(( $(date +%s) + HEALTH_TIMEOUT_SEC ))
 while :; do
@@ -142,8 +149,15 @@ python3 "${HERE}/analyze.py" \
     --results "${OUT_DIR}/state.json" \
     --baseline "${SWEEP_ROOT}/legacy_baseline.json" \
     --file-list "${HERE}/file_list.json" \
+    --service-log "${SERVICE_LOG}" \
     --out-json "${SWEEP_ROOT}/analysis.json" \
     --out-md "${SWEEP_ROOT}/report.md"
+
+python3 "${HERE}/determinism.py" \
+    --run-a "${OUT_DIR}/state.json" \
+    --run-b "${REPEAT_DIR}/state.json" \
+    --out-json "${SWEEP_ROOT}/determinism.json" \
+    --out-md "${SWEEP_ROOT}/determinism.md"
 
 # The container runs as root, so the uploaded copies and the _aligned directories it
 # leaves behind are root-owned inside root-owned directories and the runner (running as

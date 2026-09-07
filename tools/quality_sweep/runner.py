@@ -130,7 +130,7 @@ def timing_stats(timings):
     """
     if not isinstance(timings, list) or not timings:
         return {"count": 0, "non_monotonic": None, "overlaps": None, "text_matches": None,
-                "seg_mean_s": None, "seg_max_s": None}
+                "seg_mean_s": None, "seg_max_s": None, "span_total_s": None}
     starts, ends = [], []
     for entry in timings:
         if not isinstance(entry, dict):
@@ -158,6 +158,10 @@ def timing_stats(timings):
         "overlaps": overlaps,
         "seg_mean_s": round(sum(spans) / len(spans), 3) if spans else None,
         "seg_max_s": round(max(spans), 3) if spans else None,
+        # Total time the segments claim to cover. Against the VAD's own speech seconds
+        # this is the omission measure: audio the decoder emitted nothing for shows up
+        # here as coverage well under 1.
+        "span_total_s": round(sum(spans), 3) if spans else None,
     }
 
 
