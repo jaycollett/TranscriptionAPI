@@ -15,20 +15,19 @@
 #     They ship C headers and static archives; nothing in this image compiles
 #     against either one, so they were pure scan surface.
 #
-# Deliberately NOT changed, because this image cannot be built or started on
-# the hardening workstation (it needs linux/amd64 + an NVIDIA GPU, and the
-# build used to require a Hugging Face token). Each of these is worth doing on a
-# machine that can actually verify it:
-#   * cuda-toolkit-12-2 -> cuda-runtime-12-2 + cuda-libraries-12-2. The full
-#     toolkit ships nvcc, the profilers and the samples; ctranslate2 and
-#     faster-whisper use prebuilt kernels and should not need any of it. This
-#     is the single largest remaining CVE contributor in the image.
-#   * a non-root USER. The MFA base runs as root and writes to /mfa and the
-#     model cache at runtime; switching users needs a real GPU run to confirm.
-#
-# 2026-09-07: speaker diarization (pyannote) was removed, and with it the
-# HUGGINGFACE_TOKEN_BUILD build arg and the gated-model download. The build
-# now needs no secret at all, so CI can rebuild the image unattended.
+# 2026-09-07 (0.5.2): two of the deferred items above are now done.
+#   * cuda-toolkit-12-2 -> cuda-libraries-12-2. The toolkit meta-package pulled in
+#     cuda-compiler, cuda-tools (Nsight Systems, whose bundled Go binary carried
+#     64 of the 80 Trivy findings on the 0.4.0 image), cuda-libraries-dev and
+#     cuda-documentation. Nothing here compiles CUDA: torch ships its own CUDA 13
+#     libraries via pip, and ctranslate2 dlopens libcudart/libcublas 12 and
+#     libcudnn 9 at runtime, all of which cuda-libraries-12-2 plus
+#     libcudnn9-cuda-12 provide under /usr/local/cuda/lib64 and /usr/lib.
+#     cuda-runtime-12-2 was NOT used: apt-cache shows it depends on cuda-drivers,
+#     which would install the NVIDIA driver inside the container.
+#   * CUDA_LAUNCH_BLOCKING=1 removed. It serialises every kernel launch and is a
+#     debugging setting; it cost throughput on all five Whisper passes.
+# Still deferred: a non-root USER (the MFA base runs as root and writes to /mfa).
 FROM mmcauliffe/montreal-forced-aligner:v3.4.2
 
 # Switch to root to install packages
@@ -39,7 +38,6 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     CUDA_VISIBLE_DEVICES=0 \
     PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
-    CUDA_LAUNCH_BLOCKING=1 \
     MFA_MODEL_PATH="/mfa/pretrained_models"
 
 # Add the NVIDIA package repository, then install the system dependencies and
@@ -51,7 +49,7 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/
     apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg cmake git sox ffmpeg unzip \
     libsndfile1 \
-    cuda-toolkit-12-2 libcudnn9-cuda-12 \
+    cuda-libraries-12-2 libcudnn9-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
 # Ensure NVIDIA paths are available
