@@ -17,7 +17,7 @@
 #
 # Deliberately NOT changed, because this image cannot be built or started on
 # the hardening workstation (it needs linux/amd64 + an NVIDIA GPU, and the
-# build requires a Hugging Face token). Each of these is worth doing on a
+# build used to require a Hugging Face token). Each of these is worth doing on a
 # machine that can actually verify it:
 #   * cuda-toolkit-12-2 -> cuda-runtime-12-2 + cuda-libraries-12-2. The full
 #     toolkit ships nvcc, the profilers and the samples; ctranslate2 and
@@ -25,9 +25,10 @@
 #     is the single largest remaining CVE contributor in the image.
 #   * a non-root USER. The MFA base runs as root and writes to /mfa and the
 #     model cache at runtime; switching users needs a real GPU run to confirm.
-#   * HUGGINGFACE_TOKEN_BUILD is still a build ARG, which means the token is
-#     recorded in image history. It should become a BuildKit `--mount=type=
-#     secret`, which also requires updating runDocker.sh's `--build-arg` call.
+#
+# 2026-09-07: speaker diarization (pyannote) was removed, and with it the
+# HUGGINGFACE_TOKEN_BUILD build arg and the gated-model download. The build
+# now needs no secret at all, so CI can rebuild the image unattended.
 FROM mmcauliffe/montreal-forced-aligner:v3.4.1
 
 # Switch to root to install packages
@@ -69,16 +70,6 @@ WORKDIR /app
 # Copy and install dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Accept Hugging Face token as build argument (only used during build)
-ARG HUGGINGFACE_TOKEN_BUILD
-ENV HUGGINGFACE_TOKEN_BUILD=${HUGGINGFACE_TOKEN_BUILD}
-
-# Download pyannote models to avoid runtime Hugging Face token requirement
-RUN python -c "import os; from pyannote.audio import Pipeline; from huggingface_hub import snapshot_download; os.makedirs('/app/models/pyannote', exist_ok=True); hf_token = os.environ.get('HUGGINGFACE_TOKEN_BUILD'); assert hf_token, 'HUGGINGFACE_TOKEN build argument is required'; snapshot_download(repo_id='pyannote/speaker-diarization-3.1', cache_dir='/app/models/pyannote', token=hf_token); print('Pyannote models downloaded successfully')"
-
-# Clear the build token environment variable for security
-ENV HUGGINGFACE_TOKEN_BUILD=""
 
 # Download Whisper models to cache them
 RUN python -c "from faster_whisper import WhisperModel; import os; os.makedirs('/app/models/whisper', exist_ok=True); model = WhisperModel('large-v3-turbo', download_root='/app/models/whisper'); print('Whisper models downloaded successfully')"
