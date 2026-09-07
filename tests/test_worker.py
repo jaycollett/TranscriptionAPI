@@ -57,7 +57,7 @@ def test_cleanup_removes_old_terminal_rows_and_their_files(app_module, db, uploa
     _touch_job_files(upload_dir, fresh_done)
     _touch_job_files(upload_dir, old_pending)
 
-    deleted, swept = app_module.cleanup_old_jobs(db.cursor(), str(upload_dir))
+    deleted, _swept = app_module.cleanup_old_jobs(db.cursor(), str(upload_dir))
 
     assert deleted == 2
     assert get_row(db, old_done) is None

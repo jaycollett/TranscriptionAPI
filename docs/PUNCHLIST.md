@@ -227,7 +227,7 @@ Recommended change: add a `test` job (pytest plus `ruff check`) on push and
 pull_request, and make the publish job `needs` it. Backfill route tests with
 Flask's test client (the conftest stubs already make `import app` cheap).
 Verify: Mac, the suite runs in under a second today.
-Status: Open
+Status: Done in 0.5.0 (Run the test suite and lint in CI ahead of the image build)
 
 **17. runDocker.sh takes the service down for the whole build and has no rollback**
 `runDocker.sh`. It stops and removes the container before `docker build`; no

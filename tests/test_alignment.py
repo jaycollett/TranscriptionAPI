@@ -53,7 +53,7 @@ def test_mfa_command_uses_clean_flag_and_input_dir(app_module, upload_dir, align
 
     monkeypatch.setattr(app_module.subprocess, "run", fake_run)
 
-    segments, applied = app_module.run_forced_alignment(audio, SEGMENTS, guid)
+    _segments, applied = app_module.run_forced_alignment(audio, SEGMENTS, guid)
 
     assert applied is True
     assert len(commands) == 1

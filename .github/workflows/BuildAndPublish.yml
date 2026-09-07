@@ -9,8 +9,13 @@ on:
     - cron: '10 5 * * 5'
   workflow_dispatch:
 jobs:
+  # The image is only built and pushed on a green test suite and lint run.
+  test:
+    uses: ./.github/workflows/Test.yml
+
   push_to_registry:
     name: Push Docker image to GitHub Packages
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Free Disk Space (Ubuntu)
