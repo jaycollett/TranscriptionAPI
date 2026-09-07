@@ -1,3 +1,6 @@
 *.pyc
 /tmp
 test.mp3
+
+# Project-local agent memory, never part of the service
+.claude/

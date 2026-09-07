@@ -13,14 +13,6 @@ from pydub import AudioSegment  # Audio file manipulation
 from datetime import datetime, timedelta, timezone
 import logging  # Logging for debugging and monitoring
 
-# Optional import for speaker diarization (graceful fallback if not available)
-try:
-    from pyannote.audio import Pipeline
-    PYANNOTE_AVAILABLE = True
-except ImportError:
-    PYANNOTE_AVAILABLE = False
-    logging.getLogger(__name__).warning("pyannote.audio not available - speaker diarization will be disabled")
-
 
 # Configure logging
 logging.basicConfig(
@@ -42,6 +34,11 @@ db_connection_timeout = 30  # Connection timeout in seconds
 # quarantined (moved to a terminal state) instead of being requeued. This keeps a
 # single bad sermon from permanently blocking the head of the FIFO queue.
 max_garbage_retries = int(os.getenv("MAX_GARBAGE_RETRIES", "3"))
+# Words-per-second floor for the post-transcription quality gate. Normal sermon
+# material runs 2.5-2.8 words/sec; the 2026-09 decode collapse produced 0.54 and the
+# per-pass penalty in transcribe.py already treats anything under 1.4 as low. The
+# alphanumeric-ratio check alone is blind to coherent prose at half length.
+MIN_WORDS_PER_SEC = float(os.getenv("MIN_WORDS_PER_SEC", "1.0"))
 
 # Ensure database file exists before initializing
 if not os.path.exists(db_file):
@@ -208,61 +205,17 @@ def recover_stuck_jobs(cursor):
         app.logger.info("Startup recovery: no orphaned 'processing' jobs found.")
     return stuck
 
-def detect_speakers(audio_path):
-    """
-    Use pyannote-audio to detect the number of unique speakers in an audio file.
-    Returns the number of speakers detected.
-    """
-    if not PYANNOTE_AVAILABLE:
-        app.logger.warning("pyannote-audio not available, assuming single speaker")
-        return 1
-    
-    try:
-        # Load the speaker diarization pipeline from local models
-        # The model is downloaded to cache_dir during build, so use that location
-        local_model_cache = "/app/models/pyannote"
-        if os.path.exists(local_model_cache):
-            app.logger.info(f"Loading pyannote model from local cache: {local_model_cache}")
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1", cache_dir=local_model_cache)
-        else:
-            app.logger.warning("Local pyannote model cache not found, falling back to downloading from HuggingFace")
-            pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
-        
-        # Run speaker diarization
-        diarization = pipeline(audio_path)
-        
-        # Get unique speakers
-        speakers = set()
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
-            speakers.add(speaker)
-        
-        num_speakers = len(speakers)
-        app.logger.info(f"Speaker diarization detected {num_speakers} unique speakers in {audio_path}")
-        return num_speakers
-        
-    except Exception as e:
-        app.logger.warning(f"Speaker diarization failed: {e}, assuming single speaker")
-        return 1  # Assume single speaker if detection fails
-
 def run_forced_alignment(audio_path, whisper_segments, guid):
     # Use Montreal Forced Aligner to refine Whisper's segment timings
     """
     Runs Montreal Forced Aligner (MFA) to refine the timestamps from the Whisper transcript,
-    ensuring they align with Whisper's segment structure.
+    ensuring they align with Whisper's segment structure. MFA is always attempted; if it
+    fails for any reason the Whisper segments are returned unchanged.
     """
     upload_folder = app.config['UPLOAD_FOLDER']
     transcript_path = os.path.join(upload_folder, f"{guid}.txt")
     aligned_output_dir = os.path.join(upload_folder, f"{guid}_aligned")
     alignment_json_path = os.path.join(aligned_output_dir, f"{guid}.json")
-
-    # Check for multi-speaker content before running/checking MFA
-    # Use proper speaker diarization to detect multiple speakers
-    num_speakers = detect_speakers(audio_path)
-    
-    if num_speakers > 1:
-        app.logger.warning(f"Multi-speaker content detected ({num_speakers} speakers). Skipping MFA alignment to maintain accuracy.")
-        app.logger.info("Using Whisper segments only for multi-speaker audio to ensure accurate timing alignment")
-        return whisper_segments  # Skip MFA entirely for multi-speaker content
 
     # If alignment already exists, avoid re-running MFA
     if os.path.exists(alignment_json_path):
@@ -494,6 +447,17 @@ def process_pending_job(cursor, guid, filename):
             # Check for garbage transcription
             if is_garbage_transcription(transcription):
                 return handle_garbage_result(cursor, guid, "garbage transcription detected")
+
+            # Word-rate floor: coherent prose at half the expected rate passes the
+            # alphanumeric check but is still a collapsed decode. Skip clips under
+            # 30 s, where a pause or two swings the rate, and unknown durations.
+            duration_sec = result.get("duration_sec", 0) or 0
+            wps = len(transcription.split()) / duration_sec if duration_sec > 0 else 0
+            if duration_sec >= 30 and wps < MIN_WORDS_PER_SEC:
+                return handle_garbage_result(
+                    cursor, guid,
+                    f"word rate {wps:.2f} words/sec below floor {MIN_WORDS_PER_SEC}"
+                )
         except Exception as e:
             app.logger.error(f"Whisper transcription failed for {guid}: {e}")
             cursor.execute(
@@ -504,22 +468,11 @@ def process_pending_job(cursor, guid, filename):
 
         # Step 2: Run Forced Alignment (MFA) if necessary
         app.logger.info(f"Running forced alignment for {filename} (GUID: {guid})...")
-        # Check if a processed audio file exists (from noise reduction during
-        # transcription). Handle any audio format, not just MP3. Processed files are
-        # always written as MP3 by preprocess_audio_for_transcription.
-        file_root, _ = os.path.splitext(file_path)
-        processed_file_path = f"{file_root}_processed.mp3"
-        audio_file_for_mfa = processed_file_path if os.path.exists(processed_file_path) else file_path
-        app.logger.info(f"Using audio file for MFA: {audio_file_for_mfa}")
-        refined_timings = run_forced_alignment(audio_file_for_mfa, whisper_segment_timings, guid)
+        refined_timings = run_forced_alignment(file_path, whisper_segment_timings, guid)
 
-        # Garbage check again — just in case MFA corrupted it
+        # Garbage check again, in case MFA corrupted it
         if is_garbage_transcription(transcription) or not refined_timings or all(not seg.get("text") for seg in refined_timings):
             return handle_garbage_result(cursor, guid, "post-alignment transcription/timing looks corrupted")
-
-        if refined_timings is None:
-            app.logger.error(f"Forced alignment failed for {guid}. Falling back to Whisper's timings.")
-            refined_timings = whisper_segment_timings
 
         # Step 3: Update database with refined timings. Clear attempt_count so a job that
         # succeeds after earlier garbage retries is never wrongly quarantined later.
@@ -527,7 +480,11 @@ def process_pending_job(cursor, guid, filename):
             "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', attempt_count = 0, completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
             (transcription, json.dumps(refined_timings), guid)
         )
-        app.logger.info(f"Transcription completed for {filename} (GUID: {guid})")
+        app.logger.info(
+            f"Transcription completed for {filename} (GUID: {guid}): "
+            f"{len(transcription.split())} words in {duration_sec:.1f}s "
+            f"({wps:.2f} words/sec, floor {MIN_WORDS_PER_SEC})"
+        )
         return 'completed'
 
     except Exception as e:

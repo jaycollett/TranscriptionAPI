@@ -234,3 +234,82 @@ def test_process_whisper_exception_marks_error(app_module, db, upload_dir, monke
     insert_job(db, guid, filename=filename, status="pending")
     assert app_module.process_pending_job(db.cursor(), guid, filename) == "error"
     assert get_row(db, guid)["status"] == "error"
+
+
+# --------------------------------------------------------------------------------------
+# Words-per-second floor on the transcription result
+# --------------------------------------------------------------------------------------
+def _prose(word_count):
+    """Coherent-looking text of exactly word_count words (passes the alnum-ratio check)."""
+    return " ".join(f"word{i}" for i in range(word_count))
+
+
+def _stub_transcription(app_module, monkeypatch, word_count, duration_sec):
+    monkeypatch.setattr(
+        app_module, "transcribe_audio",
+        lambda path, guid: {
+            "transcription": _prose(word_count),
+            "timings": GOOD_TIMINGS,
+            "duration_sec": duration_sec,
+        },
+    )
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: GOOD_TIMINGS)
+
+
+def test_low_word_rate_on_long_file_is_requeued(app_module, db, upload_dir, monkeypatch):
+    """0.5 words/sec on a 755 s file is a collapsed decode: requeue, not complete."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    _stub_transcription(app_module, monkeypatch, word_count=int(755 * 0.5), duration_sec=755.0)
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    row = get_row(db, guid)
+    assert row["status"] == "pending"
+    assert row["attempt_count"] == 1
+    assert row["transcription"] is None
+
+
+def test_normal_word_rate_completes(app_module, db, upload_dir, monkeypatch):
+    """2.7 words/sec is normal sermon material and must complete."""
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    _stub_transcription(app_module, monkeypatch, word_count=int(755 * 2.7), duration_sec=755.0)
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    row = get_row(db, guid)
+    assert row["status"] == "completed"
+    assert row["attempt_count"] == 0
+
+
+def test_unknown_duration_is_not_gated_by_word_rate(app_module, db, upload_dir, monkeypatch):
+    """duration_sec == 0 means the duration could not be read; the floor must not apply."""
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    _stub_transcription(app_module, monkeypatch, word_count=40, duration_sec=0)
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    assert get_row(db, guid)["status"] == "completed"
+
+
+def test_short_clip_is_not_gated_by_word_rate(app_module, db, upload_dir, monkeypatch):
+    """Under 30 s a pause or two swings the rate; a sparse short clip still completes."""
+    monkeypatch.setattr(app_module, "MIN_WORDS_PER_SEC", 1.0)
+    # 12 words in 20 s is 0.6 words/sec, below the floor, but the clip is too short to gate.
+    _stub_transcription(app_module, monkeypatch, word_count=12, duration_sec=20.0)
+
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "completed"
+    assert get_row(db, guid)["status"] == "completed"
