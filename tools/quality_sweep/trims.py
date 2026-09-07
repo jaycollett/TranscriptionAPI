@@ -45,6 +45,15 @@ from analyze import distribution  # noqa: E402
 # not evidence either way.
 NOISE_FLOOR_S = 0.3
 
+# Speech rate used to turn a word count into the seconds that phrase occupies. The corpus
+# runs 2.6 to 3.0 words per second over speech.
+WORDS_PER_SECOND = 2.8
+
+# A true double-decode overlaps by about the phrase's own duration. A measured overlap
+# more than this multiple of it is physically impossible for the phrase in question and is
+# therefore a measurement artifact, not evidence of an artifact in the decode.
+IMPLAUSIBLE_MULTIPLE = 2.0
+
 
 def load_segments(timings_dir, filename):
     """Sorted (start, end) pairs for a file, from the timings the runner saved."""
@@ -95,6 +104,8 @@ def measure(trim, segments, noise_floor=NOISE_FLOOR_S):
         "emptied_segment": trim.get("emptied"),
         "segment_n_end_s": None,
         "segment_n_start_s": None,
+        "phrase_duration_s": None,
+        "overlap_plausible": None,
         "overlap_s": None,
         "gap_s": None,
         "verdict": "unknown",
@@ -109,6 +120,17 @@ def measure(trim, segments, noise_floor=NOISE_FLOOR_S):
     overlap = previous[1] - at_s
     row["overlap_s"] = round(overlap, 3)
     row["gap_s"] = round(-overlap, 3) if overlap < 0 else 0.0
+    # A measured positive overlap is upward-biased: segment N's end is read after the trim
+    # removed words from N+1 and after alignment redistributed the edges, both of which push
+    # that end later. So a negative result is sound (the true overlap is no larger), while a
+    # positive one may be an artifact. Comparing it against the phrase's own duration says
+    # which positives are physically impossible.
+    expected = (trim.get("overlap_words") or 0) / WORDS_PER_SECOND
+    row["phrase_duration_s"] = round(expected, 3) if expected else None
+    if overlap > 0 and expected:
+        row["overlap_plausible"] = overlap <= expected * IMPLAUSIBLE_MULTIPLE
+    else:
+        row["overlap_plausible"] = None
     row["verdict"] = classify(overlap, noise_floor)
     # The corrected build trims only when the two occurrences overlap in time with zero
     # slack. `True` means it would still trim, `False` that it would decline, and `None`
@@ -167,6 +189,8 @@ def summarise(rows, noise_floor=NOISE_FLOOR_S):
         "corrected_rule_unresolved": sum(
             1 for r in rows if r.get("corrected_rule_would_trim") is None
         ),
+        "overlap_implausible": sum(1 for r in rows if r.get("overlap_plausible") is False),
+        "overlap_plausible": sum(1 for r in rows if r.get("overlap_plausible") is True),
         "words_restored_if_declined": sum(
             r["overlap_words"] or 0
             for r in rows
@@ -212,13 +236,24 @@ def render_markdown(summary, rows):
         "inside the noise floor are unresolved rather than decided."
     )
     out.append("")
-    out.append("| file | at s | words | phrase | seg N end | overlap s | verdict | emptied |")
-    out.append("|---|---|---|---|---|---|---|---|")
+    out.append(
+        f"Of the measured overlaps, {summary['overlap_implausible']} exceed twice the "
+        f"phrase's own duration, which a genuine double-decode cannot do, so those are "
+        f"measurement artifacts rather than evidence. {summary['overlap_plausible']} are "
+        f"within the physically possible range."
+    )
+    out.append("")
+    out.append(
+        "| file | at s | words | phrase | seg N end | overlap s | phrase s | plausible | "
+        "verdict | emptied |"
+    )
+    out.append("|---|---|---|---|---|---|---|---|---|---|")
     for row in rows:
         out.append(
             f"| {row.get('file')} | {row.get('at_s')} | {row.get('overlap_words')} | "
             f"{(row.get('removed') or '').replace('|', '/')} | "
             f"{row.get('segment_n_end_s')} | {row.get('overlap_s')} | "
+            f"{row.get('phrase_duration_s')} | {row.get('overlap_plausible')} | "
             f"{row.get('verdict')} | {'yes' if row.get('emptied_segment') else 'no'} |"
         )
     out.append("")
