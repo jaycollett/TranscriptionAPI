@@ -12,57 +12,11 @@ transcribe at 0.15-1.24 words/sec against a normal 2.5-2.8:
 Plus one guard for the pass-5 `condition_on_previous_text: False` setting, which the
 decode call used to override with a hardcoded True.
 
-conftest.py stubs `transcribe` in sys.modules for the app.py tests, so the real module
-is loaded here from its file path under a different name, with the heavy GPU imports
-stubbed. No GPU, no model, no audio.
+The real module is loaded by the shared `transcribe_module` fixture in conftest.py
+with the heavy GPU imports stubbed. No GPU, no model, no audio.
 """
 
-import importlib.util
-import os
-import sys
-import types
-
 import pytest
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-@pytest.fixture(scope="module")
-def transcribe_module():
-    """Load the real transcribe.py with torch/faster-whisper/pydub stubbed out."""
-    fake_torch = types.ModuleType("torch")
-    fake_torch.cuda = types.SimpleNamespace(is_available=lambda: False)
-
-    fake_fw = types.ModuleType("faster_whisper")
-    fake_fw.WhisperModel = object
-
-    fake_pydub = types.ModuleType("pydub")
-
-    class _AudioSegment:
-        @staticmethod
-        def from_file(path):
-            raise AssertionError("audio must not be loaded in these tests")
-
-    fake_pydub.AudioSegment = _AudioSegment
-
-    saved = {k: sys.modules.get(k) for k in ("torch", "faster_whisper", "pydub")}
-    sys.modules["torch"] = fake_torch
-    sys.modules["faster_whisper"] = fake_fw
-    sys.modules["pydub"] = fake_pydub
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "transcribe_under_test", os.path.join(REPO_ROOT, "transcribe.py")
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        yield module
-    finally:
-        for key, value in saved.items():
-            if value is None:
-                sys.modules.pop(key, None)
-            else:
-                sys.modules[key] = value
-
 
 # --------------------------------------------------------------------------------------
 # Defect 3: temperature must be a sequence, or faster-whisper never falls back
