@@ -56,7 +56,12 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/
 
 # Ensure NVIDIA paths are available
 ENV PATH="/usr/local/cuda/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64"
+# The conda environment's libstdc++ must come first. The v3.4.1 base ships numpy
+# 2.4 built against GLIBCXX_3.4.29, which Ubuntu 20.04's system libstdc++ does not
+# provide; without /env/lib on the path `import numpy` (and therefore torch) fails
+# at startup. Verified 2026-09-07 on the GPU host: with this order torch still
+# reports CUDA available and ctranslate2 still sees the device.
+ENV LD_LIBRARY_PATH="/env/lib:/usr/local/cuda/lib64"
 
 # Create the MFA model directory and download the pre-trained models into it.
 RUN mkdir -p ${MFA_MODEL_PATH} && \
