@@ -42,6 +42,29 @@ Regression tests for all four live in `tests/test_transcribe_config.py`. They
 load the real module with torch, faster-whisper and pydub stubbed and assert on
 what actually reaches `model.transcribe()`.
 
+**Word-rate floor in the quality gate.** `MIN_WORDS_PER_SEC` (env, default 1.0)
+is checked in `process_pending_job` right after the alphanumeric-ratio check,
+which is blind to coherent prose at half the normal rate. Words per second is
+computed from the `duration_sec` that `transcribe_audio` now returns. The floor
+is skipped for clips under 30 s and for unknown durations (`duration_sec` of 0),
+and a failing job routes through the same retry/quarantine path as any other
+garbage result. The success log line reports the job's words/sec so the floor
+can be tuned from production logs.
+
+**Beam search is inert on the sampled passes.** In faster-whisper 1.2.1 any
+temperature rung above 0 decodes by sampling with `beam_size=1` and ignores
+`beam_size` and `patience`. Passes 1, 4 and 5 have bases of 0.2, 0.3 and 0.2,
+so they never beam-search and their listed beam sizes (5, 10, 15) do nothing;
+only passes 2 and 3 (base 0.0) beam-search on their first rung. This is
+pre-existing behavior kept as-is for this release; the measured numbers were
+produced with it.
+
+**Diarization was failing during validation.** The 2.78-2.82 words/sec numbers
+were measured with pyannote diarization failing (401 on the gated
+`pyannote/segmentation-3.0` model, which the build-time download does not
+fetch) and falling back to one speaker, so MFA always ran. The feature is
+slated for removal in the next release.
+
 **Measured before/after** on the same 755 s file: 0.54 to 2.745 words/sec;
 410 tokens of mostly punctuation to 2,073 words; runtime about 16 min to
 3m32s. Post-fix production logs on a 2783 s file show 2.78-2.82 words/sec on
@@ -65,6 +88,16 @@ full build from the pinned Dockerfile is a real upgrade and needs the
 validation recipe below before it replaces anything. `Dockerfile.release` is
 the overlay path that rebuilds only the application source on top of a retained
 production image, so a code change can ship without touching the stack.
+
+**Release process caveat.** The GitHub Actions workflow builds from the
+from-scratch `Dockerfile` on every published release and pushes `:latest`. It
+currently fails because it passes no `HUGGINGFACE_TOKEN_BUILD`. Once that is
+fixed, it will publish whatever the from-scratch build produces (pinned
+v3.4.1 base, pinned requirements, freshly downloaded models), which is a
+different stack from the one validated here. A GitHub release must therefore
+only be published after that exact build has passed the validation recipe
+below on the GPU host. Until then, ship code-only changes through
+`Dockerfile.release`.
 
 **GLIBCXX note.** A bare `docker exec <container> python -c "import torch"`
 fails with `GLIBCXX_3.4.29 not found` because the system libstdc++ is too old,
