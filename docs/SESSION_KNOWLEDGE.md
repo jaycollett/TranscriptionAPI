@@ -471,6 +471,12 @@ the marginal cost is one detector pass, logged per job with the region count and
 seconds. A failure there falls back to the file path and disables the omission
 check loudly rather than losing the job.
 
+Measured in the 0.5.4 image on the GPU host, decode plus detector is 1.58 s on the
+755 s file and 6.38 s on the 3388 s retreat file, about 0.2 percent of real time.
+That figure includes the audio decode, which the model then reuses instead of doing
+itself, so the true marginal cost of getting the intervals is lower still. It is a
+rounding error against a 21 to 80 s decode, and the check is worthless without it.
+
 Correcting the arithmetic also moved the tolerance. The healthy worst case was
 measured at 7.1 percent using the inflated coverage; intersected, the healthy
 range across the six files is 1.1 to 9.0 percent, worst on `tcf.20240319b`. A 10

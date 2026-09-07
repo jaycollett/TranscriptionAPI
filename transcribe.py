@@ -437,6 +437,9 @@ def prepare_audio(file_path, vad_params):
     a total cannot be intersected with anything, so coverage measured against it is
     unbounded above and the check dies as soon as the ratio passes 1.0.
 
+    Measured in the 0.5.4 image: 1.58 s on the 755 s file and 6.38 s on the 3388 s
+    file, about 0.2 percent of real time, decode included.
+
     The same VadOptions the decode will use, so the intervals are the ones it saw.
     On any failure the caller falls back to the file path with no intervals, which
     disables the omission check rather than the job.
