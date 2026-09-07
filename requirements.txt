@@ -10,7 +10,7 @@
 # docs/SESSION_KNOWLEDGE.md on a GPU host before deploying.
 #
 # torch and torchvision must move together: torchvision declares torch==<same>.
-torch==2.12.1
+torch==2.13.0
 torchvision==0.27.1
 faster-whisper==1.2.1
 ctranslate2==4.8.0
