@@ -282,6 +282,13 @@ def test_i2_ignores_mfa_word_missing_from_whisper():
     assert ratio < 1.0
 
 
+def test_utterances_with_words_counts_only_populated_spans():
+    utts = [{"start": 0.0, "end": 5.0}, {"start": 5.0, "end": 10.0}, {"start": 10.0, "end": 15.0}]
+    words = [{"start": 1.0, "end": 1.5}, {"start": 12.0, "end": 12.5}]
+    assert align.utterances_with_words(utts, words) == 2
+    assert align.utterances_with_words(utts, []) == 0
+
+
 def test_glossary_stats_counts_terms_and_leakage():
     terms = ["Holy Spirit", "Bonhoeffer", "Acts"]
     g = metrics.glossary_stats("The Holy Spirit came in Acts. Bonhoeffer wrote. holy spirit bonhoeffer acts", terms)

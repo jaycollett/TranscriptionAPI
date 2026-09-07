@@ -3,6 +3,7 @@ TextGrid, I5 16 kHz WAV, I6 duration-scaled timeout), with the production window
 refinement rule and the I2 difflib rule, and the deep-alignment.md section 3 metrics.
 """
 
+import bisect
 import csv
 import difflib
 import glob
@@ -283,6 +284,17 @@ def load_mfa_words(json_path):
     return words, utts
 
 
+def utterances_with_words(utterances, words):
+    """Count utterances whose span contains at least one MFA word start."""
+    starts = sorted(w["start"] for w in words)
+    n = 0
+    for u in utterances:
+        i = bisect.bisect_left(starts, u["start"] - 1e-6)
+        if i < len(starts) and starts[i] <= u["end"] + 1e-6:
+            n += 1
+    return n
+
+
 def align_path(path_name, audio_path, segments, duration, workdir, mfa_root, stem):
     """Run one alignment path ("a0" or "i1"). Returns the process record and MFA words."""
     corpus_name = re.sub(r"[^A-Za-z0-9_]", "_", f"{stem}_{path_name}_mfa_input")
@@ -343,7 +355,9 @@ def align_path(path_name, audio_path, segments, duration, workdir, mfa_root, ste
         words, utts_out = load_mfa_words(json_path)
         record["mfa_json"] = json_path
     record["words_mfa"] = len(words)
-    record["utterances_aligned"] = len(utts_out) if utts_out else None
+    # The utterances tier echoes every input interval, so success is measured as
+    # utterances that received at least one word in the words tier.
+    record["utterances_aligned"] = utterances_with_words(utts_out, words) if utts_out else None
     # MFA's working tree can be hundreds of MB; remove it once diagnostics are captured.
     if mfa_root:
         shutil.rmtree(os.path.join(mfa_root, corpus_name), ignore_errors=True)
