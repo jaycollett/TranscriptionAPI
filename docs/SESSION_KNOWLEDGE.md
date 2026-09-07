@@ -160,3 +160,19 @@ fresh container starts with an empty queue and the callers refill it. Do not
 add a volume for the database and do not add WAL checkpointing to preserve it;
 either one turns a redeploy into a migration problem for state that nobody
 needs to survive.
+
+## 2026-09-07 - 0.4.0 validation record
+
+Reference file tcf.20240213b.mp3 (755.2 s), both from-scratch builds on the
+mmcauliffe/montreal-forced-aligner:v3.4.1 base with the pinned requirements.
+
+| Build | Words | Words/sec | Pass confidence | Whisper time | MFA | Notes |
+|---|---|---|---|---|---|---|
+| 0.4.0-rc1 (with diarization) | 2081 | 2.756 | 0.9735 to 0.9753 | 145 s | first attempt | crashed at startup until LD_LIBRARY_PATH put /env/lib first; diarization 401 as before |
+| 0.4.0-rc2 (release) | 2079 | 2.753 | 0.9736 to 0.9797 | about 145 s | first attempt | no pyannote or torchcodec lines in the log |
+
+Both transcripts open on the home-groups talk and close on "So, questions or
+comments?" with timings spanning 0 to 754.7 s. Environment inside the image:
+Python 3.13.14, torch 2.12.1+cu130 with CUDA available on the RTX 3060,
+ctranslate2 4.8.0 seeing one device, MFA 3.4.2.dev0 (what the v3.4.1 image tag
+actually ships), Ubuntu 20.04.5. Whole job about 3.5 minutes end to end.
