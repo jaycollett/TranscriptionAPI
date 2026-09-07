@@ -357,3 +357,8 @@ Release-run history since 0.4.0: 0.5.0 was the only run whose image build
 completed (0.5.1 and 0.5.2 died at the MFA download). The 0.4.0 and 0.5.0 runs
 pushed their images and failed only at the Trivy gate, on the base-image and
 cuda-toolkit findings that 0.5.2's cuda-libraries change addresses.
+
+Validation of 0.5.3-rc1 on the reference file: 2084 words, 2.760 words/sec, 194
+timings, MFA aligned on the first attempt, 103 s for the five Whisper passes,
+134 s end to end, zero MFA working directories left. The local build ran the MFA
+download unauthenticated through the new conditional, as intended.
