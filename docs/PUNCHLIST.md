@@ -216,7 +216,7 @@ with 503 when the worker thread is dead or has not woken in 5 minutes; add a
 `HEALTHCHECK` to the Dockerfile. The image installs `wget` but not `curl`, so
 the check uses `wget -q -O /dev/null http://localhost:5000/health || exit 1`.
 Verify: Mac route test; GPU `docker inspect --format '{{.State.Health.Status}}'`.
-Status: Open
+Status: Done in 0.5.0 (Add a container health check on the /health endpoint)
 
 **16. Tests do not run in CI; 58% of app.py is unexercised**
 `.github/workflows/BuildAndPublish.yml` has a single build job; there is no

@@ -86,5 +86,12 @@ COPY . .
 # Expose port (internal port 5000, mapped to external 5030)
 EXPOSE 5000
 
+# Liveness. /health answers 503 when the worker thread is dead or an idle
+# worker has stopped polling. The image has wget (used above) but no curl. The
+# start period covers loading the Whisper model, which happens before the
+# worker thread and the HTTP server exist.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
+    CMD wget -q -O /dev/null http://localhost:5000/health || exit 1
+
 # Run the Flask app
 CMD ["python", "app.py"]
