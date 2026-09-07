@@ -58,6 +58,22 @@ RE_PASS = re.compile(
 )
 RE_WINDOWS_OF = re.compile(r"anomaly_windows=(?P<windows>\d+) of (?P<windows_total>\d+)")
 
+# The post-transcription quality gate. A failure resets the job to pending and burns a
+# whole re-decode, so the reason and the attempt number are worth counting: a gate that
+# fails on a deterministic decode can never be satisfied by retrying and ends in
+# quarantine after three full decodes.
+RE_GATE_FAIL = re.compile(
+    r"Transcription (?P<guid>" + GUID + r") failed \((?P<reason>.+)\)\. "
+    r"Resetting to 'pending' \(attempt (?P<attempt>\d+) of (?P<max_attempts>\d+)\)"
+)
+RE_QUARANTINE = re.compile(
+    r"(?P<guid>" + GUID + r").{0,120}?quarantin", re.IGNORECASE
+)
+RE_RESCUE_DISCARD = re.compile(
+    r"Discarding the rescue pass: (?P<rescue_words>\d+) words against the primary "
+    r"pass's (?P<primary_words>\d+) loses (?P<lost>\d+)"
+)
+
 # The seam de-duplication logs every trim as
 #   Boundary dedupe for <guid>: dropped 4 words repeated across the seam at 123.45s: 'phrase'
 # Verified against the rc2 image's own source before the run. The loose pattern below is
@@ -117,6 +133,9 @@ def parse(lines):
                 "decode_durations_s": [],
                 "trims": [],
                 "passes": [],
+                "gate_failures": [],
+                "rescue_discards": [],
+                "quarantined": False,
                 "fields": {},
                 "alignment": {},
                 "audio_level_dbfs": None,
@@ -126,6 +145,31 @@ def parse(lines):
 
     for raw in lines:
         line = raw.rstrip("\n")
+
+        gate = RE_GATE_FAIL.search(line)
+        if gate:
+            current = gate.group("guid")
+            job(current)["gate_failures"].append({
+                "reason": gate.group("reason").strip(),
+                "attempt": int(gate.group("attempt")),
+                "max_attempts": int(gate.group("max_attempts")),
+            })
+            continue
+
+        discard = RE_RESCUE_DISCARD.search(line)
+        if discard and current:
+            job(current)["rescue_discards"].append({
+                "rescue_words": int(discard.group("rescue_words")),
+                "primary_words": int(discard.group("primary_words")),
+                "lost": int(discard.group("lost")),
+            })
+            continue
+
+        quarantine = RE_QUARANTINE.search(line)
+        if quarantine:
+            current = quarantine.group("guid")
+            job(current)["quarantined"] = True
+            continue
 
         level = RE_AUDIO_LEVEL.search(line)
         if level:
@@ -275,6 +319,9 @@ def parse(lines):
         record["loose_trim_matches"] = sum(
             1 for t in record["trims"] if t.get("matched") == "loose"
         )
+        record["gate_failure_count"] = len(record["gate_failures"])
+        record["gate_failure_reasons"] = sorted({g["reason"] for g in record["gate_failures"]})
+        record["decode_attempts"] = len([p for p in record["passes"] if p["pass"] == "primary"])
     return jobs
 
 

@@ -27,6 +27,7 @@ import runner  # noqa: E402
 import select_files  # noqa: E402
 import service_log  # noqa: E402
 import strata  # noqa: E402
+import trims  # noqa: E402
 
 
 # --- strata ---------------------------------------------------------------------------
@@ -1033,3 +1034,137 @@ def test_two_trims_at_different_times_stay_separate():
     job = service_log.parse([a, b])[GUID_A]
     assert job["trim_count"] == 2
     assert job["trimmed_words"] == 9
+
+
+# --- trim overlap analysis -----------------------------------------------------------------
+
+
+def test_preceding_segment_picks_the_one_the_matched_run_ends_in():
+    segments = [(0.0, 10.0), (10.0, 20.0), (25.0, 30.0)]
+    assert trims.preceding_segment(segments, 21.0) == (10.0, 20.0)
+    assert trims.preceding_segment(segments, 10.5) == (10.0, 20.0)
+    assert trims.preceding_segment(segments, 0.0) is None
+
+
+def test_classify_uses_the_noise_floor_in_both_directions():
+    assert trims.classify(2.0) == "overlapping"
+    assert trims.classify(-2.0) == "abutting"
+    assert trims.classify(0.1) == "unresolved"
+    assert trims.classify(-0.1) == "unresolved"
+    assert trims.classify(None) == "unknown"
+
+
+def test_measure_calls_a_double_decode_overlapping():
+    # Segment N runs to 105 s; segment N+1 started at 103 s, so they share two seconds.
+    trim = {"at_s": 103.0, "overlap_words": 4, "removed": "the lord he is", "emptied": False}
+    row = trims.measure(trim, [(90.0, 105.0), (103.0, 120.0)])
+    assert row["overlap_s"] == 2.0
+    assert row["gap_s"] == 0.0
+    assert row["verdict"] == "overlapping"
+
+
+def test_measure_calls_sequential_repetition_abutting():
+    # Segment N ends at 100 s and segment N+1 starts at 102 s: the speaker said it twice.
+    trim = {"at_s": 102.0, "overlap_words": 4, "removed": "the lord he is", "emptied": False}
+    row = trims.measure(trim, [(90.0, 100.0), (102.0, 120.0)])
+    assert row["overlap_s"] == -2.0
+    assert row["gap_s"] == 2.0
+    assert row["verdict"] == "abutting"
+
+
+def test_measure_is_honest_when_it_cannot_tell():
+    trim = {"at_s": 100.1, "overlap_words": 4, "removed": "x", "emptied": False}
+    assert trims.measure(trim, [(90.0, 100.0)])["verdict"] == "unresolved"
+    assert trims.measure(trim, [])["verdict"] == "unknown"
+    assert trims.measure({"at_s": None}, [(0.0, 1.0)])["verdict"] == "unknown"
+
+
+def test_build_reads_the_timings_for_each_file(tmp_path):
+    timings = tmp_path / "timings"
+    timings.mkdir()
+    (timings / "a.json").write_text(json.dumps(
+        {"timings": [{"start": 90.0, "end": 105.0}, {"start": 106.0, "end": 120.0}]}
+    ))
+    jobs = {
+        "g1": {
+            "guid": "g1", "file": "a.mp3",
+            "trims": [{"at_s": 103.0, "overlap_words": 4, "removed": "a b c d",
+                       "emptied": False}],
+        },
+        "g2": {"guid": "g2", "file": "b.mp3", "trims": []},
+    }
+    rows = trims.build(jobs, str(timings))
+    assert len(rows) == 1
+    assert rows[0]["file"] == "a.mp3"
+    assert rows[0]["verdict"] == "overlapping"
+
+
+def test_summarise_says_when_the_test_separates_cleanly():
+    rows = [
+        {"file": "a.mp3", "overlap_s": 2.0, "verdict": "overlapping", "overlap_words": 4,
+         "emptied_segment": False},
+        {"file": "b.mp3", "overlap_s": -2.0, "verdict": "abutting", "overlap_words": 5,
+         "emptied_segment": True},
+    ]
+    summary = trims.summarise(rows)
+    assert summary["separates_cleanly"] is True
+    assert summary["words_removed"] == 9
+    assert summary["segments_emptied"] == 1
+    assert "usable rule" in trims.render_markdown(summary, rows)
+
+
+def test_summarise_says_when_it_does_not_separate():
+    rows = [
+        {"file": "a.mp3", "overlap_s": 2.0, "verdict": "overlapping", "overlap_words": 4,
+         "emptied_segment": False},
+        {"file": "b.mp3", "overlap_s": 0.05, "verdict": "unresolved", "overlap_words": 4,
+         "emptied_segment": False},
+        {"file": "c.mp3", "overlap_s": -2.0, "verdict": "abutting", "overlap_words": 4,
+         "emptied_segment": False},
+    ]
+    summary = trims.summarise(rows)
+    assert summary["separates_cleanly"] is False
+    assert summary["unresolved_count"] == 1
+    assert "not on its own a reliable rule" in trims.render_markdown(summary, rows)
+
+
+# --- the quality gate ----------------------------------------------------------------------
+
+
+def test_gate_failures_are_parsed_with_their_reason_and_attempt():
+    lines = [
+        f"WARNING - app - Transcription {GUID_A} failed (anomaly gate: 0 flagged segments "
+        f"(max 4), 4 low speech windows (max 1)). Resetting to 'pending' (attempt 1 of 3).",
+        f"WARNING - app - Transcription {GUID_A} failed (anomaly gate: 0 flagged segments "
+        f"(max 4), 4 low speech windows (max 1)). Resetting to 'pending' (attempt 2 of 3).",
+    ]
+    job = service_log.parse(lines)[GUID_A]
+    assert job["gate_failure_count"] == 2
+    assert job["gate_failures"][0]["attempt"] == 1
+    assert job["gate_failures"][1]["max_attempts"] == 3
+    assert job["gate_failure_reasons"] == [
+        "anomaly gate: 0 flagged segments (max 4), 4 low speech windows (max 1)"
+    ]
+
+
+def test_a_discarded_rescue_records_what_it_would_have_lost():
+    line = ("WARNING - transcribe - Discarding the rescue pass: 6977 words against the "
+            "primary pass's 7042 loses 65, past the 99% retention floor or the 40 word cap, "
+            "despite scoring 5 against 4")
+    job = service_log.parse([f"INFO - app - Processing {GUID_A}", line])[GUID_A]
+    assert job["rescue_discards"] == [
+        {"rescue_words": 6977, "primary_words": 7042, "lost": 65}
+    ]
+
+
+def test_decode_attempts_counts_primary_passes():
+    lines = [
+        f"INFO - transcribe - primary pass for {GUID_A} in 10s: 100 words, 5 segments "
+        f"covering 90.0s of 100.0s VAD speech",
+        f"INFO - transcribe - primary pass for {GUID_A} in 10s: 100 words, 5 segments "
+        f"covering 90.0s of 100.0s VAD speech",
+        f"INFO - transcribe - rescue pass for {GUID_A} in 9s: 99 words, 5 segments "
+        f"covering 90.0s of 100.0s VAD speech",
+    ]
+    job = service_log.parse(lines)[GUID_A]
+    assert job["decode_attempts"] == 2
