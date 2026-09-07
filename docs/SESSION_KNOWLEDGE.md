@@ -200,6 +200,13 @@ What changed, in one place:
   retags the serving image `transcription-api:rollback`, and polls `/health`
   for up to three minutes after starting the new container.
 
+CI note: the 0.4.0 release run pushed the image but failed the Trivy gate on
+base-image and cuda-toolkit findings; 64 of the 80 were in the Nsight Systems
+Go binary that `cuda-toolkit-12-2` installs and the service never runs. That
+is exactly what the deferred `cuda-toolkit-12-2` to `cuda-runtime-12-2` change
+in the Dockerfile header (service item 29) addresses, and it stays gated on
+GPU validation.
+
 Test suite: 127 tests, under half a second, `app.py` at 92% line coverage (was 42%).
 The routes are exercised with Flask's test client against a per-test SQLite
 file; the worker loop is tested through `worker_cycle()` and a `time.sleep`

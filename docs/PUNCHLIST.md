@@ -370,6 +370,22 @@ acceptable for a LAN-only single client; if ever replaced, use single-process
 `waitress` so the worker thread is not duplicated.
 Status: Deferred to a GPU-validated release
 
+**30. torch 2.12.1 carries a low-severity advisory (torch.jit.script)**
+`requirements.txt` (`torch==2.12.1`, `torchvision==0.27.1`). GitHub Dependabot
+alert #2, raised on `main` once the pins landed: torch <= 2.12.1, low
+severity, memory corruption through `torch.jit.script`, fixed in 2.13.0. The
+service never calls `torch.jit.script` (torch is imported only for the CUDA
+availability check; decoding runs through ctranslate2), so there is no
+reachable path today.
+Recommended change: bump to torch 2.13.0 when it is validated. torch and
+torchvision must move together, since torchvision pins its exact torch
+version, and the CUDA build of both has to match the host driver. The bump
+changes the validated stack, so it needs the reference-file recipe on
+devmachine (2.5-2.8 words/sec on `tcf.20240213b.mp3`, CUDA visible to both
+torch and ctranslate2) before it replaces production. Risk: low for the
+advisory itself, moderate for the dependency swap. Verify: GPU.
+Status: Deferred to a GPU-validated release
+
 ## Pipeline
 
 Scope: transcription outcomes only. None of these are implemented in 0.5.0;
