@@ -38,9 +38,10 @@ def ensure_mfa_models(mfa_root):
     if os.path.islink(target):
         return
     if os.path.isdir(target):
-        if os.listdir(target):
+        if os.path.exists(os.path.join(target, "acoustic", "english_mfa.zip")):
             return
-        os.rmdir(target)
+        # `mfa model list` creates an empty skeleton of model-type directories.
+        shutil.rmtree(target)
     os.makedirs(mfa_root, exist_ok=True)
     os.symlink(MFA_MODELS_DIR, target)
 
@@ -188,14 +189,22 @@ def run_mfa(corpus_dir, out_dir, args, timeout):
         }
 
 
-def _collect_work_dir_diagnostics(mfa_root, corpus_name):
-    """Copy alignment_analysis.csv and the OOV list out of MFA's working dir."""
+def _collect_work_dir_diagnostics(mfa_root, corpus_name, out_dir):
+    """Gather alignment_analysis.csv and the OOV list from MFA's working and output dirs."""
     work = os.path.join(mfa_root, corpus_name) if mfa_root else None
     diag = {"oov_count": None, "oov_sample": []}
-    if not work or not os.path.isdir(work):
+    roots = [d for d in (work, out_dir) if d and os.path.isdir(d)]
+    if not roots:
         return diag, None
-    oov_files = glob.glob(os.path.join(work, "**", "oovs_found*.txt"), recursive=True)
-    oov_files += glob.glob(os.path.join(work, "**", "utterance_oovs.txt"), recursive=True)
+    oov_files = []
+    for root in roots:
+        oov_files += glob.glob(os.path.join(root, "**", "oovs_found*.txt"), recursive=True)
+        oov_files += glob.glob(os.path.join(root, "**", "utterance_oovs.txt"), recursive=True)
+        for csv_path in glob.glob(os.path.join(root, "**", "alignment_analysis.csv"), recursive=True):
+            target = os.path.join(out_dir, "alignment_analysis.csv")
+            if os.path.abspath(csv_path) != os.path.abspath(target) and not os.path.exists(target):
+                shutil.copy2(csv_path, target)
+    diag["diagnostic_files"] = sorted(os.path.relpath(p, os.path.dirname(p.rstrip("/"))) for p in oov_files)
     words = set()
     for path in oov_files:
         try:
@@ -316,7 +325,7 @@ def align_path(path_name, audio_path, segments, duration, workdir, mfa_root, ste
         res = run_mfa(corpus_dir, out_dir, args, timeout)
         res["attempt"] = k
         record["attempts"].append(res)
-        diag, work = _collect_work_dir_diagnostics(mfa_root, corpus_name)
+        diag, work = _collect_work_dir_diagnostics(mfa_root, corpus_name, out_dir)
         res.update(diag)
         if res["returncode"] == 0 and _find_json(out_dir, name):
             success = True

@@ -33,7 +33,7 @@ DECODE_COLUMNS = [
     ("removed_s", "removed_s"),
     ("wall_s", "wall_s"),
     ("rtf", "rtf"),
-    ("gpu_peak_mb", "gpu_mb"),
+    ("gpu_peak_total_mb", "gpu_mb"),
     ("agree_c1", "agree_C1"),
 ]
 
