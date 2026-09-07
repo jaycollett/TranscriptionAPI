@@ -194,16 +194,32 @@ RESCUE_MIN_WORD_RETENTION = _env_float("RESCUE_MIN_WORD_RETENTION", 0.99)
 # motivated this whole rewrite. Both conditions have to hold.
 RESCUE_MAX_WORD_LOSS = _env_int("RESCUE_MAX_WORD_LOSS", 40)
 
-# Boundary de-duplication: the longest and shortest overlap between the tail of one
-# segment and the head of the next that is treated as a duplicate.
+# Boundary de-duplication.
 #
-# 4, not 2. A two or three word coincidence across a seam is ordinary English, and at
-# 2 this rule reproduced the defect it was written to remove: the segments
-# ["The Lord is with you. He is risen.", "He is risen indeed. Alleluia."] published as
-# "The Lord is with you. He is risen. indeed. Alleluia.", which is the old regex's
-# failure exactly. Every trim is logged so the true-positive rate can be counted from
-# production rather than assumed.
+# The test is temporal, not lexical. A genuine seam artifact is the same audio decoded
+# twice, so the repeated words at the end of segment N and at the start of segment N+1
+# describe overlapping stretches of time. A speaker saying something twice produces two
+# sequential, disjoint stretches. Word timestamps separate those two cases; word counts
+# do not, which is what the corpus sweep established: across the first eight files all
+# ten trims under the word-count rule were repetition rather than decoder artifacts,
+# including four consecutive segments emptied on 1 Kings 18:39, "The LORD, he is God;
+# the LORD, he is God", an acclamation whose entire force is the doubling.
+#
+# The whole step can be turned off with one variable. If overlap turns out not to
+# separate the cases either, the right answer is to accept an occasional doubled
+# phrase at a seam, and that should be a config change rather than a release.
+BOUNDARY_DEDUPE_ENABLED = os.getenv("BOUNDARY_DEDUPE_ENABLED", "1").strip().lower() \
+    not in ("0", "false", "no", "")
+# Kept as a secondary condition: a short coincidence is not worth acting on even when
+# the timestamps do overlap.
 BOUNDARY_DEDUPE_MIN_WORDS = _env_int("BOUNDARY_DEDUPE_MIN_WORDS", 4)
+# How much the two spans may fall short of overlapping and still be trimmed. Zero by
+# default, so a strict overlap is required. Continuous speech abuts: a speaker
+# repeating a phrase across a segment boundary ends one occurrence and begins the next
+# within a few tens of milliseconds, so treating abutment as overlap would put every
+# anaphora back in scope. Raise it only on evidence that real artifacts are being
+# missed, and expect to trade scripture for them.
+BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC = _env_float("BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC", 0.0)
 BOUNDARY_DEDUPE_MAX_WORDS = _env_int("BOUNDARY_DEDUPE_MAX_WORDS", 5)
 
 # Real-time factor for the client-facing estimate. Measured on the six reference
@@ -403,6 +419,34 @@ def hallucination_threshold(profile):
     return None if profile == QUIET_PROFILE else WHISPER_HALLUCINATION_SILENCE_THRESHOLD
 
 
+SAMPLE_RATE = 16000
+
+
+def prepare_audio(file_path, vad_params):
+    """Decode once and run the voice-activity detector ourselves.
+
+    Returns (audio, speech_intervals, seconds_spent). `audio` is handed to
+    `model.transcribe` in place of the path, so decoding it here costs nothing extra:
+    faster-whisper would have done exactly this internally. The detector pass is the
+    real added cost, and it buys the only thing that makes the omission check
+    meaningful. faster-whisper reports `duration_after_vad` but not the intervals, and
+    a total cannot be intersected with anything, so coverage measured against it is
+    unbounded above and the check dies as soon as the ratio passes 1.0.
+
+    The same VadOptions the decode will use, so the intervals are the ones it saw.
+    On any failure the caller falls back to the file path with no intervals, which
+    disables the omission check rather than the job.
+    """
+    started = time.time()
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+
+    audio = decode_audio(file_path, sampling_rate=SAMPLE_RATE)
+    chunks = get_speech_timestamps(audio, VadOptions(**vad_params))
+    intervals = [(c["start"] / SAMPLE_RATE, c["end"] / SAMPLE_RATE) for c in chunks]
+    return audio, intervals, time.time() - started
+
+
 def choose_vad_profile(mean_dbfs):
     """Pick the VAD profile for a file at `mean_dbfs`; returns (profile, why).
 
@@ -523,30 +567,57 @@ def annotate_segments(segments):
     return anomaly_count, flagged
 
 
-def speech_spans(segments):
-    """Merge the segments' own spans into non-overlapping speech runs.
+def merge_intervals(intervals):
+    """Sort and merge intervals into a non-overlapping, ascending list.
 
-    The window check needs a clock that skips silence, or a file with a ten minute
-    break before the Q&A reads as a collapse. faster-whisper does not hand back the
-    VAD chunks it used, and re-running the VAD would mean decoding the audio a second
-    time, so the segments' own spans stand in for them.
-
-    On their own they are not enough, and this is the trap: audio the decoder emitted
-    nothing for contributes no span, so an omission shrinks the clock instead of
-    showing up as a low-rate window, and the check is blind to the one failure it
-    exists for. `low_speech_windows` therefore compares this coverage against the VAD
-    speech faster-whisper reports and charges the difference.
+    Sorting first matters: Whisper's timestamps come back through
+    `restore_speech_timestamps` and adjacent segments can overlap or arrive slightly
+    out of order, and a merge that only looks at its immediate predecessor double
+    counts the overlap instead of absorbing it.
     """
-    spans = []
-    for segment in segments:
-        start, end = segment["start"], segment["end"]
-        if end <= start:
-            continue
-        if spans and start <= spans[-1][1]:
-            spans[-1] = (spans[-1][0], max(spans[-1][1], end))
+    ordered = sorted((float(s), float(e)) for s, e in intervals if e > s)
+    merged = []
+    for start, end in ordered:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
         else:
-            spans.append((start, end))
-    return spans
+            merged.append((start, end))
+    return merged
+
+
+def speech_spans(segments):
+    """The segments' own spans, merged into non-overlapping ascending runs."""
+    return merge_intervals((s["start"], s["end"]) for s in segments)
+
+
+def intersect_intervals(a, b):
+    """Intersection of two interval lists, each merged and ascending."""
+    out = []
+    i = j = 0
+    while i < len(a) and j < len(b):
+        start = max(a[i][0], b[j][0])
+        end = min(a[i][1], b[j][1])
+        if end > start:
+            out.append((start, end))
+        if a[i][1] < b[j][1]:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
+def covered_speech(segments, speech_intervals):
+    """The speech the decoder actually produced segments for.
+
+    The merged segment spans intersected with the voice-activity intervals, so the
+    result is bounded above by the speech itself. A plain sum of segment spans is not:
+    Whisper's timestamps are padded by the VAD and can run past the speech region or
+    overlap each other, and comparing that sum against the VAD total produced coverage
+    ratios up to 1.087 in the corpus sweep. Above 1.0 the uncovered figure goes
+    negative, the tolerance can never fire and the omission check is silently dead,
+    which is the defect this whole check exists to avoid, one step downstream.
+    """
+    return intersect_intervals(speech_spans(segments), merge_intervals(speech_intervals))
 
 
 class SpeechClock:
@@ -582,7 +653,7 @@ def flat_words(segments):
     return out
 
 
-def low_speech_windows(segments, duration_sec, speech_seconds=None):
+def low_speech_windows(segments, duration_sec, speech_intervals=None):
     """Count 60 s windows of speech carrying under 1.2 words/sec (harness C2).
 
     Returns (windows, low_count). The whole-file word rate hides a partial collapse:
@@ -591,25 +662,37 @@ def low_speech_windows(segments, duration_sec, speech_seconds=None):
     trigger and the quarantine gate. This is what is supposed to catch it.
 
     Two things are counted. Windows the decoder did produce words for are scored on
-    their word rate. Then VAD speech the decoder produced no segment for is charged:
-    `speech_seconds` is faster-whisper's `duration_after_vad`, the audio it was
-    actually given, so speech no surviving segment covers is speech that went
-    missing. Without the second half an omission simply shrinks the clock and is
-    invisible.
+    their word rate. Then voice-activity speech the decoder produced no segment for is
+    charged: `speech_intervals` are the detector's own speech regions, so speech no
+    surviving segment covers is speech that went missing. Without the second half an
+    omission simply shrinks the clock and is invisible.
+
+    The intervals themselves are required, not a total. Coverage has to be the merged
+    segment spans intersected with them, or it is not bounded by the speech it is
+    compared against and the check dies quietly the moment the ratio passes 1.0.
 
     Only the share beyond ANOMALY_UNCOVERED_TOLERANCE is charged. Segment spans never
-    tile VAD speech exactly, and the sub-second pauses between segments sum to minutes
+    tile speech exactly, and the sub-second pauses between segments sum to minutes
     over a sermon; charging those reports an omission on a file that is missing
     nothing. See the constant for the measurements.
     """
-    spans = speech_spans(segments)
-    clock = SpeechClock(spans)
+    if speech_intervals:
+        speech = merge_intervals(speech_intervals)
+        speech_total = sum(e - s for s, e in speech)
+        covered_spans = intersect_intervals(speech_spans(segments), speech)
+    else:
+        speech = None
+        speech_total = 0.0
+        covered_spans = speech_spans(segments)
+
+    clock = SpeechClock(covered_spans)
     covered = clock.total
 
     uncovered_windows = 0
-    if speech_seconds:
-        uncovered = max(0.0, float(speech_seconds) - covered)
-        excess = uncovered - ANOMALY_UNCOVERED_TOLERANCE * float(speech_seconds)
+    if speech_total > 0:
+        # Non-negative by construction now: covered is a subset of speech.
+        uncovered = max(0.0, speech_total - covered)
+        excess = uncovered - ANOMALY_UNCOVERED_TOLERANCE * speech_total
         uncovered_windows = int(max(0.0, excess) // ANOMALY_WINDOW_SEC)
 
     if covered <= 0:
@@ -666,12 +749,16 @@ def deduplicate_segment_boundaries(segments, guid=None):
     moves to the first surviving word's timestamp. Nothing inside a segment is ever
     touched, so "He is risen. He is risen indeed." inside one segment survives whole.
 
-    The minimum of 4 is load-bearing rather than conservative. At 2 this rule deleted
-    genuine liturgical repetition that happened to straddle a seam, which is the exact
-    defect the old regex was removed for. Every trim is logged so the true-positive
-    rate can be counted from production instead of assumed.
+    The run has to overlap in time to be trimmed. Word counts cannot tell a decoder
+    artifact from a speaker saying something twice, and the corpus sweep showed the
+    word-count rule deleting scripture: ten trims across eight files, none of them a
+    decoder artifact. See BOUNDARY_DEDUPE_ENABLED for the constants and the reasoning.
 
-    Returns a new list; segments emptied by the trim are dropped.
+    A trim never empties a segment. Dropping a segment whole is how four consecutive
+    segments of 1 Kings 18:39 disappeared, so if the duplicate is the entire segment
+    the trim is declined and logged.
+
+    Returns a new list.
     """
     result = []
     for segment in segments:
@@ -680,34 +767,86 @@ def deduplicate_segment_boundaries(segments, guid=None):
             segment["words"] = [dict(w) for w in segment["words"]]
         if not segment.get("text", "").strip():
             continue
-        if result:
-            previous = result[-1]
-            trim = _boundary_overlap(previous, segment)
-            if trim:
-                where = f"{segment.get('start', 0.0):.2f}s"
-                trimmed, removed = _trim_leading_words(segment, trim)
-                logger.info(
-                    f"Boundary dedupe{'' if guid is None else f' for {guid}'}: dropped {trim} words "
-                    f"repeated across the seam at {where}: {removed!r}"
-                    + ("" if trimmed is not None else " (segment emptied and dropped)")
-                )
-                if trimmed is None:
-                    continue
-                segment = trimmed
+        if result and BOUNDARY_DEDUPE_ENABLED:
+            segment = _dedupe_against(result[-1], segment, guid)
         result.append(segment)
     return result
 
 
+def _dedupe_against(previous, segment, guid):
+    """Trim `segment`'s head if it repeats `previous`'s tail as an artifact."""
+    trim, overlap, reason = _boundary_overlap(previous, segment)
+    tag = "" if guid is None else f" for {guid}"
+    where = f"{segment.get('start', 0.0):.2f}s"
+    overlap_field = "none" if overlap is None else f"{overlap:.3f}"
+
+    if not trim:
+        if overlap is not None:
+            logger.info(
+                f"Boundary dedupe{tag}: kept a repeated run at {where}, {reason} "
+                f"(overlap_sec={overlap_field})"
+            )
+        return segment
+
+    trimmed, removed = _trim_leading_words(segment, trim)
+    if trimmed is None:
+        # Never drop a segment whole. The duplicate is the entire segment, which is
+        # what an acclamation looks like, and deleting it is the failure mode that
+        # took out four consecutive segments of scripture.
+        logger.info(
+            f"Boundary dedupe{tag}: declined to trim at {where}, the run is the whole "
+            f"segment and trimming would empty it (words={trim} overlap_sec={overlap_field}): "
+            f"{removed!r}"
+        )
+        return segment
+
+    logger.info(
+        f"Boundary dedupe{tag}: dropped {trim} words repeated across the seam at "
+        f"{where} (overlap_sec={overlap_field}): {removed!r}"
+    )
+    return trimmed
+
+
+def _word_span(segment, indices):
+    """(start, end) of the words at `indices`, or None without word timestamps."""
+    words = segment.get("words")
+    if not words or not indices:
+        return None
+    picked = [words[i] for i in indices if 0 <= i < len(words)]
+    if not picked:
+        return None
+    return float(picked[0]["start"]), float(picked[-1]["end"])
+
+
 def _boundary_overlap(previous, segment):
-    """Number of leading words of `segment` duplicated at the end of `previous`."""
-    previous_tokens = [t for _, t in _segment_tokens(previous)]
-    segment_tokens = [t for _, t in _segment_tokens(segment)]
+    """Find a repeated run across the seam and decide whether it is an artifact.
+
+    Returns (k, overlap_sec, reason). `k` is 0 when nothing should be trimmed, and
+    `reason` says why for the log line. `overlap_sec` is how much the two occurrences
+    overlap in time; positive means the same audio was decoded twice, negative means
+    the speaker said it twice.
+    """
+    previous_entries = _segment_tokens(previous)
+    segment_entries = _segment_tokens(segment)
+    previous_tokens = [t for _, t in previous_entries]
+    segment_tokens = [t for _, t in segment_entries]
+
     upper = min(BOUNDARY_DEDUPE_MAX_WORDS, len(previous_tokens), len(segment_tokens))
-    # Longest overlap first: "the Lord is good" must not be trimmed as "is good".
+    # Longest run first: "the Lord is good" must not be trimmed as "is good".
     for k in range(upper, BOUNDARY_DEDUPE_MIN_WORDS - 1, -1):
-        if previous_tokens[-k:] == segment_tokens[:k]:
-            return k
-    return 0
+        if previous_tokens[-k:] != segment_tokens[:k]:
+            continue
+        tail = _word_span(previous, [i for i, _ in previous_entries[-k:]])
+        head = _word_span(segment, [i for i, _ in segment_entries[:k]])
+        if tail is None or head is None:
+            # No word timestamps means no way to tell an artifact from repetition,
+            # and the safe answer is to publish both.
+            return 0, None, "no word timestamps to test the overlap"
+        overlap = min(tail[1], head[1]) - max(tail[0], head[0])
+        if overlap > -BOUNDARY_DEDUPE_OVERLAP_SLACK_SEC:
+            return k, overlap, "spans overlap"
+        return 0, overlap, "occurrences are sequential, so the speaker said it twice"
+    return 0, None, ""
 
 
 def _trim_leading_words(segment, count):
@@ -774,20 +913,21 @@ def transcript_from_segments(segments):
 # ---------------------------------------------------------------------------------
 # Passes: scoring, the rescue trigger and the selection rule
 # ---------------------------------------------------------------------------------
-def summarize_pass(segments, duration_sec, label, speech_seconds=None, guid=None):
+def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=None):
     """Post-process one pass's segments and score it, returning a comparable record.
 
     Empty segments are dropped, seam duplicates are trimmed, flags are attached and
     the anomaly counts are computed, so two passes are always compared on the output
     that would actually be published rather than on the raw decode.
 
-    `speech_seconds` is this pass's `duration_after_vad`. Without it the window check
-    cannot see an omission, so it is threaded through rather than read after the fact.
+    `speech_intervals` are the voice-activity regions for this audio. Without them the
+    window check cannot see an omission, so they are threaded through rather than
+    reconstructed after the fact.
     """
     kept = [s for s in segments if s.get("text", "").strip()]
     deduped = deduplicate_segment_boundaries(kept, guid=guid)
     anomaly_count, flagged = annotate_segments(deduped)
-    windows, low_windows = low_speech_windows(deduped, duration_sec, speech_seconds)
+    windows, low_windows = low_speech_windows(deduped, duration_sec, speech_intervals)
     transcript = transcript_from_segments(deduped)
     logprobs = [s["avg_logprob"] for s in deduped if s.get("avg_logprob") is not None]
     return {
@@ -935,6 +1075,27 @@ def transcribe_audio(file_path, guid):
 
     model = load_whisper_model()  # Load the Whisper model (cached)
 
+    # Decode once and run the detector ourselves. `audio` then goes to the model in
+    # place of the path, so the decode is not repeated; the detector pass is the added
+    # cost and is logged. Without the intervals the omission check has nothing to
+    # measure coverage against, so a failure here disables it loudly rather than
+    # leaving it silently dead.
+    speech_intervals = None
+    try:
+        decoded, speech_intervals, vad_seconds = prepare_audio(file_path, vad)
+        source = decoded
+        logger.info(
+            f"Voice activity for {guid}: {len(speech_intervals)} speech regions totalling "
+            f"{sum(e - st for st, e in speech_intervals):.1f}s of {duration_sec:.1f}s "
+            f"in {vad_seconds:.2f}s"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Could not decode or segment {file_path} for {guid}: {e}. Falling back to the "
+            f"file path; the omission check is disabled for this job."
+        )
+        source = file_path
+
     ladder = temperature_ladder(WHISPER_TEMPERATURE_BASE)
     decode_kwargs = {
         "language": WHISPER_LANGUAGE,
@@ -962,7 +1123,7 @@ def transcribe_audio(file_path, guid):
         """Decode once and score the result; returns (record, speech_seconds)."""
         decode_start = time.time()
         try:
-            raw_segments, info = model.transcribe(file_path, **kwargs)
+            raw_segments, info = model.transcribe(source, **kwargs)
             segments = [serialize_segment(s) for s in raw_segments]
         except Exception as e:
             logger.error(f"Error during the {label} decode for {guid}: {e}")
@@ -970,15 +1131,25 @@ def transcribe_audio(file_path, guid):
         # duration_after_vad is the speech the decoder actually saw. It is read before
         # scoring, not after: it is the honest denominator for a word rate and the
         # only reference the window check has for audio the decoder skipped entirely.
-        speech = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
-        record = summarize_pass(segments, duration_sec, label, speech_seconds=speech, guid=guid)
+        record = summarize_pass(segments, duration_sec, label,
+                                speech_intervals=speech_intervals, guid=guid)
         record["decode_seconds"] = round(time.time() - decode_start, 2)
+        # Prefer our own intervals: they are the basis coverage is measured on, so the
+        # ratio below is bounded by construction. duration_after_vad is the fallback
+        # when the detector could not run.
+        if speech_intervals is not None:
+            speech = sum(e - st for st, e in merge_intervals(speech_intervals))
+        else:
+            speech = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
         record["speech_seconds"] = speech
-        covered = sum(e - s for s, e in speech_spans(record["segments"]))
+        covered = sum(
+            e - st for st, e in covered_speech(record["segments"], speech_intervals or [])
+        )
+        ratio = covered / speech if speech > 0 else 0.0
         logger.info(
             f"{label} pass for {guid} in {record['decode_seconds']:.2f}s: {record['words']} words, "
-            f"{len(record['segments'])} segments covering {covered:.1f}s of {speech:.1f}s VAD speech, "
-            f"anomaly_count={record['anomaly_count']}, "
+            f"{len(record['segments'])} segments covering {covered:.1f}s of {speech:.1f}s speech "
+            f"(coverage_ratio={ratio:.3f}), anomaly_count={record['anomaly_count']}, "
             f"anomaly_windows={record['anomaly_windows']} of {record['windows']}, "
             f"flagged_segments={len(record['flagged_segments'])}"
         )

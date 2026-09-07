@@ -363,10 +363,12 @@ def test_rc060_post_stage_publishes_what_the_service_publishes(transcribe_module
     kept, transcript, timings = apply_production_postprocess(segments, 12.0, result)
 
     assert " ".join(t["text"] for t in timings) == transcript
-    assert transcript.count("the Lord is good") == 1
+    # These segments are sequential in time, so the repeated run is the speaker
+    # saying it twice and both occurrences are published.
+    assert transcript.count("the Lord is good") == 2
     assert len(kept) == 2
     assert result["production"]["anomaly_count"] == 0
-    assert result["production"]["words_before_dedupe"] > len(transcript.split())
+    assert result["production"]["words_before_dedupe"] == len(transcript.split())
 
 
 def test_level_aware_vad_uses_the_production_rule(monkeypatch, transcribe_module):

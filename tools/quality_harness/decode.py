@@ -268,7 +268,7 @@ def _record_production(result, record, raw_segments, extra=None):
     result["production"] = block
 
 
-def apply_production_postprocess(segments, duration, result, speech_seconds=None):
+def apply_production_postprocess(segments, duration, result, speech_intervals=None):
     """Run transcribe.py's post-decode stage: dedupe, anomaly score, loop flags.
 
     Returns (segments, transcript, timings) as the service would publish them, so the
@@ -277,12 +277,12 @@ def apply_production_postprocess(segments, duration, result, speech_seconds=None
     """
     from transcribe import summarize_pass, timings_from_segments
 
-    record = summarize_pass(segments, duration, "primary", speech_seconds=speech_seconds)
+    record = summarize_pass(segments, duration, "primary", speech_intervals=speech_intervals)
     _record_production(result, record, segments, {"rescue_attempted": False, "rescue_selected": False})
     return record["segments"], record["transcript"], timings_from_segments(record["segments"])
 
 
-def run_with_rescue(model, audio, kwargs, duration, result):
+def run_with_rescue(model, audio, kwargs, duration, result, speech_intervals=None):
     """The production two-pass path: primary, one rescue if it scores badly, then select.
 
     Uses transcribe.py's own trigger, rescue parameters and selection rule, so the
@@ -298,7 +298,7 @@ def run_with_rescue(model, audio, kwargs, duration, result):
 
     primary_run = run_sequential(model, audio, kwargs)
     primary = summarize_pass(primary_run["segments"], duration, "primary",
-                             speech_seconds=primary_run.get("duration_after_vad"))
+                             speech_intervals=speech_intervals)
     passes, runs = [primary], [primary_run]
 
     attempted = should_attempt_rescue(primary["anomaly_count"], primary["anomaly_windows"])
@@ -309,7 +309,7 @@ def run_with_rescue(model, audio, kwargs, duration, result):
         )
         rescue_run = run_sequential(model, audio, rescue_decode_kwargs(kwargs))
         passes.append(summarize_pass(rescue_run["segments"], duration, "rescue",
-                                     speech_seconds=rescue_run.get("duration_after_vad")))
+                                     speech_intervals=speech_intervals))
         runs.append(rescue_run)
 
     selected = select_pass(passes)
@@ -381,9 +381,15 @@ def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
                 if audio_path is None:
                     raise ValueError(f"config {name} needs the audio path to measure its level")
                 kwargs = apply_level_aware_vad(kwargs, audio_path, duration, result)
+            # The detector's own intervals, which is what production now measures
+            # coverage against; a plain sum of segment spans is not bounded by them.
+            own_intervals = (
+                vad_chunks_seconds(audio, kwargs["vad_parameters"])
+                if kwargs.get("vad_filter") else []
+            )
             if cfg.get("production_rescue"):
                 segments, transcript, timings, runs, p = run_with_rescue(
-                    model, audio, kwargs, duration, result
+                    model, audio, kwargs, duration, result, speech_intervals=own_intervals
                 )
             else:
                 p = run_sequential(model, audio, kwargs)
@@ -391,7 +397,7 @@ def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
                 segments, transcript, timings = p["segments"], p["transcript"], prod_timings(p["segments"])
                 if cfg.get("production_postprocess"):
                     segments, transcript, timings = apply_production_postprocess(
-                        segments, duration, result, speech_seconds=p.get("duration_after_vad")
+                        segments, duration, result, speech_intervals=own_intervals
                     )
             result.update(
                 {
@@ -401,7 +407,7 @@ def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
                     "timings": timings,
                     "ladder_base": kwargs["temperature"][0],
                     "selection": {"rule": "single"},
-                    "vad_chunks": vad_chunks_seconds(audio, kwargs["vad_parameters"]) if kwargs.get("vad_filter") else [],
+                    "vad_chunks": own_intervals,
                     "duration_after_vad": p["duration_after_vad"],
                 }
             )
