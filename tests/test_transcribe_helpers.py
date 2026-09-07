@@ -80,13 +80,39 @@ def test_duration_is_not_cached_by_path(transcribe_module, monkeypatch):
 # estimate_processing_seconds: one formula for /upload and the log line
 # --------------------------------------------------------------------------------------
 @pytest.mark.parametrize("duration", [0, 1, 30.0, 755.164, 2783.0])
-def test_estimate_matches_the_historical_formula(transcribe_module, duration):
-    expected = math.ceil(duration / 15.1) * 5 + 45
+def test_estimate_uses_the_recalibrated_formula(transcribe_module, duration):
+    """0.6.0 runs at about 0.05 of real time; the 0.5.x constant assumed 0.14."""
+    expected = math.ceil(duration * 0.06) + 60
     assert transcribe_module.estimate_processing_seconds(duration) == expected
+
+
+def test_the_retired_speed_factor_is_gone(transcribe_module):
+    """PROCESSING_SPEED_FACTOR was calibrated to the five-pass decode."""
+    assert not hasattr(transcribe_module, "PROCESSING_SPEED_FACTOR")
+
+
+@pytest.mark.parametrize(
+    "duration, ceiling",
+    [
+        (755.164, 138),   # 0.5.2 measured this file end to end at 138 s
+        (2783.0, 500),
+        (3388.0, 600),
+    ],
+)
+def test_estimate_covers_the_measured_wall_times(transcribe_module, duration, ceiling):
+    """The estimate is the client's ETA, so it must not promise faster than measured."""
+    estimate = transcribe_module.estimate_processing_seconds(duration)
+    assert estimate <= ceiling
+    # Measured 0.6.0 wall time is roughly 0.05 of real time plus model load.
+    assert estimate >= duration * 0.05
 
 
 def test_estimate_returns_an_int(transcribe_module):
     assert isinstance(transcribe_module.estimate_processing_seconds(755.164), int)
+
+
+def test_estimate_never_returns_less_than_the_fixed_overhead(transcribe_module):
+    assert transcribe_module.estimate_processing_seconds(0) == 60
 
 
 # --------------------------------------------------------------------------------------

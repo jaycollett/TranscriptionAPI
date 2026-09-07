@@ -61,6 +61,14 @@ C4_VAD = {
     "speech_pad_ms": 300,
 }
 
+# The 0.6.0 release candidate. Identical to C4 except that the threshold is chosen
+# per file from its measured level, and the decode is followed by the production
+# post-processing (segment-level boundary dedupe, anomaly score, loop flags). Both
+# come from transcribe.py itself rather than a copy, so what this measures is what
+# ships; `level_aware_vad` and `production_postprocess` are the two flags decode.py
+# reads to do that.
+RC060_VAD = dict(C4_VAD)
+
 
 def _delta(name, note, transcribe=None, **top):
     cfg = copy.deepcopy(BASE)
@@ -114,6 +122,13 @@ CONFIGS = {
     ),
     "C9": _delta("C9", "domain glossary as hotwords on every window", {"hotwords": GLOSSARY}),
     "C10": _delta("C10", "coarser fallback ladder", {"temperature": [0.0, 0.4, 0.8, 1.0]}),
+    "RC060": _delta(
+        "RC060",
+        "the 0.6.0 candidate: C1 decode, C4 VAD at a level-chosen threshold, production post-processing",
+        {"vad_parameters": dict(RC060_VAD), "hallucination_silence_threshold": 0.5},
+        level_aware_vad=True,
+        production_postprocess=True,
+    ),
 }
 
 # Keys the batched pipeline does not accept or ignores; dropped before the call.

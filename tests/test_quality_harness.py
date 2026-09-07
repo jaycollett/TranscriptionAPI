@@ -167,8 +167,17 @@ def test_build_clips_groups_runs_under_30s():
 def test_prod_helpers_match_transcribe(transcribe_module):
     for base in (0.0, 0.2, 0.3):
         assert prod_replica._temperature_ladder(base) == transcribe_module.temperature_ladder(base)
-    for text in ("He is risen. He is risen indeed.", "day by day by day", "no repeats here at all"):
-        assert prod_replica._clean_boundary_duplicates(text) == transcribe_module.clean_boundary_duplicates(text)
+
+
+def test_prod_replica_keeps_its_own_boundary_regex(transcribe_module):
+    """The PROD control must stay bug-for-bug identical to 0.5.x, which 0.6.0 is not.
+
+    transcribe.clean_boundary_duplicates is gone; prod_replica keeps its copy so the
+    2026-09-07 baseline can still be reproduced.
+    """
+    assert not hasattr(transcribe_module, "clean_boundary_duplicates")
+    assert prod_replica._clean_boundary_duplicates("He is risen. He is risen indeed.") == \
+        "He is risen.  indeed."
 
 
 def test_prod_pass_kwargs_are_the_production_call():
@@ -296,3 +305,81 @@ def test_glossary_stats_counts_terms_and_leakage():
     assert g["total_hits"] == 6
     assert g["leakage"] == 2  # "holy spirit bonhoeffer" and "bonhoeffer acts" in listed order
     assert len(configs.GLOSSARY_TERMS) == len(configs.GLOSSARY.split(","))
+
+
+# ------------------------------------------------------------------ RC060
+def test_rc060_mirrors_the_production_decode(transcribe_module):
+    """The release-candidate config must be the shipped configuration, not a near miss.
+
+    Every value here is read back off transcribe.py, so retuning the service through
+    its environment variables and forgetting the harness cannot silently invalidate a
+    validation run.
+    """
+    cfg = configs.get_config("RC060")
+    t = cfg["transcribe"]
+
+    assert cfg["pipeline"] == "sequential"
+    assert t["beam_size"] == transcribe_module.WHISPER_BEAM_SIZE
+    assert t["best_of"] == transcribe_module.WHISPER_BEST_OF
+    assert t["patience"] == transcribe_module.WHISPER_PATIENCE
+    assert tuple(t["temperature"]) == transcribe_module.temperature_ladder(
+        transcribe_module.WHISPER_TEMPERATURE_BASE
+    )
+    assert t["compression_ratio_threshold"] == transcribe_module.WHISPER_COMPRESSION_RATIO_THRESHOLD
+    assert t["log_prob_threshold"] == transcribe_module.WHISPER_LOG_PROB_THRESHOLD
+    assert t["no_speech_threshold"] == transcribe_module.WHISPER_NO_SPEECH_THRESHOLD
+    assert t["prompt_reset_on_temperature"] == transcribe_module.WHISPER_PROMPT_RESET_ON_TEMPERATURE
+    assert t["hallucination_silence_threshold"] == transcribe_module.WHISPER_HALLUCINATION_SILENCE_THRESHOLD
+    assert t["condition_on_previous_text"] is True
+    assert t["word_timestamps"] is True
+    assert t["language"] == "en"
+    assert t["initial_prompt"] is None and t["hotwords"] is None
+    assert cfg["model"]["num_workers"] == transcribe_module.WHISPER_NUM_WORKERS
+
+
+def test_rc060_vad_matches_production_at_the_loud_threshold(transcribe_module):
+    """The stored threshold is a placeholder; decode.py replaces it per file."""
+    vad = configs.get_config("RC060")["transcribe"]["vad_parameters"]
+    loud, _why = transcribe_module.choose_vad_threshold(-23.1)
+    assert vad == transcribe_module.vad_parameters(loud)
+
+
+def test_rc060_asks_for_the_level_rule_and_the_production_post_stage():
+    cfg = configs.get_config("RC060")
+    assert cfg["level_aware_vad"] is True
+    assert cfg["production_postprocess"] is True
+
+
+def test_rc060_post_stage_publishes_what_the_service_publishes(transcribe_module, monkeypatch):
+    """The post stage must produce the transcript and timings pair the API returns."""
+    from decode import apply_production_postprocess
+
+    monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
+    segments = [
+        seg(0.0, 4.0, "and he said to them the Lord is good"),
+        seg(4.0, 9.0, "the Lord is good and his mercy endures forever"),
+        seg(9.0, 12.0, ""),
+    ]
+    result = {}
+    kept, transcript, timings = apply_production_postprocess(segments, 12.0, result)
+
+    assert " ".join(t["text"] for t in timings) == transcript
+    assert transcript.count("the Lord is good") == 1
+    assert len(kept) == 2
+    assert result["production"]["anomaly_count"] == 0
+    assert result["production"]["words_before_dedupe"] > len(transcript.split())
+
+
+def test_level_aware_vad_uses_the_production_rule(monkeypatch, transcribe_module):
+    from decode import apply_level_aware_vad
+
+    monkeypatch.setattr(transcribe_module, "measure_mean_dbfs", lambda path, duration=0: -28.6)
+    monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
+
+    kwargs = {"vad_parameters": dict(configs.RC060_VAD)}
+    result = {}
+    kwargs = apply_level_aware_vad(kwargs, "/audio/retreat.mp3", 3388.0, result)
+
+    assert kwargs["vad_parameters"]["threshold"] == pytest.approx(0.35)
+    assert kwargs["vad_parameters"]["min_silence_duration_ms"] == 1000
+    assert result["level"]["mean_dbfs"] == pytest.approx(-28.6)

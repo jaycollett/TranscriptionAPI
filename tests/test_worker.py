@@ -189,7 +189,7 @@ def stub_pipeline(app_module, monkeypatch):
         return {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS, "duration_sec": 100.0}
 
     monkeypatch.setattr(app_module, "transcribe_audio", fake_transcribe)
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
     return processed
 
 
@@ -245,7 +245,7 @@ def test_cycle_requeue_returns_false_so_the_retry_waits(app_module, db, upload_d
         return {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS, "duration_sec": 100.0}
 
     monkeypatch.setattr(app_module, "transcribe_audio", flaky)
-    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g, d=None: (GOOD_TIMINGS, True, {"agree250": 1.0}))
     guid = _queue(db, upload_dir, 1)[0]
     cur = db.cursor()
 

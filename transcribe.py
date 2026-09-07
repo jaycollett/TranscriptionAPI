@@ -1,16 +1,28 @@
-import os
-import logging
-import warnings
-import threading
-import torch # type: ignore
-import math
-import numpy as np  # type: ignore
+"""Single-pass Faster-Whisper decode with per-segment diagnostics.
+
+0.6.0 replaced the five-pass decode and its duration-weighted confidence rule with
+one deterministic beam-5 pass (harness config C1) plus a level-aware VAD (C4) and a
+per-segment anomaly score (C2/C7). The measurements behind every constant here are in
+docs/QUALITY_PROPOSAL.md and tools/quality_harness/results/2026-09-07/summary.md.
+"""
+
 import json
+import logging
+import math
+import os
 import re
-from faster_whisper import WhisperModel # type: ignore
-from pydub import AudioSegment # type: ignore
-from pydub.utils import mediainfo # type: ignore
+import subprocess
+import threading
 import time
+import warnings
+from collections import Counter
+
+import torch  # type: ignore
+from faster_whisper import WhisperModel  # type: ignore
+from pydub import AudioSegment  # type: ignore
+from pydub.utils import mediainfo  # type: ignore
+
+from textnorm import norm_words
 
 # Set audio file location from environment variable or default to /tmp/audio_files
 upload_folder = os.getenv("UPLOAD_FOLDER", "/tmp/audio_files")
@@ -36,9 +48,88 @@ logger.info(f"Running Faster-Whisper on {device.upper()} with compute type {comp
 _whisper_model = None
 _model_lock = threading.Lock()
 
-# Processing speed factor: seconds of audio per unit of the estimate formula.
-# Calibrated to the five-pass decode; see docs/PUNCHLIST.md (pipeline item 16).
-PROCESSING_SPEED_FACTOR = 15.1
+
+# ---------------------------------------------------------------------------------
+# Tunables. Every one of these is an environment variable so the decode can be
+# retuned on a running container without a rebuild; the defaults are the measured
+# 0.6.0 configuration and changing one invalidates the harness baseline it was
+# measured against.
+# ---------------------------------------------------------------------------------
+def _env_float(name, default):
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(f"{name}={raw!r} is not a number; using the default {default}")
+        return float(default)
+
+
+def _env_int(name, default):
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(f"{name}={raw!r} is not an integer; using the default {default}")
+        return int(default)
+
+
+# Decode (harness C1). beam_size 5 with best_of 5 and patience 1.0 reproduced the
+# five-pass winner at a fifth of the wall time on all six reference files.
+WHISPER_BEAM_SIZE = _env_int("WHISPER_BEAM_SIZE", 5)
+WHISPER_BEST_OF = _env_int("WHISPER_BEST_OF", 5)
+WHISPER_PATIENCE = _env_float("WHISPER_PATIENCE", 1.0)
+WHISPER_TEMPERATURE_BASE = _env_float("WHISPER_TEMPERATURE_BASE", 0.0)
+WHISPER_TEMPERATURE_STEP = _env_float("WHISPER_TEMPERATURE_STEP", 0.2)
+WHISPER_COMPRESSION_RATIO_THRESHOLD = _env_float("WHISPER_COMPRESSION_RATIO_THRESHOLD", 2.4)
+WHISPER_LOG_PROB_THRESHOLD = _env_float("WHISPER_LOG_PROB_THRESHOLD", -1.0)
+WHISPER_NO_SPEECH_THRESHOLD = _env_float("WHISPER_NO_SPEECH_THRESHOLD", 0.6)
+WHISPER_PROMPT_RESET_ON_TEMPERATURE = _env_float("WHISPER_PROMPT_RESET_ON_TEMPERATURE", 0.5)
+WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "en")
+# One CUDA worker: the five-pass loop was sequential anyway, so the second worker
+# only ever doubled the resident model.
+WHISPER_NUM_WORKERS = _env_int("WHISPER_NUM_WORKERS", 1)
+
+# VAD (harness C4). The threshold is the one parameter that cannot be a constant:
+# at 0.5 the -28.6 dBFS retreat recording fragments into 2171 segments and loses
+# 290 words, and at 0.35 the louder files cut a seam at every pause over 0.8 s.
+VAD_THRESHOLD = _env_float("VAD_THRESHOLD", 0.5)
+VAD_THRESHOLD_QUIET = _env_float("VAD_THRESHOLD_QUIET", 0.35)
+# The cutover sits between the quietest file that worked at 0.5 (-24.5 dBFS) and the
+# one that failed (-28.6 dBFS).
+VAD_LEVEL_CUTOVER_DBFS = _env_float("VAD_LEVEL_CUTOVER_DBFS", -26.0)
+VAD_MIN_SPEECH_MS = _env_int("VAD_MIN_SPEECH_DURATION_MS", 250)
+VAD_MIN_SILENCE_MS = _env_int("VAD_MIN_SILENCE_DURATION_MS", 1000)
+VAD_SPEECH_PAD_MS = _env_int("VAD_SPEECH_PAD_MS", 300)
+# Drop text the model produced over silence longer than this. It has to be under the
+# 2 x speech_pad_ms of silence the VAD leaves around each chunk or it can never fire,
+# which is why the 2.0 the service used to carry was dead weight.
+WHISPER_HALLUCINATION_SILENCE_THRESHOLD = _env_float("WHISPER_HALLUCINATION_SILENCE_THRESHOLD", 0.5)
+
+# Anomaly score (harness C2) and the loop flagger (C7).
+ANOMALY_TEMPERATURE = _env_float("ANOMALY_TEMPERATURE", 0.5)
+ANOMALY_NO_SPEECH_PROB = _env_float("ANOMALY_NO_SPEECH_PROB", 0.5)
+ANOMALY_WINDOW_SEC = _env_float("ANOMALY_WINDOW_SEC", 60.0)
+ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.2)
+# A window shorter than this is not scored: a 12 s tail is not evidence of collapse.
+ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
+LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
+
+# Boundary de-duplication: the longest and shortest overlap between the tail of one
+# segment and the head of the next that is treated as a duplicate.
+BOUNDARY_DEDUPE_MIN_WORDS = _env_int("BOUNDARY_DEDUPE_MIN_WORDS", 2)
+BOUNDARY_DEDUPE_MAX_WORDS = _env_int("BOUNDARY_DEDUPE_MAX_WORDS", 5)
+
+# Real-time factor for the client-facing estimate. Measured on the six reference
+# files: Whisper about 0.027 and MFA about 0.022 of real time on the 12 GB card, so
+# 0.06 leaves headroom for a queue wake and the level measurement.
+PROCESSING_REALTIME_FACTOR = _env_float("PROCESSING_REALTIME_FACTOR", 0.06)
+PROCESSING_FIXED_OVERHEAD_SEC = _env_int("PROCESSING_FIXED_OVERHEAD_SEC", 60)
+
+_MEAN_VOLUME_RE = re.compile(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB")
 
 
 def whisper_model_loaded():
@@ -51,8 +142,14 @@ def estimate_processing_seconds(duration_sec):
 
     One formula shared by /upload (the ETA the client is given) and the
     transcription log line, so the two can never drift apart.
+
+    The 0.5.x PROCESSING_SPEED_FACTOR constant is retired: it was calibrated to the
+    five-pass decode, which ran at 0.13-0.14 of real time. The single pass plus
+    per-utterance MFA runs at about 0.05, so the old formula over-promised the queue
+    by a factor of three.
     """
-    return math.ceil(float(duration_sec) / PROCESSING_SPEED_FACTOR) * 5 + 45
+    return math.ceil(float(duration_sec) * PROCESSING_REALTIME_FACTOR) + PROCESSING_FIXED_OVERHEAD_SEC
+
 
 def load_whisper_model():
     """Load the Faster-Whisper model once and reuse it."""
@@ -62,60 +159,30 @@ def load_whisper_model():
             start_time = time.time()
             logger.info("Loading Faster-Whisper model...")
             model_name = os.environ.get("MODEL", "large-v3-turbo")
+            kwargs = {
+                "device": device,
+                "compute_type": compute_type,
+                "cpu_threads": os.cpu_count(),
+                "num_workers": WHISPER_NUM_WORKERS,
+            }
             # Try to load from local cache first
             local_model_path = "/app/models/whisper"
             if os.path.exists(local_model_path):
                 logger.info(f"Loading Whisper model from local cache: {local_model_path}")
-                _whisper_model = WhisperModel(
-                    model_name,
-                    device=device,
-                    compute_type=compute_type,
-                    cpu_threads=os.cpu_count(),
-                    num_workers=2,
-                    download_root=local_model_path
-                )
+                kwargs["download_root"] = local_model_path
             else:
                 logger.info("Local Whisper model cache not found, downloading from internet")
-                _whisper_model = WhisperModel(
-                    model_name,
-                    device=device,
-                    compute_type=compute_type,
-                    cpu_threads=os.cpu_count(),
-                    num_workers=2
-                )
+            _whisper_model = WhisperModel(model_name, **kwargs)
             elapsed = time.time() - start_time
             logger.info(f"Faster-Whisper model '{model_name}' loaded successfully in {elapsed:.2f} seconds")
     return _whisper_model
+
 
 def normalize_timestamp(ts):
     """Convert timestamp to a consistent format (float)"""
     if isinstance(ts, (tuple, list)):
         return float(ts[0])
     return float(ts)
-
-def clean_boundary_duplicates(text):
-    """
-    Remove duplicated phrases that might occur at segment boundaries.
-    Finds word sequences (2+ words) that repeat with optional spacing/punctuation between.
-    """
-    # Find word sequences that repeat (with at least 2 words)
-    pattern = r'\b(\w+\s+\w+(?:\s+\w+){0,3})[.,;!?\s]*\1\b'
-    
-    while True:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if not match:
-            break
-        
-        # Replace the second occurrence with empty string
-        start, end = match.span()
-        phrase = match.group(1)
-        phrase_len = len(phrase)
-        duplicate_pos = text[start:end].lower().find(phrase.lower(), phrase_len)
-        if duplicate_pos > 0:
-            duplicate_pos += start
-            text = text[:duplicate_pos] + text[duplicate_pos + phrase_len:]
-    
-    return text
 
 
 # NOTE (2026-09-07): preprocess_audio_for_transcription() was removed.
@@ -132,19 +199,33 @@ def clean_boundary_duplicates(text):
 # Deleted rather than repaired: a correct noise-floor estimate would need non-speech
 # frame detection, and doing nothing is already the better answer.
 
+# NOTE (2026-09-07): clean_boundary_duplicates() was removed in 0.6.0.
+# It ran a repeated-phrase regex over the transcript string and left the timings
+# untouched, so `" ".join(t["text"] for t in timings) == transcription` was false on
+# every production job, and a third variant of the word sequence reached MFA. The
+# regex also deleted legitimate repetition anywhere in the file, not just at a seam:
+# "He is risen. He is risen indeed." became "He is risen.  indeed.", "pray without
+# ceasing. Pray without ceasing." became "pray without ceasing. .", and "day by day
+# by day" became "day by  day". deduplicate_segment_boundaries() below replaces it
+# with a check that only ever looks across a segment seam and that edits the
+# segments themselves, so text and timings stay one sequence.
 
-def temperature_ladder(base, step=0.2):
+
+def temperature_ladder(base, step=None):
     """Return the temperature fallback ladder faster-whisper expects.
 
     faster-whisper only performs temperature fallback when `temperature` is a
     sequence; a scalar is wrapped into a single-element list, which disables the
     fallback entirely. Fallback is the built-in escape from a decode that trips the
     compression-ratio or log-probability thresholds, i.e. exactly the mid-file
-    collapse this service was producing. Above 0.5 faster-whisper also resets the
-    previous-text prompt, which breaks any repetition loop already under way.
+    collapse this service was producing. At or above
+    WHISPER_PROMPT_RESET_ON_TEMPERATURE faster-whisper also resets the previous-text
+    prompt, which breaks any repetition loop already under way.
 
     The ladder runs from `base` up to 1.0 inclusive; `base` is clamped to [0.0, 1.0].
     """
+    if step is None:
+        step = WHISPER_TEMPERATURE_STEP
     base = min(max(float(base), 0.0), 1.0)
     steps = []
     t = base
@@ -176,10 +257,384 @@ def get_audio_duration(file_path):
     audio = AudioSegment.from_file(file_path)
     return len(audio) / 1000.0  # Convert milliseconds to seconds
 
-def transcribe_audio(file_path, guid):
+
+# ---------------------------------------------------------------------------------
+# Level-aware VAD
+# ---------------------------------------------------------------------------------
+def measure_mean_dbfs(file_path, duration_sec=0):
+    """Mean RMS level of the file in dBFS, or None if it cannot be measured.
+
+    ffmpeg's volumedetect filter reports exactly the quantity the -26 dBFS cutover
+    was derived from, so it is the primary measurement; pydub's dBFS (the same RMS
+    over a full decode) is the fallback for a build without the filter. Both decode
+    the whole file, which costs a few seconds on a sermon and is why the result is
+    measured once per job and passed around rather than recomputed.
     """
-    Performs multi-pass Faster-Whisper transcription, penalizing passes with a low word rate.
-    Returns the best transcript (with timings) based on an adjusted confidence score.
+    timeout = max(120.0, float(duration_sec or 0) * 0.25)
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-nostdin", "-hide_banner", "-i", file_path,
+             "-map", "0:a:0", "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        # volumedetect writes to stderr; take the last match in case of several streams.
+        matches = _MEAN_VOLUME_RE.findall(proc.stderr or "")
+        if matches:
+            return float(matches[-1])
+        logger.warning(f"volumedetect reported no mean_volume for {file_path} (rc={proc.returncode})")
+    except Exception as e:
+        logger.warning(f"volumedetect failed for {file_path}: {e}")
+
+    try:
+        level = AudioSegment.from_file(file_path).dBFS
+        if level is not None and level != float("-inf") and not math.isnan(level):
+            return float(level)
+    except Exception as e:
+        logger.warning(f"pydub level measurement failed for {file_path}: {e}")
+    return None
+
+
+def choose_vad_threshold(mean_dbfs):
+    """Pick the Silero threshold for a file at `mean_dbfs`; returns (threshold, why).
+
+    Quiet material is the failure case: at the 0.5 threshold the -28.6 dBFS retreat
+    recording fragmented into 1.4 s segments and lost 290 words. An unmeasurable
+    level therefore takes the cautious 0.35 branch, which is what 0.5.x used on
+    every file.
+    """
+    if mean_dbfs is None:
+        return VAD_THRESHOLD_QUIET, "level unknown, using the quiet-file threshold"
+    if mean_dbfs >= VAD_LEVEL_CUTOVER_DBFS:
+        return VAD_THRESHOLD, f"{mean_dbfs:.1f} dBFS at or above the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
+    return VAD_THRESHOLD_QUIET, f"{mean_dbfs:.1f} dBFS below the {VAD_LEVEL_CUTOVER_DBFS:.1f} dBFS cutover"
+
+
+def vad_parameters(threshold):
+    """The VAD settings the decode runs with, at the given threshold."""
+    return {
+        "threshold": threshold,
+        "min_speech_duration_ms": VAD_MIN_SPEECH_MS,
+        "min_silence_duration_ms": VAD_MIN_SILENCE_MS,
+        "speech_pad_ms": VAD_SPEECH_PAD_MS,
+    }
+
+
+# ---------------------------------------------------------------------------------
+# Per-segment diagnostics, anomaly score and loop flag
+# ---------------------------------------------------------------------------------
+def serialize_segment(seg):
+    """Flatten a faster-whisper Segment into plain JSON-able data.
+
+    Everything downstream (the anomaly score, the boundary de-duplication, MFA word
+    matching and the timing fallback) works on these dicts, so nothing after the
+    decode holds a reference to the library's objects.
+    """
+    words = None
+    raw_words = getattr(seg, "words", None)
+    if raw_words:
+        words = []
+        for w in raw_words:
+            words.append({
+                "start": normalize_timestamp(w.start),
+                "end": normalize_timestamp(w.end),
+                "word": w.word,
+                "probability": float(w.probability) if w.probability is not None else None,
+            })
+
+    def _opt_float(name):
+        value = getattr(seg, name, None)
+        return float(value) if value is not None else None
+
+    return {
+        "id": getattr(seg, "id", None),
+        "seek": getattr(seg, "seek", None),
+        "start": normalize_timestamp(seg.start),
+        "end": normalize_timestamp(seg.end),
+        "text": (seg.text or "").strip(),
+        "avg_logprob": _opt_float("avg_logprob"),
+        "compression_ratio": _opt_float("compression_ratio"),
+        "no_speech_prob": _opt_float("no_speech_prob"),
+        "temperature": _opt_float("temperature"),
+        "words": words,
+    }
+
+
+def repeated_4gram_rate(text):
+    """Share of a segment's 4-grams that occur more than once (harness C7).
+
+    On the six reference files every segment over 0.3 was genuine rhetorical
+    repetition, so this marks a segment for review; it never rejects a job.
+    """
+    words = norm_words(text)
+    if len(words) < 4:
+        return 0.0
+    grams = [tuple(words[i:i + 4]) for i in range(len(words) - 3)]
+    counts = Counter(grams)
+    return sum(c for c in counts.values() if c > 1) / len(grams)
+
+
+def segment_flags(segment):
+    """Diagnostic flags for one segment: the C2 anomaly reasons plus the C7 loop mark.
+
+    'loop' is deliberately not an anomaly reason. It reads rhetorical repetition as
+    often as a decoder loop, so it is surfaced for review and left out of the count
+    that can requeue a job.
+    """
+    flags = []
+    temperature = segment.get("temperature")
+    if temperature is not None and temperature >= ANOMALY_TEMPERATURE:
+        flags.append("temperature")
+    compression_ratio = segment.get("compression_ratio")
+    if compression_ratio is not None and compression_ratio > WHISPER_COMPRESSION_RATIO_THRESHOLD:
+        flags.append("compression_ratio")
+    avg_logprob = segment.get("avg_logprob")
+    if avg_logprob is not None and avg_logprob < WHISPER_LOG_PROB_THRESHOLD:
+        flags.append("avg_logprob")
+    no_speech_prob = segment.get("no_speech_prob")
+    if (no_speech_prob is not None and no_speech_prob > ANOMALY_NO_SPEECH_PROB
+            and segment.get("text", "").strip()):
+        flags.append("no_speech")
+    if repeated_4gram_rate(segment.get("text", "")) > LOOP_4GRAM_RATE:
+        flags.append("loop")
+    return flags
+
+
+ANOMALY_FLAGS = frozenset({"temperature", "compression_ratio", "avg_logprob", "no_speech"})
+
+
+def annotate_segments(segments):
+    """Attach `flags` to every segment; returns (anomaly_count, flagged_segments)."""
+    anomaly_count = 0
+    flagged = []
+    for index, segment in enumerate(segments):
+        flags = segment_flags(segment)
+        segment["flags"] = flags
+        if not flags:
+            continue
+        flagged.append({
+            "index": index,
+            "start": round(segment["start"], 3),
+            "end": round(segment["end"], 3),
+            "flags": flags,
+        })
+        if ANOMALY_FLAGS.intersection(flags):
+            anomaly_count += 1
+    return anomaly_count, flagged
+
+
+def speech_spans(segments):
+    """Merge the segments' own spans into non-overlapping speech runs.
+
+    The window check needs a clock that skips silence, or a file with a ten minute
+    break before the Q&A reads as a collapse. faster-whisper does not hand back the
+    VAD chunks it used, and re-running the VAD would mean decoding the audio a second
+    time, so the segments' own spans stand in for them: under `vad_filter` a segment
+    only exists where the VAD found speech.
+    """
+    spans = []
+    for segment in segments:
+        start, end = segment["start"], segment["end"]
+        if end <= start:
+            continue
+        if spans and start <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], end))
+        else:
+            spans.append((start, end))
+    return spans
+
+
+class SpeechClock:
+    """Maps file time to cumulative speech time given speech spans in seconds."""
+
+    def __init__(self, spans):
+        self.spans = sorted((float(s), float(e)) for s, e in spans)
+        self.total = sum(e - s for s, e in self.spans)
+        self.before = []
+        acc = 0.0
+        for s, e in self.spans:
+            self.before.append(acc)
+            acc += e - s
+
+    def speech_time(self, t):
+        if not self.spans:
+            return t
+        for (s, e), before in zip(self.spans, self.before):
+            if t < s:
+                return before
+            if t <= e:
+                return before + (t - s)
+        return self.total
+
+
+def flat_words(segments):
+    """Every word of a segment list in order, as (start, end, normalised token)."""
+    out = []
+    for segment in segments:
+        for word in segment.get("words") or []:
+            for token in norm_words(word["word"]):
+                out.append((word["start"], word["end"], token))
+    return out
+
+
+def low_speech_windows(segments, duration_sec):
+    """Count 60 s windows of speech carrying under 1.2 words/sec (harness C2).
+
+    Returns (windows, low_count). The whole-file word rate hides a partial collapse:
+    a file that transcribes normally for forty minutes and produces nothing for ten
+    still clears the floor, and this is what catches it.
+    """
+    clock = SpeechClock(speech_spans(segments))
+    total = clock.total
+    if total <= 0:
+        return [], 0
+    counts = Counter()
+    for start, end, _ in flat_words(segments):
+        midpoint = (start + end) / 2.0
+        counts[int(clock.speech_time(midpoint) // ANOMALY_WINDOW_SEC)] += 1
+    full_windows = int(total // ANOMALY_WINDOW_SEC)
+    tail = total - full_windows * ANOMALY_WINDOW_SEC
+    windows = [counts[i] / ANOMALY_WINDOW_SEC for i in range(full_windows)]
+    if tail >= ANOMALY_WINDOW_MIN_TAIL_SEC:
+        windows.append(counts[full_windows] / tail)
+    return windows, sum(1 for w in windows if w < ANOMALY_WINDOW_MIN_WPS)
+
+
+# ---------------------------------------------------------------------------------
+# Boundary de-duplication
+# ---------------------------------------------------------------------------------
+def _segment_tokens(segment):
+    """(word_index, normalised token) for a segment, skipping pure punctuation.
+
+    A word that normalises to several tokens ("well-known") is represented by its
+    whole normalised form, so trimming can only ever remove whole Whisper words.
+    """
+    tokens = []
+    words = segment.get("words")
+    if words:
+        for index, word in enumerate(words):
+            normalised = " ".join(norm_words(word["word"]))
+            if normalised:
+                tokens.append((index, normalised))
+    else:
+        for index, raw in enumerate(segment.get("text", "").split()):
+            normalised = " ".join(norm_words(raw))
+            if normalised:
+                tokens.append((index, normalised))
+    return tokens
+
+
+def _text_from_words(words):
+    """Rebuild segment text from Whisper word tokens, which carry their own spacing."""
+    return "".join(w["word"] for w in words).strip()
+
+
+def deduplicate_segment_boundaries(segments):
+    """Drop a phrase repeated across a segment seam, editing the segments themselves.
+
+    When the last k words of segment N (k from BOUNDARY_DEDUPE_MAX_WORDS down to
+    BOUNDARY_DEDUPE_MIN_WORDS) equal the first k words of segment N+1, ignoring case
+    and punctuation, those k words are removed from the start of N+1 and its start
+    moves to the first surviving word's timestamp. Nothing inside a segment is ever
+    touched, so "He is risen. He is risen indeed." survives whole.
+
+    Returns a new list; segments emptied by the trim are dropped.
+    """
+    result = []
+    for segment in segments:
+        segment = dict(segment)
+        if segment.get("words") is not None:
+            segment["words"] = [dict(w) for w in segment["words"]]
+        if not segment.get("text", "").strip():
+            continue
+        if result:
+            previous = result[-1]
+            trim = _boundary_overlap(previous, segment)
+            if trim:
+                segment = _trim_leading_words(segment, trim)
+                if segment is None:
+                    continue
+        result.append(segment)
+    return result
+
+
+def _boundary_overlap(previous, segment):
+    """Number of leading words of `segment` duplicated at the end of `previous`."""
+    previous_tokens = [t for _, t in _segment_tokens(previous)]
+    segment_tokens = [t for _, t in _segment_tokens(segment)]
+    upper = min(BOUNDARY_DEDUPE_MAX_WORDS, len(previous_tokens), len(segment_tokens))
+    # Longest overlap first: "the Lord is good" must not be trimmed as "is good".
+    for k in range(upper, BOUNDARY_DEDUPE_MIN_WORDS - 1, -1):
+        if previous_tokens[-k:] == segment_tokens[:k]:
+            return k
+    return 0
+
+
+def _trim_leading_words(segment, count):
+    """Remove `count` leading words from a segment; None when nothing survives."""
+    tokens = _segment_tokens(segment)
+    if count >= len(tokens):
+        return None
+    first_kept = tokens[count][0]
+    words = segment.get("words")
+    if words:
+        survivors = words[first_kept:]
+        text = _text_from_words(survivors)
+        if not text:
+            return None
+        segment["words"] = survivors
+        segment["text"] = text
+        segment["start"] = normalize_timestamp(survivors[0]["start"])
+    else:
+        parts = segment.get("text", "").split()
+        text = " ".join(parts[first_kept:]).strip()
+        if not text:
+            return None
+        segment["text"] = text
+    return segment
+
+
+def whisper_span(segment):
+    """(start, end) from a segment's own word timestamps, falling back to its bounds.
+
+    This is the reference the refined MFA timings are compared against and the
+    fallback used for any segment MFA did not cover; the segment bounds are padded
+    by the VAD, so the words are the tighter and more honest answer.
+    """
+    words = segment.get("words")
+    if words:
+        return float(words[0]["start"]), float(words[-1]["end"])
+    return float(segment["start"]), float(segment["end"])
+
+
+def timings_from_segments(segments):
+    """The API's timings list: {start, end, text} floats, in order."""
+    timings = []
+    for segment in segments:
+        text = segment.get("text", "").strip()
+        if not text:
+            continue
+        start, end = whisper_span(segment)
+        timings.append({"start": start, "end": end, "text": text})
+    return timings
+
+
+def transcript_from_segments(segments):
+    """The transcription string, joined so it always equals the timings' texts."""
+    return " ".join(s["text"].strip() for s in segments if s.get("text", "").strip())
+
+
+# ---------------------------------------------------------------------------------
+# The decode
+# ---------------------------------------------------------------------------------
+def transcribe_audio(file_path, guid):
+    """Decode `file_path` in one pass and return the transcript with diagnostics.
+
+    Returns a dict with the API-facing keys (`transcription`, `timings`,
+    `duration_sec`) plus the diagnostics 0.6.0 added: `segments` (each with its
+    faster-whisper fields, word timestamps and `flags`), `anomaly_count`,
+    `anomaly_windows`, `flagged_segments`, `speech_seconds`, `mean_dbfs` and
+    `vad_threshold`. `" ".join(t["text"] for t in timings) == transcription` always
+    holds.
     """
     start_time = time.time()
     logger.info(f"Starting transcription for: {file_path} (GUID: {guid})")
@@ -187,203 +642,104 @@ def transcribe_audio(file_path, guid):
     try:
         duration_sec = get_audio_duration(file_path)
         estimated_processing_time = estimate_processing_seconds(duration_sec)
-        logger.info(f"Audio duration: {duration_sec:.2f} seconds. Estimated processing time: ~{estimated_processing_time/60:.2f} min")
+        logger.info(
+            f"Audio duration: {duration_sec:.2f} seconds. "
+            f"Estimated processing time: ~{estimated_processing_time / 60:.2f} min"
+        )
     except Exception as e:
         logger.warning(f"Could not calculate estimated processing time: {e}")
         duration_sec = 0
 
     # No preprocessing: faster-whisper normalises internally and the previous
     # denoise stage measurably degraded every file (see note above).
-    processed_file_path = file_path
-    logger.info(f"Using audio file for transcription: {processed_file_path}")
+    logger.info(f"Using audio file for transcription: {file_path}")
+
+    mean_dbfs = measure_mean_dbfs(file_path, duration_sec)
+    threshold, why = choose_vad_threshold(mean_dbfs)
+    logger.info(f"Audio level for {guid}: {'unknown' if mean_dbfs is None else f'{mean_dbfs:.1f} dBFS'}; "
+                f"VAD threshold {threshold} ({why})")
 
     model = load_whisper_model()  # Load the Whisper model (cached)
 
-    # Define transcription passes with different parameters.
-    # "temperature" is the BASE of each pass's fallback ladder, not a scalar.
-    passes = [
-        {"temperature": 0.2, "patience": 3.0, "beam_size": 5},
-        {"temperature": 0.0, "patience": 2.8, "beam_size": 7},
-        {"temperature": 0.0, "patience": 2.5, "beam_size": 1},  # Greedy
-        {"temperature": 0.3, "patience": 3.2, "beam_size": 10},
-        {"temperature": 0.2, "patience": 3.5, "beam_size": 15, "condition_on_previous_text": False}
-    ]
-
-    transcriptions = []  # Store raw transcripts from each pass
-    confidence_scores = []
-    all_segments = []   # List to hold segments from each pass
-    word_counts = []    # List to store word count for each pass
-    adjusted_confidences = []  # List to store adjusted confidence values
-
-    def calculate_weighted_confidence(segments):
-        """
-        Calculate a weighted average confidence score for a list of transcription segments.
-        Each word's probability is weighted by its duration.
-        """
-        total_duration = 0.0  # Total duration of all words
-        weighted_sum = 0.0
-
-        for segment in segments:
-            words = getattr(segment, "words", None)
-            if not words:
-                continue
-            for word in words:
-                prob = getattr(word, "probability", None)
-                if prob is None or prob <= 0:
-                    continue
-                word_start = getattr(word, "start", None)
-                word_end = getattr(word, "end", None)
-                if word_start is not None and word_end is not None:
-                    duration = word_end - word_start
-                else:
-                    seg_start = getattr(segment, "start", 0)
-                    seg_end = getattr(segment, "end", 0)
-                    seg_duration = seg_end - seg_start
-                    duration = seg_duration / len(words) if len(words) > 0 else 0
-                weighted_sum += duration * prob
-                total_duration += duration
-
-        return weighted_sum / total_duration if total_duration > 0 else 0.0  # Avoid division by zero
-
-
-    def run_transcription_pass(params, pass_index):
-        """
-        Run a single transcription pass using the given parameters.
-        Returns a dict containing the segments, transcript, and confidence.
-        """
-        pass_start_time = time.time()  # Track how long this pass takes
-        logger.info(f"Starting pass {pass_index+1} with patience={params['patience']}, temperature={params['temperature']}, and beam_size={params['beam_size']}")
-        try:
-            segments = list(model.transcribe(
-                processed_file_path,
-                language="en",
-                vad_filter=True,
-                vad_parameters={"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300},
-                beam_size=params["beam_size"],
-                temperature=temperature_ladder(params["temperature"]),
-                word_timestamps="all",
-                suppress_tokens=[-1],
-                # No initial_prompt. The previous one asserted "a single speaker",
-                # which is false for these multi-voice class and Q&A recordings, and
-                # a prompt is prepended as previous-text context, so it can prime the
-                # repetition loops it was meant to prevent. The configuration measured
-                # at 2.77 words/sec on this material used no prompt at all.
-                condition_on_previous_text=params.get("condition_on_previous_text", True),
-                patience=params["patience"]
-            )[0])
-            transcript = " ".join(segment.text.strip() for segment in segments if segment.text.strip())
-            words = len(transcript.split())
-            wps = words / duration_sec if duration_sec > 0 else 0
-            total_duration = duration_sec  # Define total_duration for logging and validation
-            logger.info(f"Pass {pass_index+1} stats: {words} words in {total_duration:.1f}s audio ({wps:.2f} words/sec)")
-            if total_duration > 5.0 and words < int(total_duration / 4):
-                expected_words = int(total_duration / 4)
-                logger.warning(f"Suspiciously short transcript detected ({words} words for {total_duration:.1f}s audio, expected at least {expected_words}).")
-        except Exception as e:
-            logger.error(f"Error during transcription in pass {pass_index+1}: {str(e)}")
-            raise
-
-        avg_confidence = calculate_weighted_confidence(segments)  # Compute confidence score
-        pass_time = time.time() - pass_start_time
-        logger.info(f"Pass {pass_index+1} completed in {pass_time:.2f}s with weighted confidence score: {avg_confidence:.4f}")
-        
-        # Normalize timestamps to ensure consistent format (float)
-        normalized_segments = []
-        for seg in segments:
-            if seg.text.strip():  # Only process non-empty segments
-                normalized_segments.append({
-                    "start": normalize_timestamp(seg.start),
-                    "end": normalize_timestamp(seg.end),
-                    "text": seg.text.strip(),
-                    "confidence": calculate_weighted_confidence([seg]),
-                    "original_segment": seg  # Keep original segment for later processing
-                })
-        
-        return {
-            "segments": segments,
-            "transcript": transcript,
-            "confidence": avg_confidence,
-            "segment_confidences": normalized_segments
-        }
-
-    # Run each transcription pass sequentially.
-    transcriptions = []
-    all_segments = []
-    confidence_scores = []
-    word_counts = []
-    adjusted_confidences = []
-
-    for i, params in enumerate(passes):
-        result = run_transcription_pass(params, i)
-        transcript = result["transcript"]
-        segments = result["segments"]
-        conf = result["confidence"]
-
-        transcriptions.append(transcript)
-        all_segments.append(segments)
-        confidence_scores.append(conf)
-
-        wc = len(transcript.split())
-        word_counts.append(wc)
-        # Compute words per second for this pass
-        wps = wc / duration_sec if duration_sec > 0 else 0
-
-        # If the pass has less than 1.4 words per second, penalize its confidence.
-        if wps < 1.4:
-            adjusted = conf * (wps / 1.4)
-        else:
-            adjusted = conf
-        adjusted_confidences.append(adjusted)
-        logger.info(f"Pass {i+1} adjusted confidence: {adjusted:.4f} (word rate: {wps:.2f} words/sec, word count: {wc})")
-
-    if not adjusted_confidences:
-        logger.error(f"Whisper transcription failed for {guid}: No valid transcription found")
-        return {"transcription": "", "timings": [], "duration_sec": duration_sec}
-
-    # Select the best pass based on the adjusted confidence scores.
-    best_index = int(np.argmax(adjusted_confidences))  # Choose the best scoring pass
-    best_result = {
-        "segments": all_segments[best_index],
-        "transcript": transcriptions[best_index],
-        "confidence": confidence_scores[best_index],
-        "segment_confidences": [
-            {
-                "start": normalize_timestamp(seg.start),
-                "end": normalize_timestamp(seg.end),
-                "text": seg.text.strip(),
-                "confidence": calculate_weighted_confidence([seg]),
-                "original_segment": seg
-            }
-            for seg in all_segments[best_index] if seg.text.strip()
-        ]
+    ladder = temperature_ladder(WHISPER_TEMPERATURE_BASE)
+    decode_kwargs = {
+        "language": WHISPER_LANGUAGE,
+        "beam_size": WHISPER_BEAM_SIZE,
+        "best_of": WHISPER_BEST_OF,
+        "patience": WHISPER_PATIENCE,
+        "temperature": ladder,
+        "compression_ratio_threshold": WHISPER_COMPRESSION_RATIO_THRESHOLD,
+        "log_prob_threshold": WHISPER_LOG_PROB_THRESHOLD,
+        "no_speech_threshold": WHISPER_NO_SPEECH_THRESHOLD,
+        "condition_on_previous_text": True,
+        "prompt_reset_on_temperature": WHISPER_PROMPT_RESET_ON_TEMPERATURE,
+        "word_timestamps": True,
+        "vad_filter": True,
+        "vad_parameters": vad_parameters(threshold),
+        "hallucination_silence_threshold": WHISPER_HALLUCINATION_SILENCE_THRESHOLD,
+        # No initial_prompt and no hotwords. The old prompt asserted "a single
+        # speaker", which is false for these multi-voice class and Q&A recordings,
+        # and a prompt is prepended as previous-text context, so it primes the
+        # repetition loops it was meant to prevent. Measured hotwords (harness C9)
+        # raised the repeated 4-gram rate from 0.031 to 0.140 for no spelling gain.
     }
 
-    # Use the best pass segments directly without reprocessing low-confidence segments.
-    best_segments = best_result["segments"].copy()  # Create a copy to avoid modifying the original
+    logger.info(
+        f"Decoding {guid}: beam_size={WHISPER_BEAM_SIZE}, best_of={WHISPER_BEST_OF}, "
+        f"patience={WHISPER_PATIENCE}, temperature ladder {ladder}"
+    )
+    decode_start = time.time()
+    try:
+        raw_segments, info = model.transcribe(file_path, **decode_kwargs)
+        segments = [serialize_segment(s) for s in raw_segments]
+    except Exception as e:
+        logger.error(f"Error during transcription for {guid}: {e}")
+        raise
+    decode_seconds = time.time() - decode_start
 
-    final_transcript = " ".join(segment.text.strip() for segment in best_segments if segment.text.strip())
-    final_transcript = clean_boundary_duplicates(final_transcript)
+    # duration_after_vad is the speech the decoder actually saw; it is the honest
+    # denominator for a word rate, and the only place faster-whisper reports it.
+    speech_seconds = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
 
-    # Extract segment timings for storage using normalized timestamps
-    final_timings = []
-    for seg in best_segments:
-        if seg.text.strip():
-            final_timings.append({
-                "start": normalize_timestamp(seg.start),
-                "end": normalize_timestamp(seg.end),
-                "text": seg.text.strip()
-            })
+    segments = [s for s in segments if s["text"].strip()]
+    segments = deduplicate_segment_boundaries(segments)
+    anomaly_count, flagged_segments = annotate_segments(segments)
+    windows, anomaly_windows = low_speech_windows(segments, duration_sec)
 
-    # The MFA transcript file is written by app.run_forced_alignment from the
-    # returned timings; nothing here needs to touch the upload folder.
+    transcription = transcript_from_segments(segments)
+    timings = timings_from_segments(segments)
+
+    words = len(transcription.split())
+    wps = words / duration_sec if duration_sec > 0 else 0.0
+    logger.info(
+        f"Decoded {guid} in {decode_seconds:.2f}s: {words} words in {duration_sec:.1f}s audio "
+        f"({wps:.2f} words/sec), {len(segments)} segments, {speech_seconds:.1f}s speech, "
+        f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows} of {len(windows)}, "
+        f"flagged_segments={len(flagged_segments)}"
+    )
+
     total_time = time.time() - start_time
     logger.info(f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds")
 
-    return {"transcription": final_transcript, "timings": final_timings, "duration_sec": duration_sec}
+    return {
+        "transcription": transcription,
+        "timings": timings,
+        "duration_sec": duration_sec,
+        # Diagnostics. `segments` carries the word timestamps the alignment needs and
+        # is not exposed by the API.
+        "segments": segments,
+        "anomaly_count": anomaly_count,
+        "anomaly_windows": anomaly_windows,
+        "flagged_segments": flagged_segments,
+        "speech_seconds": speech_seconds,
+        "mean_dbfs": mean_dbfs,
+        "vad_threshold": threshold,
+    }
+
 
 if __name__ == "__main__":
     # For testing purposes
     test_file = os.path.join(upload_folder, "test_audio.mp3")
     test_guid = "00000000-0000-0000-0000-000000000000"
     result = transcribe_audio(test_file, test_guid)  # Run test transcription
-    print(json.dumps(result, indent=2))
+    print(json.dumps({k: v for k, v in result.items() if k != "segments"}, indent=2))

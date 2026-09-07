@@ -226,7 +226,54 @@ def run_shared_clips(model, audio, cfg):
     }
 
 
-def run_config(model, audio, duration, name, ref_chunks):
+def apply_level_aware_vad(kwargs, audio_path, duration, result):
+    """Set the VAD threshold from the file's level using transcribe.py's own rule.
+
+    Imported rather than copied: a config named after the release candidate has to
+    make the same decision the release makes, and a second implementation of the
+    -26 dBFS cutover would be free to drift.
+    """
+    from transcribe import choose_vad_threshold, measure_mean_dbfs
+
+    mean_dbfs = measure_mean_dbfs(audio_path, duration)
+    threshold, why = choose_vad_threshold(mean_dbfs)
+    kwargs["vad_parameters"] = dict(kwargs["vad_parameters"], threshold=threshold)
+    result["level"] = {"mean_dbfs": mean_dbfs, "threshold": threshold, "why": why}
+    log.info("level %s dBFS -> VAD threshold %s (%s)", mean_dbfs, threshold, why)
+    return kwargs
+
+
+def apply_production_postprocess(segments, duration, result):
+    """Run transcribe.py's post-decode stage: dedupe, anomaly score, loop flags.
+
+    Returns (segments, transcript, timings) as the service would publish them, so the
+    harness's word counts, agreement and API invariants are measured on the shipped
+    output and not on the raw decode.
+    """
+    from transcribe import (
+        annotate_segments,
+        deduplicate_segment_boundaries,
+        low_speech_windows,
+        timings_from_segments,
+        transcript_from_segments,
+    )
+
+    kept = [s for s in segments if s["text"].strip()]
+    deduped = deduplicate_segment_boundaries(kept)
+    anomaly_count, flagged = annotate_segments(deduped)
+    windows, low = low_speech_windows(deduped, duration)
+    result["production"] = {
+        "anomaly_count": anomaly_count,
+        "anomaly_windows": low,
+        "windows": len(windows),
+        "flagged_segments": flagged,
+        "words_before_dedupe": sum(len(s["text"].split()) for s in kept),
+        "segments_before_dedupe": len(kept),
+    }
+    return deduped, transcript_from_segments(deduped), timings_from_segments(deduped)
+
+
+def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
     """Run config `name`; return a result dict ready to be written as segments.json."""
     cfg = get_config(name)
     result = {"config": name, "pipeline": cfg["pipeline"], "note": cfg.get("note")}
@@ -268,13 +315,20 @@ def run_config(model, audio, duration, name, ref_chunks):
             kwargs = dict(cfg["transcribe"])
             if not kwargs.get("vad_filter"):
                 kwargs.pop("vad_parameters", None)
+            elif cfg.get("level_aware_vad"):
+                if audio_path is None:
+                    raise ValueError(f"config {name} needs the audio path to measure its level")
+                kwargs = apply_level_aware_vad(kwargs, audio_path, duration, result)
             p = run_sequential(model, audio, kwargs)
+            segments, transcript, timings = p["segments"], p["transcript"], prod_timings(p["segments"])
+            if cfg.get("production_postprocess"):
+                segments, transcript, timings = apply_production_postprocess(segments, duration, result)
             result.update(
                 {
                     "passes": [p],
-                    "segments": p["segments"],
-                    "transcript": p["transcript"],
-                    "timings": prod_timings(p["segments"]),
+                    "segments": segments,
+                    "transcript": transcript,
+                    "timings": timings,
                     "ladder_base": kwargs["temperature"][0],
                     "selection": {"rule": "single"},
                     "vad_chunks": vad_chunks_seconds(audio, kwargs["vad_parameters"]) if kwargs.get("vad_filter") else [],

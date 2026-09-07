@@ -13,6 +13,10 @@ Meant to run inside the deployed image on the GPU host:
 
 All state lives under --out (default /harness/results); `report` only reads it, so
 the tables can be regenerated on any machine from a copy of that directory.
+
+The RC060 config imports transcribe.py directly for its level rule and its post-decode
+stage, so a release-candidate run needs `transcribe.py` and `textnorm.py` copied into
+this directory alongside the harness. Every other config is self-contained.
 """
 
 import argparse
@@ -95,7 +99,7 @@ def cmd_run(args):
                 continue
             log.info("=== %s on %s", name, meta["stem"])
             try:
-                result = run_config(model, audio, duration, name, ref_chunks)
+                result = run_config(model, audio, duration, name, ref_chunks, audio_path=audio_path)
             except Exception:
                 log.error("config %s failed on %s:\n%s", name, meta["stem"], traceback.format_exc())
                 write_json(os.path.join(cdir, "error.json"), {"error": traceback.format_exc()})
@@ -114,6 +118,16 @@ def cmd_run(args):
                     "invariants": api_invariants(result["transcript"], result["timings"]),
                 }
             )
+            if result.get("level"):
+                metrics["mean_dbfs"] = result["level"]["mean_dbfs"]
+                metrics["vad_threshold"] = result["level"]["threshold"]
+            if result.get("production"):
+                production = result["production"]
+                metrics["anomaly_count"] = production["anomaly_count"]
+                metrics["anomaly_windows"] = production["anomaly_windows"]
+                metrics["flagged_segments"] = len(production["flagged_segments"])
+                metrics["words_raw"] = production["words_before_dedupe"]
+                metrics["dedupe_removed_words"] = production["words_before_dedupe"] - metrics["words"]
             if result["pipeline"] == "prod":
                 metrics["words_raw"] = len(result["transcript_raw"].split())
                 metrics["dedupe_removed_words"] = metrics["words_raw"] - metrics["words"]
