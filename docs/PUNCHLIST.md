@@ -73,7 +73,7 @@ the same GUID set in one pass; drop the `{guid}_processed.mp3` and
 `{guid}_corpus` entries from the per-job path list, since neither is created
 any more. Risk: low. Verify: Mac, unit test with `created_at` two days old,
 assert files and row both gone; a second test with 25 rows.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **3. MFA leaves a full working corpus under /mfa for every job (container-layer disk leak)**
 `app.py:run_forced_alignment` (mfa command). `mfa align` is run without
@@ -107,7 +107,7 @@ Recommended change (keeps the stateless design): add a filesystem sweep to the
 cleanup pass that removes any entry in `UPLOAD_FOLDER` whose mtime is older
 than 2 days and whose GUID prefix has no non-terminal row. Risk: low. Verify:
 Mac, unit test with a stray old file and an empty DB.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 ### P1 - reliability, runtime, or operability
 
@@ -122,7 +122,7 @@ Recommended change: call `recover_stuck_jobs(cursor)` at the top of every wake
 (a cheap `SELECT COUNT`), not just at startup. Risk: none for correctness.
 Verify: Mac, insert a 'processing' row, run one loop iteration, assert
 'pending'.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **7. Transient exceptions (CUDA OOM, MFA prep I/O) mark the sermon permanently 'error' with no retry**
 `app.py:process_pending_job` (both except blocks). `attempt_count` exists but is
@@ -132,7 +132,7 @@ Recommended change: route exceptions through the same counter: increment
 'error'. Status vocabulary unchanged. Risk: a deterministic crash costs up to
 three runs before failing; acceptable. Verify: Mac, stub `transcribe_audio` to
 raise twice then succeed.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **8. Duplicate-GUID race returns 500 and overwrites the winner's file**
 `app.py:upload_audio`. SELECT then `file.save` then INSERT with no lock. Two
@@ -143,7 +143,7 @@ which becomes a 500.
 Recommended change: wrap check+save+insert in a module-level `threading.Lock`,
 and catch `sqlite3.IntegrityError` explicitly as 409. Contract unchanged.
 Verify: Mac, test client, two threads, one 201 and one 409.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **9. Upload decodes untrusted input before the row exists; failures leak the file and return 500**
 `app.py:upload_audio`. The duration probe on a corrupt or non-audio upload
@@ -153,7 +153,7 @@ before any row is written, so the client gets 500 and the file is never cleaned
 Recommended change: catch decode failure, `os.remove(file_path)`, return 400
 `{'error': 'Could not decode audio'}` (400 is already in the contract). Verify:
 Mac, upload `b"not audio"` with a stubbed probe that raises.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **10. Duration probe decodes the entire file to PCM**
 `app.py:upload_audio`, `transcribe.py:get_audio_duration`.
@@ -165,7 +165,7 @@ Recommended change: `pydub.utils.mediainfo(file_path)['duration']` (ffprobe, no
 decode) in both places, falling back to an `AudioSegment` decode only when
 mediainfo reports no duration; drop the cache. Verify: Mac unit; GPU RSS during
 upload.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **11. ETA at upload ignores the in-flight job; /status counts it**
 `app.py:upload_audio` vs `app.py:get_transcription`. `/upload` sums only
@@ -177,7 +177,7 @@ Recommended change: use the same `IN ('pending','processing')` predicate in
 `/upload`. A later refinement could add a `started_at` column and subtract
 elapsed time for the in-flight job. Verify: Mac, route test with one processing
 and one pending row.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **12. /status ETA is anchored on created_at and can sit in the past indefinitely**
 `app.py:get_transcription`. `estimated_completion_utc = created_at + sum(ahead) + own`.
@@ -189,7 +189,7 @@ unchanged. Also collapse the `psf = 15.1` formula duplicated in
 `app.py:upload_audio` and `transcribe.py:transcribe_audio` (log-only there) into
 one `estimate_processing_seconds(duration)` used by both files. Verify: Mac,
 freeze time, row created an hour ago, assert ETA >= now.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **13. Worker sleeps 30 s between back-to-back jobs and never adapts**
 `app.py:transcription_worker`. Logs: job f5e593e9 completed 06:30:37, next
@@ -198,7 +198,7 @@ minutes per batch.
 Recommended change: after a job returns, loop immediately; sleep only when the
 SELECT is empty. Verify: Mac, unit test with two pending rows and a stubbed
 `time.sleep` that records calls.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **14. pyannote pipeline is reconstructed from disk (and the network) on every job; no warmup**
 `app.py:detect_speakers` (removed in 0.4.0). Whisper is cached in
@@ -247,7 +247,7 @@ MFA stdout is dumped in full including rich progress bars.
 Recommended change: log the idle transition once, use DEBUG for wake/sleep, log
 MFA stdout only on failure. Include the GUID in every job-scoped line. Verify:
 Mac with `caplog`.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **19. No per-job metrics surfaced**
 `transcribe.py` logs words/sec and pass timing but nothing is stored. Additive
@@ -256,7 +256,7 @@ fields on `/transcriptions` rows (`processing_seconds`, `words_per_second`,
 calibration of `psf` and garbage-gate tuning possible without grepping logs.
 Contract: additive optional fields only; columns added via the existing
 `ensure_schema` migration pattern. Verify: Mac route tests.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **20. Dead second garbage check and unreachable `None` branch in process_pending_job**
 `app.py:process_pending_job` (post-alignment check), `transcribe.py:transcribe_audio`
@@ -271,7 +271,7 @@ Recommended change: delete the second check; if timings come back empty fall
 back to the Whisper timings without touching `attempt_count`; drop the
 transcript write from `transcribe.py`. Verify: Mac, existing tests plus one for
 the empty-timings fallback.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 ### P2 - polish, hygiene
 
@@ -282,7 +282,7 @@ forms are all accepted and stored verbatim; the same UUID in two casings becomes
 two jobs.
 Recommended change: reject unless `str(uuid.UUID(guid)) == guid.lower()` (400,
 in contract); do not rewrite the echoed guid. Verify: Mac.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **22. Upload: no size cap, no extension allowlist, extension taken from the client filename**
 `app.py:upload_audio`. `os.path.splitext` cannot inject a path separator
@@ -292,7 +292,7 @@ Recommended change: `MAX_CONTENT_LENGTH` of 1 GiB (413 is new but only
 reachable for oversize bodies), allowlist
 `{.mp3,.wav,.m4a,.flac,.ogg,.aac,.mp4}`, lowercase it, 400 otherwise. Verify:
 Mac.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **23. `temp_mfa_dir` referenced before assignment in the except blocks (masked)**
 `app.py:run_forced_alignment`. If anything raises between the transcript write
@@ -301,7 +301,7 @@ block raises `UnboundLocalError`, which the inner `except Exception` swallows as
 "Could not cleanup temp MFA directory". Not a crash, but a misleading log.
 Recommended change: assign `temp_mfa_dir` before the `try` and use `finally`
 for cleanup. Verify: Mac, monkeypatch `os.makedirs` to raise.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **24. SQLite pragmas and connection comments are misleading (no bug)**
 `app.py:init_db`, `app.py:get_db_connection`, route comments.
@@ -313,7 +313,7 @@ has no app context and is unaffected. `check_same_thread=False` is unnecessary
 with thread-local connections.
 Recommended change: apply the per-connection pragmas in `get_db_connection`,
 drop the flag, fix the comments. Verify: Mac.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 
 **25. Stale `transcriptions` SQLite file tracked in git and copied into the image**
 `transcriptions` is a 20 KB SQLite database from the initial commit; `COPY . .`
