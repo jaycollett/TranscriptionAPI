@@ -62,9 +62,22 @@ ENV PATH="/usr/local/cuda/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/env/lib:/usr/local/cuda/lib64"
 
 # Create the MFA model directory and download the pre-trained models into it.
-RUN mkdir -p ${MFA_MODEL_PATH} && \
-    mfa model download acoustic english_mfa && \
-    mfa model download dictionary english_mfa && \
+#
+# `mfa model download` resolves the model through the GitHub releases API of
+# MontrealCorpusTools/mfa-models. Unauthenticated, that API allows 60 requests
+# per hour per source address, and the shared GitHub Actions runner pool burns
+# through that, so the release build fails with ModelsConnectionError while a
+# build on the GPU host succeeds. The workflow passes its GITHUB_TOKEN as the
+# BuildKit secret `github_token` (1,000 requests per hour per repository); a
+# local build supplies no secret, the file is absent, and the download runs
+# unauthenticated as before. Secret mounts are not image layers, so the token
+# is never persisted in the image or its history.
+RUN --mount=type=secret,id=github_token,required=false \
+    set -e; TOKEN_ARG=""; \
+    if [ -s /run/secrets/github_token ]; then TOKEN_ARG="--github_token $(cat /run/secrets/github_token)"; fi; \
+    mkdir -p ${MFA_MODEL_PATH} && \
+    mfa model download acoustic english_mfa $TOKEN_ARG && \
+    mfa model download dictionary english_mfa $TOKEN_ARG && \
     ls -lah ${MFA_MODEL_PATH}
 
 # Set working directory

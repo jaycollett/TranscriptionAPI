@@ -13,6 +13,13 @@ VERSION="$(git describe --tags --always --dirty 2>/dev/null || date +untagged-%Y
 HEALTH_URL="http://localhost:5030/health"
 HEALTH_TIMEOUT_SEC=180
 
+# The Dockerfile uses a BuildKit secret mount (RUN --mount=type=secret) for the
+# MFA model download. BuildKit has been the default builder since Docker 23.0,
+# but a DOCKER_BUILDKIT=0 in the calling shell would select the legacy builder,
+# which rejects the --mount flag. No secret is passed here: the local build
+# downloads the models unauthenticated, which is fine from a single host.
+export DOCKER_BUILDKIT=1
+
 echo "Building ${IMAGE}:${VERSION}..."
 docker build -t "${IMAGE}:${VERSION}" .
 
