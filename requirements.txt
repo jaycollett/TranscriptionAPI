@@ -16,6 +16,11 @@ faster-whisper==1.2.1
 ctranslate2==4.8.0
 Flask==3.1.3
 pydub==0.25.1
+# pydub imports the stdlib audioop module, which Python 3.12 deprecated and 3.13
+# removed. audioop-lts is the maintained backport. The v3.4.1 base image happened
+# to carry it and the v3.4.2 base does not, so it is declared here rather than
+# inherited (2026-09-07, found when 0.5.1-rc1 died at import).
+audioop-lts==0.2.2
 
 # Provided by the base image's conda environment (they show up in pip freeze as
 # "@ file:///..." rather than "==" lines): numpy, scipy, montreal-forced-aligner,
