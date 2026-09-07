@@ -160,12 +160,17 @@ ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
 # inherits that sensitivity, which is why the value kept having to move (0.10, then
 # 0.15) as the measurement improved rather than converging.
 ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.25)
-# The real gate. An omission is contiguous: the decoder stops emitting for a stretch
+# The gap check. An omission is contiguous: the decoder stops emitting for a stretch
 # and then resumes. A breath is not. Measuring the largest single uncovered stretch is
-# local, so no global offset between the detectors moves it, and the sweep found it
-# separates cleanly across 101 files: median 2.13 s, p95 17.1 s, max 46.8 s, with a
-# distinct tail. The six reference files agree, topping out at 3.92 s while their
-# uncovered *totals* run to 9.0 percent.
+# local, so no global offset between the two speech detectors moves it, unlike the
+# total above. Across 101 files: median 2.13 s, p95 17.1 s, max 46.8 s. The six
+# reference files top out at 3.92 s while their uncovered totals run to 9.0 percent.
+#
+# 20 s is a POLICY VALUE, not a measured boundary. The number of files tripping the
+# check falls smoothly with the threshold (11 at 10 s, 6 at 15, 4 at 20, 2 at 25, 1 at
+# 30) with no knee anywhere in it, so this is a choice about how much review volume is
+# wanted and nothing in the data argues for one value over its neighbours. Move it on
+# review capacity, not on a search for the "right" number; there isn't one.
 ANOMALY_MAX_UNCOVERED_GAP_SEC = _env_float("ANOMALY_MAX_UNCOVERED_GAP_SEC", 20.0)
 LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 
@@ -663,12 +668,15 @@ def coverage_report(segments, speech_intervals):
     intervals, so the word-rate clock still works with the omission check disabled.
     """
     if not speech_intervals:
+        own = speech_spans(segments)
         return {
             "speech_s": 0.0,
-            "covered_s": 0.0,
+            "covered_s": sum(e - s for s, e in own),
             "uncovered_s": 0.0,
             "uncovered_max_gap_s": 0.0,
-            "covered_spans": speech_spans(segments),
+            "uncovered_gaps_over_threshold": 0,
+            "covered_spans": own,
+            "speech_spans": own,
         }
     speech = merge_intervals(speech_intervals)
     covered_spans = intersect_intervals(speech_spans(segments), speech)
@@ -678,7 +686,11 @@ def coverage_report(segments, speech_intervals):
         "covered_s": sum(e - s for s, e in covered_spans),
         "uncovered_s": sum(e - s for s, e in gaps),
         "uncovered_max_gap_s": max((e - s for s, e in gaps), default=0.0),
+        "uncovered_gaps_over_threshold": sum(
+            1 for s, e in gaps if (e - s) >= ANOMALY_MAX_UNCOVERED_GAP_SEC
+        ),
         "covered_spans": covered_spans,
+        "speech_spans": speech,
     }
 
 
@@ -737,11 +749,20 @@ def low_speech_windows(segments, duration_sec, speech_intervals=None):
     words/sec floor trips, so a 20-40 percent omission clears the floor, the rescue
     trigger and the quarantine gate. This is what is supposed to catch it.
 
-    Two things are counted. Windows the decoder did produce words for are scored on
-    their word rate. Then voice-activity speech the decoder produced no segment for is
-    charged: `speech_intervals` are the detector's own speech regions, so speech no
-    surviving segment covers is speech that went missing. Without the second half an
-    omission simply shrinks the clock and is invisible.
+    Two independent checks, neither a substitute for the other.
+
+    The window check scores every 60 s window of speech across the whole file on its
+    word rate. It is what catches a stretch the decoder covered thinly: sparse
+    segments over a passage it should have transcribed fully. A coverage measure is
+    blind to that at any threshold, because output is present, just wrong.
+
+    The gap check charges one long contiguous stretch of speech that no segment
+    covers at all. The window check is weak on that shape in the opposite direction:
+    a hole contributes no words but also, on a coverage clock, no time.
+
+    The sweep's two word-count regressions are the first shape (73 and 91 words gone
+    from one passage, largest uncovered gap 5.4 and 6.7 s) and a truncated decode is
+    the second. Keeping both is the point.
 
     The intervals themselves are required, not a total. Coverage has to be the merged
     segment spans intersected with them, or it is not bounded by the speech it is
@@ -755,26 +776,34 @@ def low_speech_windows(segments, duration_sec, speech_intervals=None):
     report = coverage_report(segments, speech_intervals)
     speech_total = report["speech_s"]
     uncovered_total = report["uncovered_s"]
-    uncovered_max_gap = report["uncovered_max_gap_s"]
-    covered_spans = report["covered_spans"]
-
-    clock = SpeechClock(covered_spans)
+    # The word-rate clock runs over the speech, not over the parts of it the decoder
+    # happened to cover. That distinction is the whole sensitivity of this check.
+    # Clocking on coverage skips the gaps between sparse segments, so a stretch where
+    # the decoder emitted a little instead of nothing gets folded into its healthy
+    # neighbours and the rate never drops: on the sweep's two word-count regressions,
+    # 73 and 91 words dropped from a single passage, the largest uncovered gap was
+    # only 5.4 and 6.7 s because output was thin rather than absent. Clocking on
+    # speech, that passage keeps its full duration and its few words, so the rate
+    # falls where it actually fell.
+    clock = SpeechClock(report["speech_spans"])
     covered = clock.total
 
-    uncovered_windows = 0
+    gap_events = 0
+    backstop_windows = 0
     if speech_total > 0:
-        # The gate: one long contiguous stretch of speech with nothing decoded over
-        # it. Charged by the minute so a ten minute hole is decisively worse than a
-        # 21 second one, but never less than one window once it qualifies.
-        if uncovered_max_gap >= ANOMALY_MAX_UNCOVERED_GAP_SEC:
-            uncovered_windows = max(1, int(uncovered_max_gap // ANOMALY_WINDOW_SEC))
+        # One count per qualifying gap, not one per minute of it. On a speech clock a
+        # long hole already scores through the window check below, because its full
+        # duration is on the clock with no words in it. What this adds is the shape
+        # that check dilutes: a hole shorter than a window, which moves one window's
+        # rate without sinking it.
+        gap_events = report["uncovered_gaps_over_threshold"]
         # Loose backstop for an omission smeared across many medium gaps, which no
         # single stretch would catch. Deliberately generous: see the constant.
         excess = uncovered_total - ANOMALY_UNCOVERED_TOLERANCE * speech_total
-        uncovered_windows = max(uncovered_windows, int(max(0.0, excess) // ANOMALY_WINDOW_SEC))
+        backstop_windows = int(max(0.0, excess) // ANOMALY_WINDOW_SEC)
 
     if covered <= 0:
-        return [], uncovered_windows
+        return [], max(gap_events, backstop_windows)
 
     counts = Counter()
     for start, end, _ in flat_words(segments):
@@ -786,7 +815,13 @@ def low_speech_windows(segments, duration_sec, speech_intervals=None):
     if tail >= ANOMALY_WINDOW_MIN_TAIL_SEC:
         windows.append(counts[full_windows] / tail)
     low = sum(1 for w in windows if w < ANOMALY_WINDOW_MIN_WPS)
-    return windows, low + uncovered_windows
+    # The strongest single piece of evidence, not the sum of all three. They are three
+    # views of the same missing content, and adding them double counts: a 46.8 s hole,
+    # the largest the sweep saw on an otherwise healthy file, both empties one window
+    # and trips the gap check, and summing those would quarantine it on one event when
+    # it should be a review case. Taking the maximum keeps each check able to raise
+    # the score on its own while one event stays one event.
+    return windows, max(low, gap_events, backstop_windows)
 
 
 # ---------------------------------------------------------------------------------

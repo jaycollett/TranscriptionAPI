@@ -477,10 +477,14 @@ def test_transcribe_audio_returns_the_diagnostic_keys(transcribe_module, monkeyp
 # --------------------------------------------------------------------------------------
 # Coverage: bounded by the speech it is measured against, by construction
 # --------------------------------------------------------------------------------------
+NORMAL_RATE_BODY = " ".join(
+    ["and so the word of the Lord came to him once again saying"] * 2
+)  # 26 words per 10 s segment, i.e. 2.6 words/sec, the measured healthy rate
+
+
 def _dense(n, start=0.0, span=10.0):
-    """`n` consecutive 10 s segments of normal-rate speech."""
-    return [_segment(start + i * span, start + (i + 1) * span,
-                     "and so the word of the Lord came to him once again saying")
+    """`n` consecutive 10 s segments at the measured healthy word rate."""
+    return [_segment(start + i * span, start + (i + 1) * span, NORMAL_RATE_BODY)
             for i in range(n)]
 
 
@@ -567,8 +571,7 @@ def _with_gaps(total_covered, gap, n_gaps, span=10.0):
     i = 0
     while remaining > 0:
         length = min(span, remaining)
-        segments.append(_segment(cursor, cursor + length,
-                                 "and so the word of the Lord came to him once again saying"))
+        segments.append(_segment(cursor, cursor + length, NORMAL_RATE_BODY))
         cursor += length
         remaining -= length
         if i < n_gaps:
@@ -586,7 +589,8 @@ def test_an_omission_is_counted_from_one_long_stretch(transcribe_module):
     assert blind == 0, "the segment-span clock cannot see an omission; that is the bug"
 
     _windows, low = transcribe_module.low_speech_windows(segments, 3600.0, speech)
-    assert low == 10, "a 600 s hole is ten windows and must trip decisively"
+    # Ten empty windows on the speech clock; the gap check agrees but adds nothing.
+    assert low == 10, "a 600 s hole must trip decisively"
 
 
 def test_a_total_omission_is_counted(transcribe_module):
@@ -630,17 +634,28 @@ def test_healthy_files_are_not_charged_an_omission(transcribe_module, stem, spee
     (3.9, 0),      # the worst measured on a healthy reference file
     (17.1, 0),     # the sweep's p95 across 101 files
     (19.9, 0),
-    (20.0, 1),     # the threshold
-    (46.8, 1),     # the sweep's maximum on a healthy file: a rescue, not a quarantine
-    (120.0, 2),    # two minutes gone: quarantine territory
-    (600.0, 10),
+    (20.0, 1),     # the threshold: a review case, not a quarantine
+    (46.8, 1),     # the sweep's maximum on a healthy file
 ])
 def test_the_contiguous_gap_threshold(transcribe_module, gap, expected):
-    segments = [_segment(0.0, 600.0, " ".join(["word"] * 1560))]
-    _windows, low = transcribe_module.low_speech_windows(
-        segments, 1200.0, [(0.0, 600.0 + gap)]
-    )
+    """A hole placed mid-file, so the window check dilutes rather than empties.
+
+    Below a window length a gap moves one window's rate without sinking it, which is
+    exactly the shape this check exists to add.
+    """
+    first = _dense(30)                                  # 0-300 s
+    second = _dense(30, start=300.0 + gap)              # resumes after the hole
+    speech = [(0.0, 600.0 + gap)]
+    _windows, low = transcribe_module.low_speech_windows(first + second, 700.0, speech)
     assert low == expected
+
+
+def test_a_long_hole_scores_through_the_window_check_too(transcribe_module):
+    """Ten missing minutes are ten empty windows before the gap charge adds its one."""
+    segments = _dense(30)
+    speech = [(0.0, 900.0)]
+    _windows, low = transcribe_module.low_speech_windows(segments, 1000.0, speech)
+    assert low >= 10
 
 
 def test_the_total_is_only_a_loose_backstop(transcribe_module):
@@ -717,6 +732,64 @@ def test_uncovered_stretches_are_the_complement(transcribe_module):
     segments = [_segment(0.0, 10.0, "a b c"), _segment(30.0, 40.0, "d e f")]
     stretches = transcribe_module.uncovered_stretches(segments, [(0.0, 50.0)])
     assert stretches == [(10.0, 30.0), (40.0, 50.0)]
+
+
+def test_a_thinly_covered_stretch_is_caught_by_the_window_check(transcribe_module):
+    """The shape a coverage gate cannot see: output present but sparse.
+
+    Both of the sweep's word-count regressions are this, not a hole. 73 and 91 words
+    dropped from a single passage, but the largest uncovered gap was 5.4 and 6.7 s
+    because the decoder emitted sparse segments across the omitted stretch rather
+    than nothing at all. No coverage threshold reaches that at any value; the word
+    rate does.
+    """
+    segments = _dense(20)                       # 200 s of normal speech
+    # 180 s of speech carrying three words every 30 s: covered, but nearly empty.
+    for i in range(6):
+        segments.append(_segment(200.0 + i * 30.0, 200.0 + i * 30.0 + 2.0, "and then he"))
+    segments += _dense(20, start=380.0)         # 200 s of normal speech again
+    speech = [(0.0, 580.0)]
+
+    _windows, low = transcribe_module.low_speech_windows(segments, 600.0, speech)
+    assert low >= 2, "a thin stretch must be caught even though it is covered"
+
+    report = transcribe_module.coverage_report(segments, speech)
+    assert report["uncovered_max_gap_s"] < 30.0, \
+        "and the gap check cannot see it, which is why both checks are kept"
+
+
+def test_the_window_clock_runs_over_speech_not_over_coverage(transcribe_module):
+    """The distinction that gives the window check its sensitivity.
+
+    Clocking on coverage skips the gaps between sparse segments, so the thin passage
+    is compressed into a few seconds of clock time and folded into its healthy
+    neighbours. Clocking on speech keeps its real duration, so the rate falls where
+    it actually fell.
+    """
+    segments = _dense(20)
+    for i in range(6):
+        segments.append(_segment(200.0 + i * 30.0, 200.0 + i * 30.0 + 2.0, "and then he"))
+    speech = [(0.0, 380.0)]
+
+    report = transcribe_module.coverage_report(segments, speech)
+    covered = report["covered_s"]
+    assert covered < 220.0, "the sparse stretch contributes almost no coverage"
+    assert report["speech_s"] == pytest.approx(380.0)
+
+    _windows, low = transcribe_module.low_speech_windows(segments, 400.0, speech)
+    assert low >= 1
+
+
+def test_healthy_window_rates_keep_their_headroom(transcribe_module):
+    """Measured minimum window rate across the six reference files is 2.37 wps.
+
+    The floor is 1.2, so a healthy file sits at roughly twice it. That headroom is
+    what makes the floor safe to raise if the read-aloud cases need catching.
+    """
+    segments = _dense(60)
+    windows, low = transcribe_module.low_speech_windows(segments, 700.0, [(0.0, 600.0)])
+    assert low == 0
+    assert min(windows) > 2.0
 
 
 def test_a_detector_failure_disables_the_check_not_the_job(transcribe_module, monkeypatch,

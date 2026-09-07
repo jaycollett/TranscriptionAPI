@@ -726,6 +726,29 @@ than the fix: a signal that says "this looks wrong" must degrade to publishing
 with a marker, never to silence, because a wrong transcript can be corrected and a
 missing one cannot.
 
+**Two checks, and neither substitutes for the other.** The coverage checks catch
+holes: stretches of speech with nothing decoded over them. The per-window word-rate
+check catches thin output: a passage the decoder covered but sparsely. Both of the
+sweep's word-count regressions are the second shape, 73 and 91 words dropped from a
+single passage, and their largest uncovered gaps are only 5.4 and 6.7 s because the
+decoder emitted sparse segments across the omitted stretch rather than nothing at
+all. No coverage threshold reaches that at any value, because output is present,
+just wrong.
+
+That made one detail load-bearing that had been quietly wrong: **the word-rate clock
+has to run over the speech, not over the parts of it the decoder covered.** Clocking
+on coverage skips the gaps between sparse segments, so a thin passage is compressed
+into a few seconds of clock time and folded into its healthy neighbours, and the
+rate never drops. Clocking on speech, it keeps its real duration and its few words.
+Measured on the six reference files the minimum window rate is 2.37 words/sec
+against a 1.2 floor, so the change costs no headroom.
+
+The score is the **maximum** of the three signals, not their sum. They are three
+views of the same missing content: a 46.8 s hole, the largest the sweep saw on an
+otherwise healthy file, both empties one window and trips the gap check, and summing
+those would quarantine it on a single event when it should be a review case. Taking
+the maximum lets each check raise the score alone while one event stays one event.
+
 **The uncovered-speech total is contaminated; the largest contiguous stretch is
 not.** The sweep measured both over 101 files. The two speech detectors, ours and
 the one inside the decode, disagree by 0.81 to 1.27 times, so the files with the
@@ -738,7 +761,11 @@ detectors shifts every boundary slightly without creating a long stretch out of
 nothing. Its distribution separates cleanly, median 2.13 s, p95 17.1 s, max 46.8 s,
 with a distinct tail. The gate now reads that, defaulting to 20 s, and the total
 survives only as a loose backstop at 0.25 for an omission smeared across many
-medium gaps. Both numbers are logged per job. The six reference files agree with
+medium gaps. **20 s is a policy value, not a discovery**: the count of files
+tripping the check falls smoothly with the threshold (11 at 10 s, 6 at 15, 4 at 20,
+2 at 25, 1 at 30) with no knee anywhere in it. It is a choice about review volume,
+and nothing in the data argues for one value over its neighbours, so move it on
+capacity rather than on a search for the right number. Both numbers are logged per job. The six reference files agree with
 the sweep: their uncovered totals reach 9.0 percent while no single stretch exceeds
 3.92 s.
 
@@ -757,12 +784,19 @@ same thing in miniature: the single trim the word-count rule made there measures
 as 0.86 s sequential, so even that apparent true positive was repetition.
 
 **The profile selector is keyed on the wrong signal (0.6.1 investigation, do not
-fix now).** The eight most fragmented recordings in the sweep all took the loud
-profile, the worst at 0.88 seconds per segment on one of the loudest files in the
-set, and the quiet profile's worst case is better than the loud profile's. Level
-does not predict fragmentation. That makes the position of the -26 dBFS cutover
-the wrong question: moving it cannot fix a selector keyed on a signal that does not
-carry the information. Whatever replaces it should be keyed on something that does,
-most likely a measurement of fragmentation itself, which would mean deciding after
-a cheap first look at the audio rather than before. Left alone for 0.6.0 so the
-sweep's numbers stay interpretable.
+fix now).** Level does not merely predict fragmentation weakly, it predicts it
+**non-monotonically**. Recordings quieter than -26 dBFS fragment at 12.1 segments
+per minute, the -26 to -19 middle at about 9, and everything louder than -19 at
+14.2. Both extremes fragment and the middle does not. A one-sided threshold cannot
+express that shape at any value, so the question "where should the cutover sit" has
+no answer: the selector is the wrong shape, not badly tuned. Consistent with that,
+the eight most fragmented recordings all took the loud profile, the worst at 0.88
+seconds per segment on one of the loudest files in the set, and the quiet profile's
+worst case is better than the loud profile's.
+
+What does track fragmentation is fidelity: 22.05 kHz recordings run 13.2 segments
+per minute against 9.1 at 48 kHz, and bit rate moves with it. So the selector
+should key on sample rate and bit rate first, both of which are free from the
+container header and need no audio analysis at all. Any level term that survives
+has to be two-sided, selecting the quiet profile at both ends rather than below a
+line. Left alone for 0.6.0 so the sweep's numbers stay interpretable.

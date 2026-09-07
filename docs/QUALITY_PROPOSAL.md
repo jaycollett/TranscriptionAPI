@@ -413,18 +413,27 @@ on six files:
   three times and quarantined with no transcript published against a legacy 8292
   words. An identical re-decode is now published with its anomaly fields set;
   quarantine is reserved for the garbage check and the word-rate floor.
-- The omission check now gates on the largest contiguous uncovered stretch
-  (default 20 s) rather than the uncovered total, which the sweep showed is
-  contaminated by disagreement between the two speech detectors (0.81 to 1.27
-  times). The total remains a loose backstop at 0.25.
+- The omission check gains a gate on the largest contiguous uncovered stretch
+  (default 20 s, a policy value off a smooth curve rather than a measured
+  boundary), because the uncovered total is contaminated by disagreement between
+  the two speech detectors (0.81 to 1.27 times). The total remains a loose
+  backstop at 0.25. The per-window word-rate check stays and stays load-bearing:
+  both of the sweep's word-count regressions drop a single passage while leaving
+  gaps of only 5.4 and 6.7 s, because output there is sparse rather than absent,
+  and no coverage threshold reaches that shape. The window clock now runs over
+  speech rather than over coverage so a thin passage keeps its duration, and the
+  score is the maximum of the signals rather than their sum.
 - The boundary de-duplication proposed in section 3 is disabled by default. In 64
   trims across 32 files it produced zero plausible decoder artifacts and about 38
   clear false positives, including four consecutive dropped segments of 1 Kings
   18:39. The implementation is retained behind `BOUNDARY_DEDUPE_ENABLED`.
-- Open for 0.6.1: the level-based profile selector is keyed on the wrong signal.
-  The eight most fragmented recordings all took the loud profile and the quiet
-  profile's worst case is better than the loud profile's, so level does not predict
-  fragmentation and the cutover's position is not the question worth asking.
+- Open for 0.6.1: the level-based profile selector is keyed on the wrong signal,
+  and non-monotonically so. Files under -26 dBFS fragment at 12.1 segments per
+  minute, the -26 to -19 middle at about 9, and files over -19 at 14.2, so both
+  extremes fragment and a one-sided threshold cannot express that at any value.
+  Sample rate tracks it instead (13.2 per minute at 22.05 kHz against 9.1 at
+  48 kHz). The selector should key on fidelity first, and any surviving level term
+  must be two-sided.
 
 ## 5. Deferred and rejected
 
