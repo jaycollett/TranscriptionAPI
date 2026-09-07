@@ -304,7 +304,10 @@ whole-file rate is not [22]. Both numbers go to the success log line.
 - quiet, below -26 dBFS: `{"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300, "speech_pad_ms": 400}` with `hallucination_silence_threshold=None`. This is BASE/C1, the only profile ever measured on quiet material.
 
 The -26 dBFS cut sits between the quietest file that worked on the loud
-profile (-24.4 dBFS) and the one that failed (-28.4 dBFS). The original form
+profile (-24.4 dBFS) and the one that failed (-28.4 dBFS), and is therefore
+calibrated on two files and provisional. The corpus sweep found 34 of 100
+files within 2 dB of it, the histogram densest at the line, so it is held at
+-26 for the sweep to measure both sides and is expected to move. The original form
 of this proposal varied only `T` and left the rest of C4 in place; that was
 tuned on `women_retreat_2025_session3` before release, as required, and the
 measurement rejected it. Three configurations on that file:

@@ -88,6 +88,20 @@ MFA_TIMEOUT_BASE_SEC = float(os.getenv("MFA_TIMEOUT_BASE_SEC", "60"))
 MFA_TIMEOUT_PER_SEC = float(os.getenv("MFA_TIMEOUT_PER_SEC", "0.5"))
 # A refined edge this far from Whisper's own word timestamp counts as agreement.
 ALIGNMENT_AGREE_SEC = 0.25
+# A refined span shorter than this share of the Whisper span means the aligner
+# covered only part of the segment, so its answer is discarded for that segment.
+SPAN_RATIO_FLOOR = 0.5
+
+
+def _percentile(values, pct):
+    """Linear-interpolated percentile; None on an empty list."""
+    if not values:
+        return None
+    data = sorted(values)
+    k = (len(data) - 1) * pct / 100.0
+    low = int(k)
+    high = min(low + 1, len(data) - 1)
+    return round(data[low] + (data[high] - data[low]) * (k - low), 4)
 
 # Worker timing. The poll interval only applies when the queue is empty; a worker
 # that just finished a job checks for the next one immediately.
@@ -563,9 +577,11 @@ def refine_segment_timings(segments, mfa_words):
     refined = []
     empty_fallbacks = 0
     short_fallbacks = 0
+    span_ratios = []
     for index, segment in enumerate(segments):
         indices = owned.get(index)
         whisper_start, whisper_end = whisper_span(segment)
+        whisper_length = whisper_end - whisper_start
         if indices:
             start = mfa_words[min(indices)]["start"]
             end = mfa_words[max(indices)]["end"]
@@ -573,23 +589,39 @@ def refine_segment_timings(segments, mfa_words):
             # 2 of its 30 words gets a span covering those two, so a 20 second stretch
             # of text would be published against a 0.6 second timing. Treat a refined
             # span under half the Whisper span as a failure to cover the segment.
-            whisper_length = whisper_end - whisper_start
-            if whisper_length > 0 and (end - start) < 0.5 * whisper_length:
-                short_fallbacks += 1
-                start, end = whisper_start, whisper_end
+            if whisper_length > 0:
+                # Recorded before the substitution, so the distribution describes what
+                # the aligner produced rather than what was published.
+                span_ratios.append((end - start) / whisper_length)
+                if (end - start) < SPAN_RATIO_FLOOR * whisper_length:
+                    short_fallbacks += 1
+                    start, end = whisper_start, whisper_end
         else:
             empty_fallbacks += 1
             start, end = whisper_start, whisper_end
         refined.append({"start": float(start), "end": float(end), "text": segment["text"].strip()})
 
     # One pass to make the sequence monotonic: a later segment can never start
-    # before its predecessor ended, and no segment can be empty or inverted.
+    # before its predecessor ended, and no segment can be empty or inverted. A timing
+    # the clamp had to move is not the aligner's answer, so it is counted separately.
+    clamped = 0
     previous_end = 0.0
     for entry in refined:
-        entry["start"] = max(entry["start"], previous_end)
-        entry["end"] = max(entry["end"], entry["start"] + 0.05)
-        previous_end = entry["end"]
-    return refined, empty_fallbacks, short_fallbacks
+        start = max(entry["start"], previous_end)
+        end = max(entry["end"], start + 0.05)
+        if start != entry["start"] or end != entry["end"]:
+            clamped += 1
+        entry["start"], entry["end"] = start, end
+        previous_end = end
+
+    stats = {
+        "empty_fallbacks": empty_fallbacks,
+        "short_fallbacks": short_fallbacks,
+        "clamped": clamped,
+        "span_ratio_p5": _percentile(span_ratios, 5),
+        "span_ratio_median": _percentile(span_ratios, 50),
+    }
+    return refined, stats
 
 
 def alignment_agreement(segments, refined):
@@ -625,6 +657,22 @@ def whisper_timings(segments):
     return refined
 
 
+def alignment_log_fields(stats):
+    """The alignment counters as `key=value` pairs for the per-job log line.
+
+    One place builds them so the alignment line and the completion line cannot
+    disagree, and so the sweep's parser sees the same names on either.
+    """
+    return (
+        f"agree250={stats.get('agree250')} "
+        f"empty_fallbacks={stats.get('empty_fallbacks')} "
+        f"span_ratio_lt_0_5={stats.get('short_fallbacks')} "
+        f"span_ratio_p5={stats.get('span_ratio_p5')} "
+        f"span_ratio_median={stats.get('span_ratio_median')} "
+        f"clamped={stats.get('clamped')}"
+    )
+
+
 def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
     """Refine Whisper's segment timings with Montreal Forced Aligner.
 
@@ -648,8 +696,11 @@ def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
     mfa_work_dir = os.path.join(MFA_ROOT_DIR, f"{guid}_mfa_input")
 
     segments = [s for s in whisper_segments if s.get("text", "").strip()]
+    # Every counter the sweep parses off the log line, defaulted so a fallback path
+    # still emits the full set.
     stats = {"agree250": None, "utterances": 0, "mfa_wall_s": None,
-             "empty_fallbacks": None, "short_fallbacks": None}
+             "empty_fallbacks": None, "short_fallbacks": None, "clamped": None,
+             "span_ratio_p5": None, "span_ratio_median": None}
     if not segments:
         return [], False, stats
 
@@ -745,14 +796,12 @@ def run_forced_alignment(audio_path, whisper_segments, guid, duration_sec=None):
         app.logger.error(f"MFA returned no words for {guid}; using Whisper timings.")
         return fallback()
 
-    refined, empty_fallbacks, short_fallbacks = refine_segment_timings(segments, mfa_words)
-    stats["empty_fallbacks"] = empty_fallbacks
-    stats["short_fallbacks"] = short_fallbacks
+    refined, refine_stats = refine_segment_timings(segments, mfa_words)
+    stats.update(refine_stats)
     stats["agree250"] = alignment_agreement(segments, refined)
     app.logger.info(
         f"Alignment for {guid}: {len(mfa_words)} MFA words over {len(segments)} segments, "
-        f"agree250={stats['agree250']}, {empty_fallbacks} segments uncovered and "
-        f"{short_fallbacks} only partially covered, all on Whisper word timings"
+        + alignment_log_fields(stats)
     )
     return refined, True, stats
 
@@ -889,8 +938,7 @@ def process_pending_job(cursor, guid, filename):
             f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows}, "
             f"flagged_segments={len(flagged_segments)}, "
             f"rescue_attempted={rescue_attempted}, rescue_selected={rescue_selected}, "
-            f"agree250={alignment_stats.get('agree250')}, "
-            f"short_fallbacks={alignment_stats.get('short_fallbacks')}"
+            + alignment_log_fields(alignment_stats)
         )
         return 'completed'
 

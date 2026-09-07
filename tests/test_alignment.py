@@ -172,9 +172,9 @@ def test_words_are_assigned_by_sequence_not_by_time(app_module):
         {"start": 3.4, "end": 3.7, "text": "mercy"},
         {"start": 3.7, "end": 4.2, "text": "endures"},
     ]
-    refined, empty, _short = app_module.refine_segment_timings(segments, mfa_words)
+    refined, rstats = app_module.refine_segment_timings(segments, mfa_words)
 
-    assert empty == 0
+    assert rstats["empty_fallbacks"] == 0
     assert refined[0]["start"] == pytest.approx(1.0)
     assert refined[0]["end"] == pytest.approx(2.1)
     assert refined[1]["start"] == pytest.approx(3.0)
@@ -190,7 +190,7 @@ def test_a_boundary_word_is_owned_by_one_segment_only(app_module):
         {"start": 1.0, "end": 1.5, "text": "gamma"},
         {"start": 1.5, "end": 2.0, "text": "delta"},
     ]
-    refined, _empty, _short = app_module.refine_segment_timings(segments, mfa_words)
+    refined, rstats = app_module.refine_segment_timings(segments, mfa_words)
     assert refined[0]["end"] == pytest.approx(1.0)
     assert refined[1]["start"] == pytest.approx(1.0)
 
@@ -203,8 +203,8 @@ def test_case_and_punctuation_do_not_break_the_match(app_module):
         {"start": 0.6, "end": 0.8, "text": "is"},
         {"start": 0.8, "end": 1.4, "text": "good"},
     ]
-    refined, empty, _short = app_module.refine_segment_timings(segments, mfa_words)
-    assert empty == 0
+    refined, rstats = app_module.refine_segment_timings(segments, mfa_words)
+    assert rstats["empty_fallbacks"] == 0
     assert refined[0]["start"] == pytest.approx(0.1)
     assert refined[0]["end"] == pytest.approx(1.4)
 
@@ -221,9 +221,9 @@ def test_uncovered_segment_falls_back_to_whisper_word_timestamps(app_module):
         {"start": 0.1, "end": 0.5, "text": "alpha"},
         {"start": 0.5, "end": 1.1, "text": "beta"},
     ]
-    refined, empty, _short = app_module.refine_segment_timings([covered, uncovered], mfa_words)
+    refined, rstats = app_module.refine_segment_timings([covered, uncovered], mfa_words)
 
-    assert empty == 1
+    assert rstats["empty_fallbacks"] == 1
     assert refined[1]["start"] == pytest.approx(2.4)
     assert refined[1]["end"] == pytest.approx(5.2)
 
@@ -237,7 +237,7 @@ def test_monotonicity_is_enforced(app_module):
         {"start": 1.0, "end": 1.5, "text": "gamma"},   # starts before segment 0 ended
         {"start": 1.5, "end": 2.0, "text": "delta"},
     ]
-    refined, _empty, _short = app_module.refine_segment_timings(segments, mfa_words)
+    refined, rstats = app_module.refine_segment_timings(segments, mfa_words)
 
     assert refined[1]["start"] >= refined[0]["end"]
     for entry in refined:
@@ -522,10 +522,10 @@ def test_a_barely_covered_segment_falls_back_to_the_whisper_span(app_module):
         {"start": 2.2, "end": 2.4, "text": "word0"},
         {"start": 2.4, "end": 2.8, "text": "word1"},
     ]
-    refined, empty, short = app_module.refine_segment_timings([covered, sparse], mfa_words)
+    refined, rstats = app_module.refine_segment_timings([covered, sparse], mfa_words)
 
-    assert empty == 0, "the segment owns words, so the empty fallback cannot fire"
-    assert short == 1
+    assert rstats["empty_fallbacks"] == 0, "the segment owns words, so the empty fallback cannot fire"
+    assert rstats["short_fallbacks"] == 1
     whisper_start, whisper_end = app_module.whisper_span(sparse)
     assert refined[1]["end"] == pytest.approx(whisper_end)
     assert refined[1]["end"] - refined[1]["start"] > 15.0
@@ -537,9 +537,11 @@ def test_a_well_covered_segment_keeps_its_refined_span(app_module):
     mfa_words = [
         {"start": 0.2 + i, "end": 0.9 + i, "text": f"word{i}"} for i in range(10)
     ]
-    refined, empty, short = app_module.refine_segment_timings([segment], mfa_words)
+    refined, rstats = app_module.refine_segment_timings([segment], mfa_words)
 
-    assert empty == 0 and short == 0
+    assert rstats["empty_fallbacks"] == 0 and rstats["short_fallbacks"] == 0
+    assert rstats["span_ratio_median"] > 0.9
+    assert rstats["clamped"] == 0
     assert refined[0]["start"] == pytest.approx(0.2)
     assert refined[0]["end"] == pytest.approx(9.9)
 
@@ -556,3 +558,70 @@ def test_short_fallbacks_are_reported_in_the_stats(app_module, upload_dir, align
     assert applied is True
     assert stats["short_fallbacks"] is not None
     assert stats["empty_fallbacks"] == 0
+
+
+def test_the_sweep_counters_are_emitted_as_key_value_pairs(app_module, upload_dir,
+                                                           alignment_env, caplog):
+    """The sweep parses these off the log line; /status returns only refined timings.
+
+    Names are load-bearing: the parser ingests any key=value on the line, so the keys
+    are what it keys on.
+    """
+    import logging
+
+    guid, audio = alignment_env
+    _mfa_output(guid, upload_dir, [
+        [0.1, 0.5, "hello"], [0.6, 2.4, "world"],
+        [2.6, 3.0, "second"], [3.1, 4.9, "segment"],
+    ])
+    with caplog.at_level(logging.INFO):
+        app_module.run_forced_alignment(audio, SEGMENTS, guid, 5.0)
+
+    for key in ("agree250=", "empty_fallbacks=", "span_ratio_lt_0_5=",
+                "span_ratio_p5=", "span_ratio_median=", "clamped="):
+        assert key in caplog.text, f"the sweep parser needs {key} on the alignment line"
+
+
+def test_the_counters_survive_an_alignment_failure(app_module, upload_dir, alignment_env,
+                                                   monkeypatch, caplog):
+    """A fallback path must still emit the full set, or the sweep sees a ragged table."""
+    import logging
+    import subprocess
+
+    guid, audio = alignment_env
+    _stub_subprocess(monkeypatch, app_module, guid, upload_dir, mfa_rc=1)
+    with caplog.at_level(logging.INFO):
+        _timings, applied, stats = app_module.run_forced_alignment(audio, SEGMENTS, guid, 5.0)
+
+    assert applied is False
+    assert subprocess is not None
+    for key in ("agree250", "empty_fallbacks", "short_fallbacks", "clamped",
+                "span_ratio_p5", "span_ratio_median"):
+        assert key in stats, f"{key} missing from the fallback stats"
+
+
+def test_the_clamp_is_counted(app_module):
+    """A timing the monotonic clamp moved is not the aligner's answer."""
+    segments = [_worded(0.0, 2.0, "alpha beta"), _worded(2.0, 4.0, "gamma delta")]
+    mfa_words = [
+        {"start": 0.0, "end": 3.5, "text": "alpha"},
+        {"start": 0.5, "end": 3.9, "text": "beta"},
+        {"start": 1.0, "end": 1.5, "text": "gamma"},   # starts before segment 0 ended
+        {"start": 1.5, "end": 2.0, "text": "delta"},
+    ]
+    _refined, rstats = app_module.refine_segment_timings(segments, mfa_words)
+    assert rstats["clamped"] >= 1
+
+
+def test_span_ratios_describe_what_the_aligner_produced(app_module):
+    """Recorded before the substitution, so the fix cannot hide the problem it fixes."""
+    sparse = _worded(0.0, 20.0, " ".join(f"word{i}" for i in range(30)))
+    mfa_words = [
+        {"start": 0.2, "end": 0.4, "text": "word0"},
+        {"start": 0.4, "end": 0.8, "text": "word1"},
+    ]
+    _refined, rstats = app_module.refine_segment_timings([sparse], mfa_words)
+
+    assert rstats["short_fallbacks"] == 1
+    assert rstats["span_ratio_median"] < 0.5, \
+        "the ratio must record the aligner's short span, not the substituted one"

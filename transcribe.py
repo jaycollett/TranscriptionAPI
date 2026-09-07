@@ -110,8 +110,13 @@ WHISPER_NUM_WORKERS = _env_int("WHISPER_NUM_WORKERS", 1)
 #         words, reproducing C1 exactly. The long minimum silence is what shreds quiet
 #         audio, not the threshold and not the hallucination filter.
 #
-# The cutover sits between the quietest file that worked on the loud profile
-# (-24.5 dBFS) and the one that failed (-28.4 dBFS).
+# PROVISIONAL. The cutover sits between the quietest file that worked on the loud
+# profile (-24.4 dBFS) and the one that failed (-28.4 dBFS), which is a boundary
+# calibrated on exactly two files. The 100-file corpus sweep found 34 files within
+# 2 dB of it and the level histogram densest right at the line, so a large share of
+# the archive is decided by a threshold that two recordings placed. Left at -26 so
+# the sweep can measure both sides; expect it to move, or to be replaced by
+# something that does not put a hard step through the middle of the distribution.
 VAD_LEVEL_CUTOVER_DBFS = _env_float("VAD_LEVEL_CUTOVER_DBFS", -26.0)
 VAD_MIN_SPEECH_MS = _env_int("VAD_MIN_SPEECH_DURATION_MS", 250)
 
@@ -137,6 +142,24 @@ ANOMALY_WINDOW_SEC = _env_float("ANOMALY_WINDOW_SEC", 60.0)
 ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.2)
 # A window shorter than this is not scored: a 12 s tail is not evidence of collapse.
 ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
+# Share of VAD speech a healthy decode is allowed to leave uncovered before any of it
+# counts as an omission.
+#
+# Segment spans never tile VAD speech exactly: the decoder leaves a fraction of a
+# second between segments at every breath, and those pauses sum. Measured on the six
+# reference files, a healthy decode leaves 0 to 7.1 percent of VAD speech uncovered,
+# and on the worst of them (tcf.20240213a) that 101.5 s is 373 sub-second gaps whose
+# largest single member is 1.8 s. Charging raw uncovered time therefore reports a
+# missing minute on files that are missing nothing, which is what the first
+# implementation of this check did: it fired on 2 of 6 healthy files, triggered the
+# rescue on both, and on tcf.20240213a the rescue was then selected and published 9
+# fewer words at lower agreement than the primary.
+#
+# 10 percent leaves margin over the measured 7.1 percent worst case while still
+# catching the omissions this exists for: a 20 percent omission clears it by 300 s,
+# five windows. Calibrated on six files; the sweep should re-measure the healthy
+# distribution and set it from that.
+ANOMALY_UNCOVERED_TOLERANCE = _env_float("ANOMALY_UNCOVERED_TOLERANCE", 0.10)
 LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 
 # Anomaly-triggered rescue pass. The five-pass decode bought redundancy by paying for
@@ -568,11 +591,16 @@ def low_speech_windows(segments, duration_sec, speech_seconds=None):
     trigger and the quarantine gate. This is what is supposed to catch it.
 
     Two things are counted. Windows the decoder did produce words for are scored on
-    their word rate. Then VAD speech the decoder produced no segment for at all is
-    charged whole: `speech_seconds` is faster-whisper's `duration_after_vad`, the
-    audio it was actually given, and every 60 s of that which no surviving segment
-    covers is a silent window by definition. Without the second half an omission
-    simply shrinks the clock and is invisible.
+    their word rate. Then VAD speech the decoder produced no segment for is charged:
+    `speech_seconds` is faster-whisper's `duration_after_vad`, the audio it was
+    actually given, so speech no surviving segment covers is speech that went
+    missing. Without the second half an omission simply shrinks the clock and is
+    invisible.
+
+    Only the share beyond ANOMALY_UNCOVERED_TOLERANCE is charged. Segment spans never
+    tile VAD speech exactly, and the sub-second pauses between segments sum to minutes
+    over a sermon; charging those reports an omission on a file that is missing
+    nothing. See the constant for the measurements.
     """
     spans = speech_spans(segments)
     clock = SpeechClock(spans)
@@ -581,7 +609,8 @@ def low_speech_windows(segments, duration_sec, speech_seconds=None):
     uncovered_windows = 0
     if speech_seconds:
         uncovered = max(0.0, float(speech_seconds) - covered)
-        uncovered_windows = int(uncovered // ANOMALY_WINDOW_SEC)
+        excess = uncovered - ANOMALY_UNCOVERED_TOLERANCE * float(speech_seconds)
+        uncovered_windows = int(max(0.0, excess) // ANOMALY_WINDOW_SEC)
 
     if covered <= 0:
         return [], uncovered_windows

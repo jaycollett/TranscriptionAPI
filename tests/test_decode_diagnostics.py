@@ -359,13 +359,14 @@ def test_an_omission_is_counted_from_uncovered_vad_speech(transcribe_module):
     assert blind == 0, "the segment-span clock cannot see an omission; that is the bug"
 
     _windows, low = transcribe_module.low_speech_windows(segments, 3600.0, speech_seconds)
-    assert low == 10, "600 s of uncovered VAD speech is ten silent windows"
+    # 600 s uncovered, 300 s inside the 10 percent tolerance, 300 s charged.
+    assert low == 5
 
 
 def test_a_total_omission_is_counted(transcribe_module):
     """No segments at all: every second of VAD speech is uncovered."""
     _windows, low = transcribe_module.low_speech_windows([], 3600.0, 600.0)
-    assert low == 10
+    assert low == 9, "600 s uncovered less the 60 s tolerance is nine windows"
 
 
 def test_full_coverage_charges_nothing(transcribe_module):
@@ -432,7 +433,7 @@ def test_the_omission_reaches_the_returned_counts(transcribe_module, monkeypatch
 
     result = transcribe_module.transcribe_audio(str(audio), "guid")
 
-    assert result["anomaly_windows"] == 10
+    assert result["anomaly_windows"] == 5
     assert result["speech_seconds"] == pytest.approx(3000.0)
 
 
@@ -526,3 +527,62 @@ def test_a_non_positive_temperature_step_cannot_hang_the_ladder(transcribe_modul
 
 def test_the_configured_step_is_clamped_positive(transcribe_module):
     assert transcribe_module.WHISPER_TEMPERATURE_STEP > 0
+
+
+@pytest.mark.parametrize("stem, speech, covered_frac", [
+    ("tcf.20240213b", 734.9, 685.6 / 734.9),
+    ("tcf.20240319b", 1259.4, 1192.5 / 1259.4),
+    ("tcf.20240213a", 1438.9, 1337.4 / 1438.9),   # the worst measured, 7.1 percent
+])
+def test_healthy_files_are_not_charged_an_omission(transcribe_module, stem, speech,
+                                                   covered_frac):
+    """The measured coverage of three real reference decodes must score zero.
+
+    Charging raw uncovered time reported a missing minute on two of these. On
+    tcf.20240213a the 101.5 s is 373 sub-second pauses whose largest single member is
+    1.8 s; there is no omission anywhere in the file.
+    """
+    covered = speech * covered_frac
+    words_per_segment = 13
+    n = max(1, int(covered // 10.0))
+    segments = [
+        _segment(i * 10.0, i * 10.0 + 10.0, " ".join(["word"] * words_per_segment))
+        for i in range(n)
+    ]
+    # Rebuild the exact coverage the real decode had.
+    scale = covered / sum(s["end"] - s["start"] for s in segments)
+    for s in segments:
+        s["start"] *= scale
+        s["end"] *= scale
+        for w in s["words"]:
+            w["start"] *= scale
+            w["end"] *= scale
+
+    _windows, low = transcribe_module.low_speech_windows(segments, speech * 1.4, speech)
+    assert low == 0, f"{stem} is healthy and must not be charged an omission"
+
+
+@pytest.mark.parametrize("speech, covered_s, expected", [
+    (1000.0, 950.0, 0),    # 5 percent, inside the tolerance
+    (1000.0, 900.0, 0),    # exactly at the tolerance
+    (1000.0, 830.0, 1),    # 17 percent, 70 s past
+    (1000.0, 500.0, 6),    # half the speech missing
+])
+def test_the_tolerance_boundary(transcribe_module, speech, covered_s, expected):
+    n = max(1, int(covered_s // 10.0))
+    segments = [_segment(i * 10.0, i * 10.0 + 10.0, " ".join(["word"] * 13))
+                for i in range(n)]
+    _windows, low = transcribe_module.low_speech_windows(segments, speech * 1.5, speech)
+    assert low == expected
+
+
+def test_coverage_exceeding_reported_speech_is_not_negative(transcribe_module):
+    """Segment spans carry VAD padding, so coverage can exceed duration_after_vad.
+
+    Measured on three of the six reference files; it must not underflow into a
+    negative charge or a spurious window.
+    """
+    segments = [_segment(i * 10.0, i * 10.0 + 10.0, " ".join(["word"] * 13))
+                for i in range(30)]
+    _windows, low = transcribe_module.low_speech_windows(segments, 400.0, 250.0)
+    assert low == 0

@@ -382,10 +382,18 @@ a number:
   loud  (at or above -26 dBFS): 0.5 / 250 / 1000 / 300, hallucination filter 0.5.
   quiet (below -26 dBFS): 0.35 / 250 / 300 / 400, no hallucination filter.
 
-The cutover sits between the quietest file that worked on the loud profile
-(-24.4 dBFS) and the one that failed (-28.4 dBFS). An unmeasurable level takes
-the quiet profile, because fragmenting quiet speech loses words while cutting
-extra seams on loud speech does not. The level comes from `ffmpeg -af
+An unmeasurable level takes the quiet profile, because fragmenting quiet speech
+loses words while cutting extra seams on loud speech does not.
+
+**The -26 dBFS cutover is provisional and should not be read as settled.** It sits
+between the quietest file that worked on the loud profile (-24.4 dBFS) and the one
+that failed (-28.4 dBFS), which is a boundary calibrated on two recordings. The
+100-file corpus sweep then measured the level distribution and found 34 files within
+2 dB of the line, with the histogram densest right at it: a third of the archive is
+decided by a threshold two files placed, and a file drifting 1 dB between recordings
+would flip profiles and change its output. It is left at -26 for the sweep so both
+sides get measured. Expect it to move, or to be replaced by something that does not
+put a hard step through the densest part of the distribution. The level comes from `ffmpeg -af
 volumedetect`, costs a full decode of the audio (a few seconds on a sermon), and
 the level, the profile and the parameters are logged on every job.
 `hallucination_silence_threshold` is 0.5 on the loud profile, not the 2.0 the
@@ -414,6 +422,40 @@ own spans stand in for them: under `vad_filter` a segment only exists where the
 VAD found speech. This is a deliberate approximation and it is the one place the
 production metric differs in construction from the harness's, which had the real
 chunks.
+
+**Segment spans alone cannot see an omission, and the obvious fix reports one on
+every healthy file.** Audio the decoder emitted nothing for contributes no span,
+so an omission shrinks the clock rather than showing up as a low-rate window: the
+surviving 40 minutes of a 50 minute file look perfectly healthy. The whole-file
+floor is not a backstop either, because at 2.6 words/sec about 62 percent of a
+file has to vanish before the 1.0 floor trips. So `duration_after_vad` is now read
+before the pass is scored and speech no segment covers is charged to the window
+count.
+
+The trap is charging it raw. Segment spans never tile VAD speech exactly, and the
+sub-second pauses between segments sum to minutes over a sermon. Measured on the
+six reference files, a healthy decode leaves 0 to 7.1 percent of VAD speech
+uncovered, and three of the six leave *negative* uncovered time because segment
+spans carry the VAD's padding and overrun the chunk. On the worst file
+(`tcf.20240213a`) the 101.5 s of uncovered speech is 373 sub-second gaps whose
+largest single member is 1.8 s: there is no omission anywhere in it. Charging raw
+uncovered time fired on 2 of 6 healthy files, triggered the rescue on both, and on
+`tcf.20240213a` the rescue was then selected and published 9 fewer words at lower
+agreement than the primary. The gate made the output worse on a file that was
+fine.
+
+`ANOMALY_UNCOVERED_TOLERANCE` (0.10) is therefore the share of VAD speech a decode
+may leave uncovered before any of it counts. It is scale-free on purpose: the
+absolute 60 s bucket is meaningless without knowing how long the file is. A 20
+percent omission still clears it by 300 s, five windows. Calibrated on six files
+against a measured healthy worst case of 7.1 percent, so the sweep should
+re-measure the healthy distribution and set it from that; it is the single number
+here most likely to be wrong.
+
+A better version of this check would locate the uncovered speech rather than
+totalling it, since a real omission is contiguous and breath pauses are not. That
+needs the VAD chunk positions, which means running the VAD ourselves on the
+decoded audio, and is deferred.
 
 **A rescue pass, not five of them.** The redundancy the five-pass design was
 reaching for is kept, but paid for only where it is needed. If the primary pass
