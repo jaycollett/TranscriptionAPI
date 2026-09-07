@@ -87,7 +87,7 @@ Recommended change: add `--clean` to the mfa command and remove
 `finally` after alignment; remove the dead `_corpus` log-dir probe. Risk: low.
 Verify: Mac for the command flags and the rmtree call; GPU for `ls /mfa` after
 a job showing only `pretrained_models`.
-Status: Open
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop; GPU check of /mfa still pending)
 
 **4. The CI image build cannot succeed: no build arg is ever passed, and the Dockerfile asserts on it**
 `.github/workflows/BuildAndPublish.yml` build step, Dockerfile pyannote layer
