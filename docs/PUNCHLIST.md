@@ -336,7 +336,7 @@ Status: Done in 0.5.0 (Declare the dev tooling and pin the disk-space action to 
 of the queue.
 Recommended change: accumulate the sum in submission order or call
 `/status/<guid>`. Verify: Mac.
-Status: Open
+Status: Done in 0.5.0 (Account for jobs ahead in the checkQueue.py ETA)
 
 **28. CI hygiene: unpinned action**
 `.github/workflows/BuildAndPublish.yml` uses `jlumbroso/free-disk-space@main`
