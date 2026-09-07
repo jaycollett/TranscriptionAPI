@@ -71,9 +71,12 @@ it on every wake when more than an hour has passed since the last run
 (monotonic clock), before the "no pending" `continue`; delete files and rows for
 the same GUID set in one pass; drop the `{guid}_processed.mp3` and
 `{guid}_corpus` entries from the per-job path list, since neither is created
-any more. Risk: low. Verify: Mac, unit test with `created_at` two days old,
-assert files and row both gone; a second test with 25 rows.
-Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
+any more. Age rows by `COALESCE(completed_at, created_at)`, not `created_at`:
+a job that waited a day in a deep queue and completed minutes ago still has a
+client polling for it. Risk: low. Verify: Mac, unit test with `created_at`
+two days old, assert files and row both gone; a second test with 25 rows; a
+third with a row created two days ago but completed five minutes ago, kept.
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop; aging by completion time from review)
 
 **3. MFA leaves a full working corpus under /mfa for every job (container-layer disk leak)**
 `app.py:run_forced_alignment` (mfa command). `mfa align` is run without
@@ -129,10 +132,15 @@ Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
 only used for garbage results; a single OOM on a large file terminates the job.
 Recommended change: route exceptions through the same counter: increment
 `attempt_count`, requeue as 'pending' while below `max_garbage_retries`, else
-'error'. Status vocabulary unchanged. Risk: a deterministic crash costs up to
-three runs before failing; acceptable. Verify: Mac, stub `transcribe_audio` to
-raise twice then succeed.
-Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
+'error'. Status vocabulary unchanged. A requeue must not be retried on the very
+next worker iteration (an instantaneous failure would burn every attempt in
+seconds): `worker_cycle` reports a requeue as no progress so the loop sleeps
+`POLL_INTERVAL_SEC` first. The outer handler in `process_pending_job` counts
+only if the row is still 'processing', so a failure that already moved the
+row on is not counted twice. Risk: a deterministic crash costs up to three
+runs before failing; acceptable. Verify: Mac, stub `transcribe_audio` to raise
+twice then succeed; assert a sleep between a failing attempt and its retry.
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop; retry spacing and single counting from review)
 
 **8. Duplicate-GUID race returns 500 and overwrites the winner's file**
 `app.py:upload_audio`. SELECT then `file.save` then INSERT with no lock. Two
@@ -140,10 +148,14 @@ concurrent uploads of one GUID (the client does burst resubmits: five
 `POST /upload 409` within one second at 06:28:18) both pass the SELECT, both
 save to the same path, and the loser's INSERT raises `sqlite3.IntegrityError`,
 which becomes a 500.
-Recommended change: wrap check+save+insert in a module-level `threading.Lock`,
-and catch `sqlite3.IntegrityError` explicitly as 409. Contract unchanged.
-Verify: Mac, test client, two threads, one 201 and one 409.
-Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop)
+Recommended change: wrap the sequence in a module-level `threading.Lock`,
+insert the row before saving the file (so a loser never writes over the
+winner's bytes; a failed save deletes the row and returns 500), compare GUIDs
+case-insensitively, and catch `sqlite3.IntegrityError` explicitly as 409. The
+worker takes the same lock around its pending-row SELECT so it cannot pick up
+a row whose file is not yet saved. Contract unchanged. Verify: Mac, test
+client, two threads, one 201 and one 409; the 409 path writes no file.
+Status: Done in 0.5.0 (Harden the queue, the upload path and the worker loop; insert-before-save ordering from review)
 
 **9. Upload decodes untrusted input before the row exists; failures leak the file and return 500**
 `app.py:upload_audio`. The duration probe on a corrupt or non-audio upload

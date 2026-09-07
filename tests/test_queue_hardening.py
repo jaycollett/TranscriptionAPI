@@ -266,6 +266,30 @@ def test_process_whisper_exception_marks_error_after_cap(app_module, db, upload_
     assert row["completed_at"] is not None
 
 
+def test_failure_is_counted_once_when_the_inner_handler_raises(app_module, db, upload_dir, monkeypatch):
+    """If the inner handler moved the row on and then raised, the outer handler
+    must not count the same failure a second time."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    real_handler = app_module.handle_transient_failure
+
+    def handler_that_raises_after_writing(cursor, guid, reason):
+        real_handler(cursor, guid, reason)
+        raise RuntimeError("database hiccup after the update")
+
+    monkeypatch.setattr(app_module, "handle_transient_failure", handler_that_raises_after_writing)
+
+    def boom(path, guid):
+        raise RuntimeError("CUDA out of memory")
+
+    monkeypatch.setattr(app_module, "transcribe_audio", boom)
+    guid = str(uuid.uuid4())
+    filename = _make_audio(upload_dir, guid)
+    insert_job(db, guid, filename=filename, status="pending")
+
+    assert app_module.process_pending_job(db.cursor(), guid, filename) == "pending"
+    assert get_row(db, guid)["attempt_count"] == 1
+
+
 def test_empty_alignment_falls_back_to_whisper_timings(app_module, db, upload_dir, monkeypatch):
     """An alignment that returns nothing is not a garbage attempt: the job completes on
     Whisper's own timings and attempt_count is untouched."""

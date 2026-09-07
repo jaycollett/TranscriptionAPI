@@ -141,7 +141,9 @@ What changed, in one place:
 
 - Cleanup is `cleanup_old_jobs()`, runs on the first wake and then hourly on
   a monotonic clock whether or not the queue is empty, and deletes files and
-  rows for the same GUID set. `sweep_orphaned_files()` removes GUID-named
+  rows for the same GUID set. Rows are aged by `COALESCE(completed_at,
+  created_at)`, so a job that waited a day in the queue and finished minutes
+  ago is not deleted from under a polling client. `sweep_orphaned_files()` removes GUID-named
   entries in `UPLOAD_FOLDER` older than two days with no pending or
   processing row; that folder is a host bind mount and outlives the
   container-layer database, so it is the only way pre-redeploy files go away.
@@ -151,20 +153,34 @@ What changed, in one place:
 - Exceptions from transcription go through the attempt counter like garbage
   results: requeued below `MAX_GARBAGE_RETRIES`, 'error' at it. A completed
   row now keeps its `attempt_count` as the retry history instead of being
-  reset to 0; nothing re-reads it once the job is terminal.
-- The worker loops straight into the next job and only sleeps when the queue
-  is empty. The idle transition is logged once; wake/sleep lines are DEBUG.
+  reset to 0; nothing re-reads it once the job is terminal. The outer
+  handler in `process_pending_job` only counts a failure if the row is still
+  'processing', so an inner handler that raised after writing cannot cause a
+  double count.
+- The worker loops straight into the next job after a terminal outcome and
+  sleeps `POLL_INTERVAL_SEC` when the queue is empty or when the job it just
+  ran was requeued; without that spacing an instantaneous failure (OOM,
+  unreadable file) burned all three attempts in under a second. The idle
+  transition is logged once; wake/sleep lines are DEBUG.
 - `/health` returns 503 when the worker thread is dead or an idle worker has
   not polled in five minutes. A worker mid-job is reported `worker_busy` and
   is exempt from the staleness rule, otherwise a 46 minute file would mark
   the container unhealthy. Both Dockerfiles carry a `HEALTHCHECK` using
   `wget` (the image has no curl) with a 180 s start period for the model load.
-- `/upload` holds a lock across check, save and insert, maps
-  `IntegrityError` to 409, rejects undecodable audio with 400 and removes the
-  file, requires the canonical hyphenated UUID form (uppercase hex is still
-  accepted and echoed as sent), allowlists extensions and lowercases them on
-  disk, and caps bodies at 1 GiB. Werkzeug's 413 is an `HTTPException`; the
-  handler's broad `except Exception` has to re-raise it or it becomes a 500.
+- `/upload` holds a lock across check, insert and save, in that order: the
+  row is claimed before any bytes are written so a duplicate never overwrites
+  the winner's file, a failed save deletes the row and returns 500, and an
+  undecodable file removes both file and row and returns 400. The duplicate
+  check is case-insensitive (`lower(guid)`), matching the orphan sweep. The
+  worker takes the same lock around its pending-row SELECT so it cannot pick
+  up a row whose file has not been saved yet. GUIDs must be in canonical
+  hyphenated form (uppercase hex is accepted and echoed as sent), extensions
+  are allowlisted and lowercased on disk, bodies are capped at 1 GiB.
+  Werkzeug's 413 is an `HTTPException`; the handler's broad
+  `except Exception` has to re-raise it or it becomes a 500.
+- `Dockerfile.release` copies only `app.py`, `transcribe.py` and
+  `requirements.txt`; `checkQueue.py` is host tooling and is excluded by
+  `.dockerignore`, so listing it in the COPY fails the overlay build.
 - Duration comes from ffprobe via `pydub.utils.mediainfo`, with a full decode
   only when the header has no duration. `estimate_processing_seconds()` is the
   one copy of the `ceil(d / 15.1) * 5 + 45` formula. `/upload` and `/status`
@@ -184,7 +200,7 @@ What changed, in one place:
   retags the serving image `transcription-api:rollback`, and polls `/health`
   for up to three minutes after starting the new container.
 
-Test suite: 119 tests, about 0.2 s, `app.py` at 92% line coverage (was 42%).
+Test suite: 127 tests, under half a second, `app.py` at 92% line coverage (was 42%).
 The routes are exercised with Flask's test client against a per-test SQLite
 file; the worker loop is tested through `worker_cycle()` and a `time.sleep`
 stub that raises to break the loop. One test-client limitation: a filename

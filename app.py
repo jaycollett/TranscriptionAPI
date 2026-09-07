@@ -554,8 +554,17 @@ def process_pending_job(cursor, guid, filename):
 
     except Exception as e:
         app.logger.error(f"Error processing transcription for {guid}: {e}")
-        # Count it against the job; if this write fails too the row stays in
-        # 'processing' and the next worker cycle's recovery requeues it.
+        # Count it against the job only if nothing else already has: an inner
+        # handler that raised part-way through may have moved the row on, and
+        # counting again would burn a second attempt on one failure. If this
+        # read or write fails too, the row stays in 'processing' and the next
+        # worker cycle's recovery requeues it.
+        cursor.execute("SELECT status FROM transcriptions WHERE guid = ?", (guid,))
+        row = cursor.fetchone()
+        current = row[0] if row else None
+        if current != 'processing':
+            app.logger.warning(f"Job {guid} is already '{current}' after the failure; not counting it again.")
+            return current
         return handle_transient_failure(cursor, guid, f"{type(e).__name__}: {e}")
 
 
@@ -610,16 +619,18 @@ def sweep_orphaned_files(cursor, upload_folder, now=None):
     return removed
 
 def cleanup_old_jobs(cursor, upload_folder):
-    """Delete terminal rows older than CLEANUP_ROW_AGE together with their files.
+    """Delete rows that reached a terminal state more than CLEANUP_ROW_AGE ago, with their files.
 
     Files and rows are removed for the same GUID set, so a row never disappears
     while its files stay behind. Finishes with the orphaned-file sweep. Returns
     (rows_deleted, orphans_swept).
     """
+    # Age is measured from completion, not submission: a job that waited a day
+    # in a deep queue and finished minutes ago still has a client polling for it.
     cursor.execute(
         "SELECT guid, filename FROM transcriptions "
         "WHERE status IN ('completed', 'error', 'quarantined') "
-        "AND created_at <= datetime('now', ?)",
+        "AND COALESCE(completed_at, created_at) <= datetime('now', ?)",
         (CLEANUP_ROW_AGE,)
     )
     old_records = cursor.fetchall()
@@ -715,44 +726,61 @@ def upload_audio():
         saved_filename = f"{guid}{file_extension}"
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], saved_filename)
 
-        # Existence check, save and insert happen under one lock so a burst of
-        # resubmits for the same GUID yields exactly one 201 and no overwritten file.
+        # Existence check, insert and save happen under one lock so a burst of
+        # resubmits for the same GUID yields exactly one 201. The row is claimed
+        # before any bytes are written, so a loser never overwrites the winner's
+        # file. The worker takes the same lock around its pending-row SELECT, so
+        # it cannot pick the row up before the file exists.
         with upload_lock:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT guid FROM transcriptions WHERE guid = ?", (guid,))
+            # Case-insensitive, matching the orphan sweep: one UUID in two casings
+            # is one job.
+            cursor.execute("SELECT 1 FROM transcriptions WHERE lower(guid) = lower(?)", (guid,))
             if cursor.fetchone():
                 return jsonify({'error': 'GUID already exists'}), 409  # Conflict status
 
-            file.save(file_path)
-
-            # Probe the duration (ffprobe, no decode). A file that cannot be read is
-            # rejected before any row exists, and removed so it is not orphaned.
-            try:
-                duration_sec = get_audio_duration(file_path)
-            except Exception as decode_error:
-                app.logger.warning(f"Rejected upload {guid} ({file.filename}): could not decode audio: {decode_error}")
-                remove_path(file_path)
-                return jsonify({'error': 'Could not decode audio'}), 400
-
-            processing_time_est_sec = estimate_processing_seconds(duration_sec)
-
-            # Queue ahead of this job: everything waiting plus the job in flight.
-            cursor.execute(
-                "SELECT COALESCE(SUM(processing_time_est), 0) FROM transcriptions "
-                "WHERE status IN ('pending', 'processing')"
-            )
-            queue_ahead_sec = cursor.fetchone()[0]
-
             try:
                 cursor.execute(
-                    "INSERT INTO transcriptions (guid, filename, processing_time_est) VALUES (?, ?, ?)",
-                    (guid, file.filename, processing_time_est_sec)
+                    "INSERT INTO transcriptions (guid, filename, processing_time_est) VALUES (?, ?, 0)",
+                    (guid, file.filename)
                 )
             except sqlite3.IntegrityError:
                 # Not reachable through this process (the lock covers the check),
                 # but a second process on the same database could race us.
                 return jsonify({'error': 'GUID already exists'}), 409
+
+            try:
+                file.save(file_path)
+            except Exception as save_error:
+                app.logger.error(f"Failed to save upload {guid} ({file.filename}): {save_error}")
+                remove_path(file_path)
+                cursor.execute("DELETE FROM transcriptions WHERE guid = ?", (guid,))
+                return jsonify({'error': 'Internal Server Error'}), 500
+
+            # Probe the duration (ffprobe, no decode). A file that cannot be read is
+            # rejected outright: both the file and the row go away.
+            try:
+                duration_sec = get_audio_duration(file_path)
+            except Exception as decode_error:
+                app.logger.warning(f"Rejected upload {guid} ({file.filename}): could not decode audio: {decode_error}")
+                remove_path(file_path)
+                cursor.execute("DELETE FROM transcriptions WHERE guid = ?", (guid,))
+                return jsonify({'error': 'Could not decode audio'}), 400
+
+            processing_time_est_sec = estimate_processing_seconds(duration_sec)
+            cursor.execute(
+                "UPDATE transcriptions SET processing_time_est = ? WHERE guid = ?",
+                (processing_time_est_sec, guid)
+            )
+
+            # Queue ahead of this job: everything waiting plus the job in flight.
+            cursor.execute(
+                "SELECT COALESCE(SUM(processing_time_est), 0) FROM transcriptions "
+                "WHERE status IN ('pending', 'processing') AND guid != ?",
+                (guid,)
+            )
+            queue_ahead_sec = cursor.fetchone()[0]
 
         total_processing_time_sec = queue_ahead_sec + processing_time_est_sec
         estimated_completion_utc = utcnow() + timedelta(seconds=total_processing_time_sec)
@@ -913,8 +941,9 @@ def health():
 def worker_cycle(cursor, state=worker_state):
     """One worker pass: recover orphans, clean up if due, process one pending job.
 
-    Returns True when a job was processed (the caller should loop straight away)
-    and False when the queue was empty (the caller should sleep).
+    Returns True when a job reached a terminal state (the caller should loop
+    straight away) and False when the queue was empty or the job was requeued
+    for a retry (the caller should sleep first).
     """
     state['last_wake'] = utcnow()
 
@@ -930,14 +959,16 @@ def worker_cycle(cursor, state=worker_state):
             app.logger.error(f"Cleanup error: {cleanup_error}")
         state['last_cleanup'] = now
 
-    # Fetch the oldest pending transcription
-    cursor.execute("""
-        SELECT guid, filename FROM transcriptions
-        WHERE status = 'pending'
-        ORDER BY created_at ASC
-        LIMIT 1
-    """)
-    row = cursor.fetchone()
+    # Fetch the oldest pending transcription. The upload lock keeps a row that
+    # /upload has inserted but not yet saved the file for out of view.
+    with upload_lock:
+        cursor.execute("""
+            SELECT guid, filename FROM transcriptions
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
 
     if row is None:
         if not state['idle_logged']:
@@ -949,10 +980,14 @@ def worker_cycle(cursor, state=worker_state):
     guid, filename = row
     state['busy_since'] = utcnow()
     try:
-        process_pending_job(cursor, guid, filename)
+        status = process_pending_job(cursor, guid, filename)
     finally:
         state['busy_since'] = None
-    return True
+    # A requeued job ('pending' again after a garbage result or an exception)
+    # must not be retried on the very next iteration, or an instantaneous
+    # failure burns every attempt in seconds. Returning False makes the caller
+    # sleep for POLL_INTERVAL_SEC before the retry.
+    return status != 'pending'
 
 
 def transcription_worker():

@@ -89,6 +89,33 @@ def test_cleanup_with_nothing_to_do(app_module, db, upload_dir):
     assert app_module.cleanup_old_jobs(db.cursor(), str(upload_dir)) == (0, 0)
 
 
+def test_cleanup_ages_rows_by_completion_not_submission(app_module, db, upload_dir):
+    """A job that waited two days in the queue and completed five minutes ago is
+    still being polled for; only rows that finished a day ago are removed."""
+    waited_long = str(uuid.uuid4())
+    finished_long_ago = str(uuid.uuid4())
+    insert_job(db, waited_long, status="completed", created_at="2026-01-01 00:00:00")
+    insert_job(db, finished_long_ago, status="completed", created_at="2026-01-01 00:00:00")
+    cur = db.cursor()
+    cur.execute("UPDATE transcriptions SET completed_at = datetime('now', '-5 minutes') WHERE guid = ?", (waited_long,))
+    cur.execute("UPDATE transcriptions SET completed_at = datetime('now', '-2 days') WHERE guid = ?", (finished_long_ago,))
+
+    deleted, _ = app_module.cleanup_old_jobs(cur, str(upload_dir))
+
+    assert deleted == 1
+    assert get_row(db, waited_long) is not None
+    assert get_row(db, finished_long_ago) is None
+
+
+def test_cleanup_falls_back_to_created_at_without_completed_at(app_module, db, upload_dir):
+    """Legacy terminal rows with no completed_at are aged by created_at."""
+    legacy = str(uuid.uuid4())
+    insert_job(db, legacy, status="error", created_at="2026-01-01 00:00:00")
+    assert get_row(db, legacy)["completed_at"] is None
+    deleted, _ = app_module.cleanup_old_jobs(db.cursor(), str(upload_dir))
+    assert deleted == 1
+
+
 # --------------------------------------------------------------------------------------
 # Orphaned-file sweep (files outlive the container-layer database)
 # --------------------------------------------------------------------------------------
@@ -202,6 +229,61 @@ def test_cycle_returns_true_per_job_and_false_when_empty(app_module, db, upload_
     assert stub_pipeline == guids, "oldest first"
     assert state["last_wake"] is not None
     assert state["busy_since"] is None
+
+
+def test_cycle_requeue_returns_false_so_the_retry_waits(app_module, db, upload_dir, state, monkeypatch):
+    """A failed attempt requeues the job as 'pending'; the cycle must report no
+    progress so the loop sleeps before retrying instead of spinning through the
+    attempt cap in seconds."""
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    calls = []
+
+    def flaky(path, guid):
+        calls.append(guid)
+        if len(calls) == 1:
+            raise RuntimeError("CUDA out of memory")
+        return {"transcription": GOOD_TEXT, "timings": GOOD_TIMINGS, "duration_sec": 100.0}
+
+    monkeypatch.setattr(app_module, "transcribe_audio", flaky)
+    monkeypatch.setattr(app_module, "run_forced_alignment", lambda p, t, g: (GOOD_TIMINGS, True))
+    guid = _queue(db, upload_dir, 1)[0]
+    cur = db.cursor()
+
+    assert app_module.worker_cycle(cur, state) is False, "requeued: caller must sleep"
+    assert get_row(db, guid)["status"] == "pending"
+    assert app_module.worker_cycle(cur, state) is True
+    assert get_row(db, guid)["status"] == "completed"
+
+
+def test_worker_sleeps_between_a_failed_attempt_and_its_retry(app_module, db, upload_dir, monkeypatch):
+    monkeypatch.setattr(app_module, "max_garbage_retries", 3)
+    monkeypatch.setattr(app_module, "get_db_connection", lambda: db)
+    monkeypatch.setattr(app_module, "worker_state",
+                        {"last_wake": None, "last_cleanup": None, "busy_since": None, "idle_logged": False})
+    attempts = []
+
+    def always_fails(path, guid):
+        attempts.append(guid)
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(app_module, "transcribe_audio", always_fails)
+    guid = _queue(db, upload_dir, 1)[0]
+    sleeps = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise _StopLoop()
+
+    monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        app_module.transcription_worker()
+
+    # One attempt, sleep, second attempt, sleep: never two attempts back to back.
+    assert attempts == [guid, guid]
+    assert sleeps == [app_module.POLL_INTERVAL_SEC] * 2
+    assert get_row(db, guid)["attempt_count"] == 2
+    assert get_row(db, guid)["status"] == "pending"
 
 
 def test_cycle_runs_cleanup_on_first_wake_then_hourly(app_module, db, upload_dir, state, monkeypatch, stub_pipeline):

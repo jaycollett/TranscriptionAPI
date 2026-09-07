@@ -107,7 +107,7 @@ def test_upload_duplicate_guid_returns_409(client, route_db):
     assert resp.get_json()["error"] == "GUID already exists"
 
 
-def test_upload_integrity_error_returns_409(client, app_module, monkeypatch):
+def test_upload_integrity_error_returns_409(client, app_module, monkeypatch, upload_dir):
     """A row that appears between the check and the insert (another process on the
     same database) is a conflict, not a 500."""
     import sqlite3
@@ -134,8 +134,53 @@ def test_upload_integrity_error_returns_409(client, app_module, monkeypatch):
             return _RacingCursor(self._conn.cursor())
 
     monkeypatch.setattr(app_module, "get_db_connection", lambda: _Conn(real_cursor_factory()))
-    resp = _upload(client, str(uuid.uuid4()))
+    guid = str(uuid.uuid4())
+    resp = _upload(client, guid)
     assert resp.status_code == 409
+    assert not (upload_dir / f"{guid}.mp3").exists(), "the loser must not write over the winner's file"
+
+
+def test_upload_duplicate_guid_in_other_casing_returns_409(client, route_db):
+    guid = str(uuid.uuid4())
+    assert _upload(client, guid).status_code == 201
+    resp = _upload(client, guid.upper())
+    assert resp.status_code == 409
+
+
+def test_upload_save_failure_removes_row_and_returns_500(client, route_db, upload_dir, app_module, monkeypatch):
+    import werkzeug.datastructures
+
+    def broken_save(self, dst, buffer_size=16384):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(werkzeug.datastructures.FileStorage, "save", broken_save)
+    guid = str(uuid.uuid4())
+    resp = _upload(client, guid)
+    assert resp.status_code == 500
+    assert get_row(route_db, guid) is None
+    assert not (upload_dir / f"{guid}.mp3").exists()
+
+
+def test_upload_row_is_not_visible_to_the_worker_before_the_file_exists(client, route_db, upload_dir, app_module, monkeypatch):
+    """The worker selects pending rows under upload_lock, so a row inserted by an
+    upload still in progress is never picked up while its file is missing."""
+    seen_while_locked = []
+    original_get_duration = app_module.get_audio_duration
+
+    def probe_during_upload(path):
+        # Mid-upload: the row exists but the lock is held. A worker cycle on
+        # another thread must block rather than pick the row up.
+        acquired = app_module.upload_lock.acquire(timeout=0.05)
+        seen_while_locked.append(acquired)
+        if acquired:
+            app_module.upload_lock.release()
+        return 60.0
+
+    monkeypatch.setattr(app_module, "get_audio_duration", probe_during_upload)
+    guid = str(uuid.uuid4())
+    assert _upload(client, guid).status_code == 201
+    assert seen_while_locked == [False], "the lock must be held across insert, save and probe"
+    del original_get_duration
 
 
 def test_upload_concurrent_same_guid_one_wins(client, route_db, app_module, monkeypatch, upload_dir):
