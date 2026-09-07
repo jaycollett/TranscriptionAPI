@@ -313,3 +313,18 @@ timings, MFA aligned on the first attempt, 139 s for the five Whisper passes,
 environment: Python 3.13.15, torch 2.12.1+cu130 with CUDA available, ctranslate2
 4.8.0 seeing one device, numpy 2.5.2, MFA 3.4.3.dev0 (what the v3.4.2 tag ships),
 Ubuntu 20.04.5.
+
+## 2026-09-07 - 0.5.2: cuda-libraries instead of the toolkit, no CUDA_LAUNCH_BLOCKING
+
+cuda-toolkit-12-2 replaced by cuda-libraries-12-2 (cuda-runtime-12-2 was rejected:
+apt-cache shows it depends on cuda-drivers, which would install the NVIDIA driver
+inside the container). ctranslate2 links no CUDA library at load time (ldd shows
+only its own libctranslate2 and libgomp); it dlopens libcudart, libcublas and
+libcudnn at first use, which cuda-libraries-12-2 plus libcudnn9-cuda-12 provide.
+torch brings its own CUDA 13 libraries from pip. CUDA_LAUNCH_BLOCKING=1 removed.
+
+Validation of 0.5.2-rc1 on the reference file: 2079 words, 2.753 words/sec, 135
+timings, MFA aligned on the first attempt, torch CUDA available and ctranslate2
+seeing one device. Five Whisper passes took 106 s against 139 to 145 s on 0.4.0,
+0.5.0 and 0.5.1, so the synchronous-launch setting had been costing roughly a
+quarter of the decode time. End to end 138 s against 170 to 180 s.
