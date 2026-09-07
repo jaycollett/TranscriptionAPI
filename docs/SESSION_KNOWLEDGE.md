@@ -413,3 +413,9 @@ one device; `mfa version` is 3.4.3.dev0+gd2dc283bd.d20260820, unchanged.
 Adding a package to the apt line invalidates every layer after it, so the
 first build after this change re-downloads the MFA models, the requirements
 and the Whisper model. On the GPU host that was 3.5 minutes with warm caches.
+
+Validation of 0.5.4-rc1 on the reference file: 2077 words, 2.750 words/sec, 146
+timings, MFA aligned on the first attempt, zero MFA working directories left.
+The five Whisper passes took 194 s because the quality experiment harness was
+sharing GPU 0 at the time; that is contention, not a regression (0.5.2 and 0.5.3
+measured 103 to 106 s on an idle GPU).
