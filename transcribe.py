@@ -118,6 +118,20 @@ ANOMALY_WINDOW_MIN_WPS = _env_float("ANOMALY_WINDOW_MIN_WPS", 1.2)
 ANOMALY_WINDOW_MIN_TAIL_SEC = 20.0
 LOOP_4GRAM_RATE = _env_float("LOOP_4GRAM_RATE", 0.3)
 
+# Anomaly-triggered rescue pass. The five-pass decode bought redundancy by paying for
+# it on every file, including the 99 percent that never needed it; this buys the same
+# redundancy only where the primary pass shows evidence of trouble. Worst case is two
+# passes, still well under five. The trigger is deliberately far below the quarantine
+# gate (ANOMALY_SEGMENTS_MAX / ANOMALY_WINDOWS_MAX in app.py): a second opinion is
+# cheap and a requeue is not, so the rescue fires long before the job is at risk.
+RESCUE_ENABLED = os.getenv("RESCUE_ENABLED", "1").strip().lower() not in ("0", "false", "no", "")
+RESCUE_ANOMALY_SEGMENTS = _env_int("RESCUE_ANOMALY_SEGMENTS", 1)
+RESCUE_ANOMALY_WINDOWS = _env_int("RESCUE_ANOMALY_WINDOWS", 1)
+# The rescue ladder starts above 0.0: the primary pass already decoded this audio at
+# that rung and produced the anomalies, so repeating it is the one outcome guaranteed
+# not to help.
+RESCUE_TEMPERATURE_BASE = _env_float("RESCUE_TEMPERATURE_BASE", 0.2)
+
 # Boundary de-duplication: the longest and shortest overlap between the tail of one
 # segment and the head of the next that is treated as a duplicate.
 BOUNDARY_DEDUPE_MIN_WORDS = _env_int("BOUNDARY_DEDUPE_MIN_WORDS", 2)
@@ -624,6 +638,83 @@ def transcript_from_segments(segments):
 
 
 # ---------------------------------------------------------------------------------
+# Passes: scoring, the rescue trigger and the selection rule
+# ---------------------------------------------------------------------------------
+def summarize_pass(segments, duration_sec, label):
+    """Post-process one pass's segments and score it, returning a comparable record.
+
+    Empty segments are dropped, seam duplicates are trimmed, flags are attached and
+    the anomaly counts are computed, so two passes are always compared on the output
+    that would actually be published rather than on the raw decode.
+    """
+    kept = [s for s in segments if s.get("text", "").strip()]
+    deduped = deduplicate_segment_boundaries(kept)
+    anomaly_count, flagged = annotate_segments(deduped)
+    windows, low_windows = low_speech_windows(deduped, duration_sec)
+    transcript = transcript_from_segments(deduped)
+    logprobs = [s["avg_logprob"] for s in deduped if s.get("avg_logprob") is not None]
+    return {
+        "label": label,
+        "segments": deduped,
+        "transcript": transcript,
+        "words": len(transcript.split()),
+        "anomaly_count": anomaly_count,
+        "anomaly_windows": low_windows,
+        "flagged_segments": flagged,
+        "windows": len(windows),
+        "mean_logprob": (sum(logprobs) / len(logprobs)) if logprobs else None,
+    }
+
+
+def should_attempt_rescue(anomaly_count, anomaly_windows):
+    """True when the primary pass looks bad enough to be worth a second opinion."""
+    if not RESCUE_ENABLED:
+        return False
+    return anomaly_count >= RESCUE_ANOMALY_SEGMENTS or anomaly_windows >= RESCUE_ANOMALY_WINDOWS
+
+
+def rescue_decode_kwargs(primary_kwargs):
+    """The rescue pass: the primary configuration with the two levers that matter changed.
+
+    `condition_on_previous_text=False` is the one setting that stops a repetition loop
+    feeding itself from window to window, which is the failure the anomaly flags
+    actually describe; the higher ladder base skips the rung the primary pass already
+    failed on. Model, beam, VAD and thresholds are deliberately identical, so a
+    difference in the result is attributable to those two changes and not to noise.
+    """
+    kwargs = dict(primary_kwargs)
+    kwargs["condition_on_previous_text"] = False
+    kwargs["temperature"] = temperature_ladder(RESCUE_TEMPERATURE_BASE)
+    return kwargs
+
+
+def pass_sort_key(record):
+    """Ordering for select_pass: fewer anomalies, then more words, then better logprob.
+
+    Word count is the second key because every disagreement the 0.5.x confidence rule
+    got wrong was a case where it preferred the shorter transcript: on the retreat
+    recording it ranked the passes in reverse order of word count and dropped two runs
+    of Psalm 91. Mean log-probability only breaks a remaining tie; the duration-weighted
+    word probability that used to decide is not used at all.
+    """
+    mean_logprob = record["mean_logprob"]
+    return (
+        record["anomaly_count"] + record["anomaly_windows"],
+        -record["words"],
+        -(mean_logprob if mean_logprob is not None else float("-inf")),
+    )
+
+
+def select_pass(passes):
+    """Pick the best of the decoded passes.
+
+    `min` keeps the first of equal candidates, and the primary pass is always first,
+    so the rescue only displaces it on a strict win.
+    """
+    return min(passes, key=pass_sort_key)
+
+
+# ---------------------------------------------------------------------------------
 # The decode
 # ---------------------------------------------------------------------------------
 def transcribe_audio(file_path, guid):
@@ -684,53 +775,86 @@ def transcribe_audio(file_path, guid):
         # raised the repeated 4-gram rate from 0.031 to 0.140 for no spelling gain.
     }
 
+    def run_pass(kwargs, label):
+        """Decode once and score the result; returns (record, speech_seconds)."""
+        decode_start = time.time()
+        try:
+            raw_segments, info = model.transcribe(file_path, **kwargs)
+            segments = [serialize_segment(s) for s in raw_segments]
+        except Exception as e:
+            logger.error(f"Error during the {label} decode for {guid}: {e}")
+            raise
+        record = summarize_pass(segments, duration_sec, label)
+        record["decode_seconds"] = round(time.time() - decode_start, 2)
+        # duration_after_vad is the speech the decoder actually saw; it is the honest
+        # denominator for a word rate, and the only place faster-whisper reports it.
+        speech = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
+        logger.info(
+            f"{label} pass for {guid} in {record['decode_seconds']:.2f}s: {record['words']} words, "
+            f"{len(record['segments'])} segments, anomaly_count={record['anomaly_count']}, "
+            f"anomaly_windows={record['anomaly_windows']} of {record['windows']}, "
+            f"flagged_segments={len(record['flagged_segments'])}"
+        )
+        return record, speech
+
     logger.info(
         f"Decoding {guid}: beam_size={WHISPER_BEAM_SIZE}, best_of={WHISPER_BEST_OF}, "
         f"patience={WHISPER_PATIENCE}, temperature ladder {ladder}"
     )
-    decode_start = time.time()
-    try:
-        raw_segments, info = model.transcribe(file_path, **decode_kwargs)
-        segments = [serialize_segment(s) for s in raw_segments]
-    except Exception as e:
-        logger.error(f"Error during transcription for {guid}: {e}")
-        raise
-    decode_seconds = time.time() - decode_start
+    primary, speech_seconds = run_pass(decode_kwargs, "primary")
+    passes = [primary]
 
-    # duration_after_vad is the speech the decoder actually saw; it is the honest
-    # denominator for a word rate, and the only place faster-whisper reports it.
-    speech_seconds = float(getattr(info, "duration_after_vad", 0.0) or 0.0) if info is not None else 0.0
+    rescue_attempted = should_attempt_rescue(primary["anomaly_count"], primary["anomaly_windows"])
+    if rescue_attempted:
+        logger.warning(
+            f"Primary pass for {guid} scored anomaly_count={primary['anomaly_count']} "
+            f"(trigger {RESCUE_ANOMALY_SEGMENTS}) and anomaly_windows={primary['anomaly_windows']} "
+            f"(trigger {RESCUE_ANOMALY_WINDOWS}); running one rescue pass with "
+            f"condition_on_previous_text=False from temperature {RESCUE_TEMPERATURE_BASE}"
+        )
+        rescue, rescue_speech = run_pass(rescue_decode_kwargs(decode_kwargs), "rescue")
+        passes.append(rescue)
 
-    segments = [s for s in segments if s["text"].strip()]
-    segments = deduplicate_segment_boundaries(segments)
-    anomaly_count, flagged_segments = annotate_segments(segments)
-    windows, anomaly_windows = low_speech_windows(segments, duration_sec)
+    selected = select_pass(passes)
+    rescue_selected = selected["label"] == "rescue"
+    if rescue_attempted:
+        if rescue_selected:
+            speech_seconds = rescue_speech
+        logger.info(
+            f"Selected the {selected['label']} pass for {guid}: "
+            + " vs ".join(
+                f"{p['label']} score {p['anomaly_count'] + p['anomaly_windows']} "
+                f"({p['words']} words, mean logprob {p['mean_logprob']})"
+                for p in passes
+            )
+        )
 
-    transcription = transcript_from_segments(segments)
+    segments = selected["segments"]
+    transcription = selected["transcript"]
     timings = timings_from_segments(segments)
 
-    words = len(transcription.split())
-    wps = words / duration_sec if duration_sec > 0 else 0.0
-    logger.info(
-        f"Decoded {guid} in {decode_seconds:.2f}s: {words} words in {duration_sec:.1f}s audio "
-        f"({wps:.2f} words/sec), {len(segments)} segments, {speech_seconds:.1f}s speech, "
-        f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows} of {len(windows)}, "
-        f"flagged_segments={len(flagged_segments)}"
-    )
-
+    wps = selected["words"] / duration_sec if duration_sec > 0 else 0.0
     total_time = time.time() - start_time
-    logger.info(f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds")
+    logger.info(
+        f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds: "
+        f"{selected['words']} words in {duration_sec:.1f}s audio ({wps:.2f} words/sec), "
+        f"{speech_seconds:.1f}s speech, rescue_attempted={rescue_attempted}, "
+        f"rescue_selected={rescue_selected}, anomaly_count={selected['anomaly_count']}, "
+        f"anomaly_windows={selected['anomaly_windows']}"
+    )
 
     return {
         "transcription": transcription,
         "timings": timings,
         "duration_sec": duration_sec,
         # Diagnostics. `segments` carries the word timestamps the alignment needs and
-        # is not exposed by the API.
+        # is not exposed by the API. Every count describes the SELECTED pass.
         "segments": segments,
-        "anomaly_count": anomaly_count,
-        "anomaly_windows": anomaly_windows,
-        "flagged_segments": flagged_segments,
+        "anomaly_count": selected["anomaly_count"],
+        "anomaly_windows": selected["anomaly_windows"],
+        "flagged_segments": selected["flagged_segments"],
+        "rescue_attempted": rescue_attempted,
+        "rescue_selected": rescue_selected,
         "speech_seconds": speech_seconds,
         "mean_dbfs": mean_dbfs,
         "vad_threshold": threshold,

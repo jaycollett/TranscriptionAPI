@@ -129,6 +129,18 @@ CONFIGS = {
         level_aware_vad=True,
         production_postprocess=True,
     ),
+    # RC060 plus the anomaly-triggered rescue pass. Run alongside RC060 so the cost
+    # of the rescue (how often it fires) and its benefit (whether it is selected, and
+    # what it changes) are both measured rather than assumed.
+    "RC060_RESCUE": _delta(
+        "RC060_RESCUE",
+        "RC060 with the anomaly-triggered rescue pass and the production selection rule",
+        {"vad_parameters": dict(RC060_VAD), "hallucination_silence_threshold": 0.5},
+        level_aware_vad=True,
+        production_postprocess=True,
+        production_rescue=True,
+        selection={"rule": "anomaly_then_words_then_logprob"},
+    ),
 }
 
 # Keys the batched pipeline does not accept or ignores; dropped before the call.

@@ -182,7 +182,8 @@ def get_row(conn, guid):
     cur.execute(
         "SELECT guid, filename, status, transcription, timings, attempt_count, completed_at, "
         "processing_seconds, words_per_second, mfa_applied, "
-        "anomaly_count, anomaly_windows, flagged_segments "
+        "anomaly_count, anomaly_windows, flagged_segments, "
+        "rescue_attempted, rescue_selected "
         "FROM transcriptions WHERE guid = ?",
         (guid,),
     )
@@ -191,7 +192,8 @@ def get_row(conn, guid):
         return None
     keys = ["guid", "filename", "status", "transcription", "timings",
             "attempt_count", "completed_at", "processing_seconds", "words_per_second",
-            "mfa_applied", "anomaly_count", "anomaly_windows", "flagged_segments"]
+            "mfa_applied", "anomaly_count", "anomaly_windows", "flagged_segments",
+        "rescue_attempted", "rescue_selected"]
     return dict(zip(keys, row))
 
 

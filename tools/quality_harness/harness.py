@@ -128,6 +128,12 @@ def cmd_run(args):
                 metrics["flagged_segments"] = len(production["flagged_segments"])
                 metrics["words_raw"] = production["words_before_dedupe"]
                 metrics["dedupe_removed_words"] = production["words_before_dedupe"] - metrics["words"]
+                metrics["rescue_attempted"] = production.get("rescue_attempted")
+                metrics["rescue_selected"] = production.get("rescue_selected")
+                metrics["selected_pass"] = production.get("selected_pass")
+                if production.get("pass_scores"):
+                    metrics["pass_scores"] = production["pass_scores"]
+                    metrics["pass_wall_s"] = production["pass_wall_s"]
             if result["pipeline"] == "prod":
                 metrics["words_raw"] = len(result["transcript_raw"].split())
                 metrics["dedupe_removed_words"] = metrics["words_raw"] - metrics["words"]

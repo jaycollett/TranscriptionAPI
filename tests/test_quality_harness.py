@@ -383,3 +383,77 @@ def test_level_aware_vad_uses_the_production_rule(monkeypatch, transcribe_module
     assert kwargs["vad_parameters"]["threshold"] == pytest.approx(0.35)
     assert kwargs["vad_parameters"]["min_silence_duration_ms"] == 1000
     assert result["level"]["mean_dbfs"] == pytest.approx(-28.6)
+
+
+def test_rc060_rescue_is_rc060_plus_the_rescue():
+    """The two configs must differ only in the rescue, or comparing them proves nothing."""
+    base = configs.get_config("RC060")
+    rescue = configs.get_config("RC060_RESCUE")
+    assert rescue["transcribe"] == base["transcribe"]
+    assert rescue["level_aware_vad"] is True
+    assert rescue["production_postprocess"] is True
+    assert rescue["production_rescue"] is True
+    assert base.get("production_rescue") is None
+
+
+def test_harness_rescue_path_uses_the_production_rule(monkeypatch, transcribe_module):
+    """run_with_rescue must fire, score and select exactly as transcribe_audio does."""
+    import decode as decode_mod
+
+    monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
+
+    clean = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying")
+             for i in range(20)]
+    dirty = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying",
+                 temp=0.8 if i in (2, 5) else 0.0)
+             for i in range(20)]
+
+    runs = []
+
+    def fake_run_sequential(model, audio, kwargs):
+        runs.append(kwargs)
+        payload = dirty if len(runs) == 1 else clean
+        return {"segments": payload, "transcript": " ".join(s["text"] for s in payload),
+                "wall_s": 1.0, "params": kwargs, "duration_after_vad": 190.0}
+
+    monkeypatch.setattr(decode_mod, "run_sequential", fake_run_sequential)
+
+    result = {}
+    segments, transcript, timings, all_runs, chosen = decode_mod.run_with_rescue(
+        None, None, {"condition_on_previous_text": True, "temperature": (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)},
+        200.0, result,
+    )
+
+    assert len(runs) == 2, "the rescue must have fired on the anomalous primary"
+    assert runs[1]["condition_on_previous_text"] is False
+    assert runs[1]["temperature"][0] == pytest.approx(0.2)
+    assert result["production"]["rescue_attempted"] is True
+    assert result["production"]["rescue_selected"] is True
+    assert result["production"]["anomaly_count"] == 0
+    assert len(result["production"]["pass_scores"]) == 2
+    assert " ".join(t["text"] for t in timings) == transcript
+    assert len(all_runs) == 2 and chosen is all_runs[1]
+    assert segments
+
+
+def test_harness_rescue_path_skips_a_clean_primary(monkeypatch, transcribe_module):
+    import decode as decode_mod
+
+    monkeypatch.setitem(sys.modules, "transcribe", transcribe_module)
+    clean = [seg(i * 10.0, i * 10.0 + 10.0, "and so the word of the Lord came to him once again saying")
+             for i in range(20)]
+    runs = []
+
+    def fake_run_sequential(model, audio, kwargs):
+        runs.append(kwargs)
+        return {"segments": clean, "transcript": " ".join(s["text"] for s in clean),
+                "wall_s": 1.0, "params": kwargs, "duration_after_vad": 190.0}
+
+    monkeypatch.setattr(decode_mod, "run_sequential", fake_run_sequential)
+    result = {}
+    decode_mod.run_with_rescue(None, None, {"condition_on_previous_text": True,
+                                            "temperature": (0.0, 0.2)}, 200.0, result)
+
+    assert len(runs) == 1
+    assert result["production"]["rescue_attempted"] is False
+    assert result["production"]["rescue_selected"] is False

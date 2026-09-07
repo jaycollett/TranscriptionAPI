@@ -189,7 +189,9 @@ def ensure_schema(cursor):
             mfa_applied INTEGER DEFAULT NULL,
             anomaly_count INTEGER DEFAULT NULL,
             anomaly_windows INTEGER DEFAULT NULL,
-            flagged_segments TEXT DEFAULT NULL
+            flagged_segments TEXT DEFAULT NULL,
+            rescue_attempted INTEGER DEFAULT NULL,
+            rescue_selected INTEGER DEFAULT NULL
         )
     ''')
 
@@ -210,6 +212,8 @@ def ensure_schema(cursor):
         ('anomaly_count', 'INTEGER DEFAULT NULL'),
         ('anomaly_windows', 'INTEGER DEFAULT NULL'),
         ('flagged_segments', 'TEXT DEFAULT NULL'),
+        ('rescue_attempted', 'INTEGER DEFAULT NULL'),
+        ('rescue_selected', 'INTEGER DEFAULT NULL'),
     ]
     for column, definition in migrations:
         if not column_exists(cursor, 'transcriptions', column):
@@ -288,7 +292,8 @@ def _count_failed_attempt(cursor, guid, reason, terminal_status):
 
     cursor.execute(
         "UPDATE transcriptions SET status = 'pending', transcription = NULL, timings = NULL, "
-        "anomaly_count = NULL, anomaly_windows = NULL, flagged_segments = NULL WHERE guid = ?",
+        "anomaly_count = NULL, anomaly_windows = NULL, flagged_segments = NULL, "
+        "rescue_attempted = NULL, rescue_selected = NULL WHERE guid = ?",
         (guid,)
     )
     # run_forced_alignment skips MFA when <guid>_aligned already holds output, so a
@@ -774,9 +779,14 @@ def process_pending_job(cursor, guid, filename):
         # Full diagnostic segments carry the word timestamps the aligner needs; a
         # stubbed or older transcribe_audio only returns the API timings.
         decode_segments = result.get("segments") or whisper_segment_timings
+        # Every count describes the pass transcribe_audio selected: when the primary
+        # pass looked bad it ran one rescue pass and kept the better of the two, so
+        # the gate below must not judge a file on a score the rescue already fixed.
         anomaly_count = result.get("anomaly_count")
         anomaly_windows = result.get("anomaly_windows")
         flagged_segments = result.get("flagged_segments") or []
+        rescue_attempted = bool(result.get("rescue_attempted"))
+        rescue_selected = bool(result.get("rescue_selected"))
 
         # Check for garbage transcription
         if is_garbage_transcription(transcription):
@@ -828,6 +838,7 @@ def process_pending_job(cursor, guid, filename):
             "UPDATE transcriptions SET transcription = ?, timings = ?, status = 'completed', "
             "processing_seconds = ?, words_per_second = ?, mfa_applied = ?, "
             "anomaly_count = ?, anomaly_windows = ?, flagged_segments = ?, "
+            "rescue_attempted = ?, rescue_selected = ?, "
             "completed_at = CURRENT_TIMESTAMP WHERE guid = ?",
             (
                 transcription,
@@ -838,6 +849,8 @@ def process_pending_job(cursor, guid, filename):
                 anomaly_count,
                 anomaly_windows,
                 json.dumps(flagged_segments),
+                1 if rescue_attempted else 0,
+                1 if rescue_selected else 0,
                 guid,
             )
         )
@@ -847,7 +860,9 @@ def process_pending_job(cursor, guid, filename):
             f"({wps:.2f} words/sec, floor {MIN_WORDS_PER_SEC}), "
             f"{processing_seconds:.1f}s processing, mfa_applied={mfa_applied}, "
             f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows}, "
-            f"flagged_segments={len(flagged_segments)}, agree250={alignment_stats.get('agree250')}"
+            f"flagged_segments={len(flagged_segments)}, "
+            f"rescue_attempted={rescue_attempted}, rescue_selected={rescue_selected}, "
+            f"agree250={alignment_stats.get('agree250')}"
         )
         return 'completed'
 
@@ -960,7 +975,8 @@ def get_all_transcriptions():
     cursor.execute("""
         SELECT guid, filename, status, created_at, completed_at, processing_time_est,
                processing_seconds, words_per_second, attempt_count, mfa_applied,
-               anomaly_count, anomaly_windows, flagged_segments
+               anomaly_count, anomaly_windows, flagged_segments,
+               rescue_attempted, rescue_selected
         FROM transcriptions
         ORDER BY created_at DESC
     """)
@@ -983,6 +999,8 @@ def get_all_transcriptions():
         'anomaly_count': row[10],
         'anomaly_windows': row[11],
         'flagged_segments': parse_flagged_segments(row[12]),
+        'rescue_attempted': None if row[13] is None else bool(row[13]),
+        'rescue_selected': None if row[14] is None else bool(row[14]),
     } for row in records]
 
     return jsonify(result), 200
@@ -1129,7 +1147,8 @@ def get_transcription(guid):
     cursor.execute("""
         SELECT status, transcription, timings, created_at, processing_time_est,
                processing_seconds, words_per_second, attempt_count, mfa_applied,
-               anomaly_count, anomaly_windows, flagged_segments
+               anomaly_count, anomaly_windows, flagged_segments,
+               rescue_attempted, rescue_selected
         FROM transcriptions WHERE guid = ?
     """, (guid,))
     row = cursor.fetchone()
@@ -1139,7 +1158,8 @@ def get_transcription(guid):
 
     (status, transcription, timings, created_at, processing_time_est,
      processing_seconds, words_per_second, attempt_count, mfa_applied,
-     anomaly_count, anomaly_windows, flagged_segments) = row
+     anomaly_count, anomaly_windows, flagged_segments,
+     rescue_attempted, rescue_selected) = row
 
     # If already completed, return the results immediately
     if status == 'completed' or status == 'processed':  # Support both new and old status values during transition
@@ -1156,6 +1176,8 @@ def get_transcription(guid):
             'anomaly_count': anomaly_count,
             'anomaly_windows': anomaly_windows,
             'flagged_segments': parse_flagged_segments(flagged_segments),
+            'rescue_attempted': None if rescue_attempted is None else bool(rescue_attempted),
+            'rescue_selected': None if rescue_selected is None else bool(rescue_selected),
         }), 200
 
     # Handle error / quarantined status (both terminal failures). 'quarantined' means the
