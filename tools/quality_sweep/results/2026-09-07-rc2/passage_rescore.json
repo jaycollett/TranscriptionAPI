@@ -1,0 +1,179 @@
+{
+ "files": {
+  "tcf.20210210.mp3": {
+   "control": {
+    "words": 1173,
+    "containment": 0.0,
+    "decode_seconds": 16.47
+   },
+   "no_context": {
+    "words": 1175,
+    "containment": 0.0,
+    "decode_seconds": 10.68
+   },
+   "no_vad": {
+    "words": 1197,
+    "containment": 0.0,
+    "decode_seconds": 11.7
+   },
+   "quiet_profile": {
+    "words": 1173,
+    "containment": 0.0,
+    "decode_seconds": 11.78
+   },
+   "ladder_from_0_2": {
+    "words": 1250,
+    "containment": 1.0,
+    "decode_seconds": 12.45
+   }
+  },
+  "tcf.20210217.mp3": {
+   "control": {
+    "words": 1634,
+    "containment": 0.0,
+    "decode_seconds": 16.25
+   },
+   "no_context": {
+    "words": 1679,
+    "containment": 1.0,
+    "decode_seconds": 14.25
+   },
+   "no_vad": {
+    "words": 1682,
+    "containment": 1.0,
+    "decode_seconds": 17.61
+   },
+   "quiet_profile": {
+    "words": 1678,
+    "containment": 1.0,
+    "decode_seconds": 15.76
+   },
+   "ladder_from_0_2": {
+    "words": 1681,
+    "containment": 1.0,
+    "decode_seconds": 16.07
+   }
+  },
+  "tcf.20250607.mp3": {
+   "control": {
+    "words": 7818,
+    "containment": 0.0833,
+    "decode_seconds": 80.25,
+    "windows": [
+     {
+      "start": 46.3,
+      "end": 106.3,
+      "words": 72,
+      "wps": 1.2,
+      "below_floor": false
+     },
+     {
+      "start": 106.3,
+      "end": 131.1,
+      "words": 37,
+      "wps": 1.495,
+      "below_floor": false
+     }
+    ]
+   },
+   "no_context": {
+    "words": 7715,
+    "containment": 1.0,
+    "decode_seconds": 65.45,
+    "windows": [
+     {
+      "start": 46.3,
+      "end": 106.3,
+      "words": 175,
+      "wps": 2.917,
+      "below_floor": false
+     },
+     {
+      "start": 106.3,
+      "end": 131.1,
+      "words": 77,
+      "wps": 3.111,
+      "below_floor": false
+     }
+    ]
+   },
+   "no_vad": {
+    "words": 7715,
+    "containment": 0.8958,
+    "decode_seconds": 79.39,
+    "windows": [
+     {
+      "start": 46.3,
+      "end": 106.3,
+      "words": 188,
+      "wps": 3.133,
+      "below_floor": false
+     },
+     {
+      "start": 106.3,
+      "end": 131.1,
+      "words": 72,
+      "wps": 2.909,
+      "below_floor": false
+     }
+    ]
+   },
+   "quiet_profile": {
+    "words": 7399,
+    "containment": 0.0833,
+    "decode_seconds": 83.24,
+    "windows": [
+     {
+      "start": 46.3,
+      "end": 106.3,
+      "words": 72,
+      "wps": 1.2,
+      "below_floor": false
+     },
+     {
+      "start": 106.3,
+      "end": 131.1,
+      "words": 37,
+      "wps": 1.495,
+      "below_floor": false
+     }
+    ]
+   },
+   "ladder_from_0_2": {
+    "words": 7843,
+    "containment": 0.8958,
+    "decode_seconds": 80.3,
+    "windows": [
+     {
+      "start": 46.3,
+      "end": 106.3,
+      "words": 179,
+      "wps": 2.983,
+      "below_floor": false
+     },
+     {
+      "start": 106.3,
+      "end": 131.1,
+      "words": 72,
+      "wps": 2.909,
+      "below_floor": false
+     }
+    ]
+   }
+  }
+ },
+ "references": {
+  "tcf.20210210.mp3": {
+   "words": 73,
+   "text": "jesus aware of this withdrew from there and many followed him and he healed them all and ordered them not to make him known this was to fulfill what was spoken by the prophet isaiah behold my servant whom i have chosen my beloved with whom my soul is well pleased i will put my spirit upon him and he will proclaim justice to the gentiles he will not quarrel or cry aloud"
+  },
+  "tcf.20210217.mp3": {
+   "words": 44,
+   "text": "do not lay up for yourself treasures on earth where moth and rust destroy and where thieves break in and steal but lay up for yourself treasures in heaven where neither moth nor rust destroys and where thieves do not break in and steal"
+  },
+  "tcf.20250607.mp3": {
+   "words": 102,
+   "text": "of the covenant so i'll just read this in chapter 24 moses came and told the people all the words of the lord and all the rules and all the people answered with one voice and said all the words that the lord has spoken we will do and moses wrote down all the words of the lord he rose early in the morning and built an altar at the foot of the mountain and twelve pillars according to the twelve tribes of israel and he sent young men of the people of israel who offered burnt offerings and sacrificed peace offerings"
+  }
+ }
+}

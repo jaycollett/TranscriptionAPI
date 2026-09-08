@@ -1061,3 +1061,56 @@ they are equal by test rather than by construction, and the harness does not exe
 `transcribe_audio` itself. Treat harness anomaly counts as their own measurement
 series until that gap is closed, and note that the reference runs shared GPU 0 with
 the sweep container, which is the likeliest source of the extra spread.
+
+## 2026-09-07 - The legacy transcript baseline: four code eras, no surviving collapses
+
+`tools/quality_sweep/` compares a release against the transcripts the service has
+actually published, taken from `sermon_metadata.english_transcription` in the
+orchestrator's `sermon_orchestrator.db`. Two facts about that baseline are not
+recoverable from the code and change how any comparison against it reads.
+
+**The join is exact but the baseline is not one code version.** Rows key to the
+audio archive on the basename of `orig_audio_url`: 655 rows, 655 files in
+`SermonPreprocessorAPI/data/audiofiles`, no orphan either way, and 653 rows carry a
+transcript. Bucketing each row by the completion time of its
+`GenerateEnglishTranscription` step against the release tag dates splits those 653
+across four different services: 531 rows from 2025-03-06 to 09 under 0.1.5 (one
+`model.transcribe(beam_size=7, best_of=7)`, no prompt, no denoise), 91 rows under
+0.2.1/0.2.2 (five passes, scalar temperature, single-speaker prompt), 21 rows under
+0.3.0/0.3.1 (the same plus the always-on denoise stage), and 10 rows from the
+0.5.4 re-run earlier the same day. Only the 21 have the full defect set. A single
+"legacy versus 0.6.0" average blends four services and means little; the sweep
+reports every table per era.
+
+**The collapsed transcripts no longer exist.** The 0.15-1.24 words/sec collapse
+recorded above was measured on 2024 teachings that had been added to the
+orchestrator after 2026-06-24 and were re-transcribed under 0.5.4 on 2026-09-07
+between 06:31 and 08:02, overwriting the collapsed text. No earlier copy survives:
+the three `sermon_orchestrator.db.bak*` backups (April and June 2026) do not
+contain those rows at all, and every row they do contain is byte-identical to the
+current file. Across all 653 rows the lowest words-per-second is 1.79 and the next
+is 1.98, against p5 2.46, median 2.75 and p95 2.98, so the database holds no
+collapse population to split on. Two of the same batch (`tcf.20240326b`,
+`tcf.20240514`) have no transcript at all: their step rows read "Remote service
+repeatedly lost submission (5 retries)".
+
+**Whole-archive level measurement is cheap.** `ffmpeg -af volumedetect` over all 655
+files (43 hours of audio) takes about three minutes at six parallel niced jobs, so
+level stratification does not need sampling. The archive is -30.4 to -12.2 dBFS
+mean, median -20.8; 20 files sit below the -26 dBFS VAD cutover 0.6.0 proposes and
+33 more between -26 and -24, which is enough to calibrate the edge instead of
+inferring it from the two files the harness measured.
+
+## 2026-09-07 - A private MFA_ROOT_DIR must be seeded with the pretrained models
+
+Running a second copy of the service beside production needs its own `DB_FILE`,
+`UPLOAD_FOLDER` and `MFA_ROOT_DIR`. The first two can point anywhere writable; the
+third cannot. MFA resolves the `english_mfa` acoustic model under
+`$MFA_ROOT_DIR/pretrained_models`, and the image downloads it into the default
+`/mfa` at build time. Pointing `MFA_ROOT_DIR` at an empty directory makes every
+alignment attempt fail with "Could not find a model named english_mfa for
+acoustic", and because `run_forced_alignment` treats that as a normal alignment
+failure the job still completes on Whisper timings and reports
+`mfa_applied=false`. Nothing errors, so the run looks fine until the MFA rate in
+the results is zero. Copy `/mfa/pretrained_models` (90 MB) out of the image into the
+new root first; `tools/quality_sweep/run_sweep.sh` does it once and caches it.
