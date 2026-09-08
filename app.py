@@ -846,6 +846,13 @@ def process_pending_job(cursor, guid, filename):
         flagged_segments = result.get("flagged_segments") or []
         rescue_attempted = bool(result.get("rescue_attempted"))
         rescue_selected = bool(result.get("rescue_selected"))
+        # Which of the two rescue signals fired, and the directional cross-check
+        # between the rescue and the published pass. Logged, not stored and not acted
+        # on: the firing mix has to be readable off production logs to know whether
+        # the gap trigger is earning its GPU time, and the run length tells a reviewer
+        # what the second decode found that the published transcript does not have.
+        rescue_trigger_names = result.get("rescue_triggers") or ""
+        rescue_unpublished_run = result.get("rescue_unpublished_run")
 
         # Check for garbage transcription
         if is_garbage_transcription(transcription):
@@ -880,11 +887,19 @@ def process_pending_job(cursor, guid, filename):
         # healthy ones. Quarantine is reserved for the garbage check and the word-rate
         # floor above, which reject output that is unusable rather than merely
         # suspect. Everything else publishes with its diagnostics set.
-        if (anomaly_windows or 0) > 0:
+        #
+        # The gap trigger added in 0.6.1 changes nothing here. It is read inside
+        # transcribe_audio to decide whether a second decode runs, and no value of it
+        # reaches this function at all: a file with a 46 s hole and a healthy
+        # transcript completes exactly like any other.
+        if (anomaly_windows or 0) > 0 or rescue_attempted:
             app.logger.warning(
-                f"{guid} has {anomaly_windows} low speech window(s); the rescue "
+                f"{guid} has {anomaly_windows or 0} low speech window(s) and fired the "
+                f"{rescue_trigger_names or 'none'} rescue trigger(s); the rescue "
                 f"{'ran' if rescue_attempted else 'did not run'} and the "
-                f"{'rescue' if rescue_selected else 'primary'} pass was published. "
+                f"{'rescue' if rescue_selected else 'primary'} pass was published "
+                f"(longest run the rescue has and it does not: "
+                f"{rescue_unpublished_run}). "
                 f"Review the transcript for a dropped passage."
             )
 
@@ -933,7 +948,10 @@ def process_pending_job(cursor, guid, filename):
             f"{processing_seconds:.1f}s processing, mfa_applied={mfa_applied}, "
             f"anomaly_count={anomaly_count}, anomaly_windows={anomaly_windows}, "
             f"flagged_segments={len(flagged_segments)}, "
-            f"rescue_attempted={rescue_attempted}, rescue_selected={rescue_selected}, "
+            f"rescue_attempted={rescue_attempted}, "
+            f"rescue_triggers={rescue_trigger_names or 'none'}, "
+            f"rescue_selected={rescue_selected}, "
+            f"rescue_unpublished_run={rescue_unpublished_run}, "
             + alignment_log_fields(alignment_stats)
         )
         return 'completed'

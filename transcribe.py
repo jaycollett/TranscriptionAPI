@@ -4,8 +4,15 @@
 one deterministic beam-5 pass (harness config C1) plus a level-aware VAD (C4) and a
 per-segment anomaly score (C2/C7). The measurements behind every constant here are in
 docs/QUALITY_PROPOSAL.md and tools/quality_harness/results/2026-09-07/summary.md.
+
+0.6.1 adds one trigger, RESCUE_MAX_GAP_S: a primary pass with a long contiguous
+uncovered stretch of speech now buys a second decode. The signal was already measured
+and already used, priced for a quarantine gate at 20 s; priced for a second decode it
+belongs at 8. See docs/QUALITY_PROPOSAL.md section 4.4 and
+tools/quality_sweep/results/2026-09-08-fidelity/.
 """
 
+import difflib
 import json
 import logging
 import math
@@ -202,6 +209,34 @@ RESCUE_ENABLED = os.getenv("RESCUE_ENABLED", "1").strip().lower() not in ("0", "
 # segment on this corpus is that the ladder engaged: a fact about the decode path, not
 # about the output. All twelve rescues in that run came from the window trigger.
 RESCUE_ANOMALY_WINDOWS = _env_int("RESCUE_ANOMALY_WINDOWS", 1)
+# The gap trigger, added in 0.6.1. This reads exactly the same measurement as
+# ANOMALY_MAX_UNCOVERED_GAP_SEC above, at a quarter of its threshold, and the reason
+# the two numbers differ is the reason this trigger was missed for a whole release.
+#
+# THE SAME SIGNAL WANTS A DIFFERENT THRESHOLD DEPENDING ON WHAT FIRING COSTS. Tuned
+# as a quarantine gate, a false positive withholds a finished transcript from the
+# people waiting for it, so the signal was priced at 20 s and never evaluated below
+# 10. Tuned as a trigger for a second decode, a false positive costs GPU time on a
+# file that was fine, so the same signal belongs far lower. The measurement never
+# changed; only what firing costs did.
+#
+# Measured over the 32-file fidelity subset, 2026-09-08. Against the seven files
+# where a second decode and the legacy archive agree that the shipped transcript lost
+# a contiguous run of 25 words or more, 8.5 s reaches all seven and selects eight
+# files of 32; 10 s reaches five; 20 s, the quarantine value, reaches two. The
+# default sits at 8.0 rather than at the measured 8.5 so a small shift in a file's
+# coverage does not drop one of the seven back out. Every cheaper signal was measured
+# on the same subset and separates nothing: uncovered speech fraction runs 0.053 to
+# 0.134 on the bad files and 0.011 to 0.128 on the healthy ones, with the three
+# highest values in the subset belonging to healthy recordings; coverage ratio is the
+# same statistic inverted; word rate over speech and flagged segments catch none at
+# zero false positives.
+#
+# It is a trigger and nothing else. No value of this constant can quarantine a job,
+# requeue it, or publish an empty row: the rescue is one extra decode, and the
+# retention floor and word cap still decide whether its output is kept. Set it to 0
+# to switch the gap trigger off without touching the window trigger.
+RESCUE_MAX_GAP_S = _env_float("RESCUE_MAX_GAP_S", 8.0)
 # The rescue ladder starts above 0.0: the primary pass already decoded this audio at
 # that rung and produced the anomalies, so repeating it is the one outcome guaranteed
 # not to help.
@@ -1075,17 +1110,86 @@ def summarize_pass(segments, duration_sec, label, speech_intervals=None, guid=No
     }
 
 
-def should_attempt_rescue(anomaly_windows):
-    """True when the primary pass looks bad enough to be worth a second opinion.
+def rescue_triggers(anomaly_windows, max_gap_s=0.0):
+    """Which signals ask for a second decode, in a stable order, for the log line.
 
-    The low-rate window is the only input. It is the only signal that can see a
-    confident omission, and the rescue is the remedy for one: it decodes with
-    previous-text conditioning off and its ladder starting at 0.2, the two changes
-    measured to recover the lost read-aloud passages.
+    Two signals, deliberately independent, either one sufficient.
+
+    `window` is the low-rate window: a stretch the decoder covered thinly, sparse
+    segments over a passage it should have transcribed fully. Output is present and
+    wrong, so no coverage measure sees it at any threshold.
+
+    `gap` is the largest contiguous uncovered stretch of speech: a hole the decoder
+    emitted nothing into. The window check is weak on that shape from the other side,
+    because a hole contributes no words but, on a coverage clock, no time either. On
+    the fidelity subset the gap trigger reached all seven confirmed content losses and
+    the window trigger reached three, and the three the window trigger caught were all
+    files the gap trigger also caught, so this widens the net rather than replacing it.
+
+    Returning the names rather than a bool is what makes the firing mix observable:
+    the completion line reports which of the two fired, so the split can be read off
+    production logs instead of guessed at.
     """
     if not RESCUE_ENABLED:
-        return False
-    return anomaly_windows >= RESCUE_ANOMALY_WINDOWS
+        return ()
+    fired = []
+    if anomaly_windows >= RESCUE_ANOMALY_WINDOWS:
+        fired.append("window")
+    # The `> 0` guard makes RESCUE_MAX_GAP_S=0 switch the gap trigger off. Without it
+    # a zero threshold would fire on every file, including the ones with no measured
+    # gap at all, which is the opposite of what setting it to zero reads as.
+    if RESCUE_MAX_GAP_S > 0 and max_gap_s >= RESCUE_MAX_GAP_S:
+        fired.append("gap")
+    return tuple(fired)
+
+
+def should_attempt_rescue(anomaly_windows, max_gap_s=0.0):
+    """True when the primary pass looks bad enough to be worth a second opinion.
+
+    Either trigger is enough, and neither can do anything worse than spend one more
+    decode: it runs with previous-text conditioning off and its ladder starting at
+    0.2, the two changes measured to recover the lost read-aloud passages, and the
+    retention floor still decides whether its output is published.
+    """
+    return bool(rescue_triggers(anomaly_windows, max_gap_s))
+
+
+def longest_unpublished_run(published_text, candidate_text):
+    """Longest contiguous run of words `candidate_text` has that `published_text` lacks.
+
+    The review marker the fidelity experiment identified, and it is directional on
+    purpose. Symmetric disagreement between two decodes is nearly useless as a signal,
+    because it fires just as loudly when the second decode is the wrong one: the
+    largest one-sided run in the whole 32-file experiment was 137 words, and it was a
+    repetition loop the second decode was right to lack. Only a run the second decode
+    has and the published pass does not is evidence that something was lost.
+
+    Free here, and only here. It needs two decodes, which is why it cannot be a
+    trigger, but when the rescue has already run both transcripts are in memory and
+    this is one difflib pass over their word lists, a fraction of a second against a
+    decode measured in minutes. Nothing extra is decoded to compute it.
+
+    Zero when the rescue was published, by construction: the published pass is then
+    the second decode and there is nothing it has that itself lacks. A non-zero value
+    means the rescue found a run that the pass actually published does not contain,
+    which is a file worth a human reading, not a file to reject.
+    """
+    published = norm_words(published_text or "")
+    candidate = norm_words(candidate_text or "")
+    if not candidate:
+        return 0
+    if not published:
+        return len(candidate)
+    longest = 0
+    matcher = difflib.SequenceMatcher(a=published, b=candidate, autojunk=False)
+    for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
+        # `replace` counts as well as `insert`. A run the rescue has can line up
+        # against different words in the published pass rather than against nothing,
+        # and difflib reports that as a replacement; ignoring it would hide exactly
+        # the case where a passage was decoded as something else instead of dropped.
+        if tag in ("insert", "replace"):
+            longest = max(longest, j2 - j1)
+    return longest
 
 
 def rescue_decode_kwargs(primary_kwargs):
@@ -1300,11 +1404,17 @@ def transcribe_audio(file_path, guid):
     primary, speech_seconds = run_pass(decode_kwargs, "primary")
     passes = [primary]
 
-    rescue_attempted = should_attempt_rescue(primary["anomaly_windows"])
+    # The triggers read the PRIMARY pass. Both are measured on the pass that would
+    # otherwise be published without a second opinion.
+    triggers = rescue_triggers(primary["anomaly_windows"], primary["uncovered_max_gap_s"])
+    rescue_attempted = bool(triggers)
+    unpublished_run = None
     if rescue_attempted:
         logger.warning(
-            f"Primary pass for {guid} scored anomaly_windows={primary['anomaly_windows']} "
-            f"(trigger {RESCUE_ANOMALY_WINDOWS}); running one rescue pass with "
+            f"Primary pass for {guid} fired the {'+'.join(triggers)} trigger: "
+            f"anomaly_windows={primary['anomaly_windows']} (fires at {RESCUE_ANOMALY_WINDOWS}), "
+            f"uncovered_max_gap_s={primary['uncovered_max_gap_s']} "
+            f"(fires at {RESCUE_MAX_GAP_S}); running one rescue pass with "
             f"condition_on_previous_text=False from temperature {RESCUE_TEMPERATURE_BASE}"
         )
         rescue, rescue_speech = run_pass(rescue_decode_kwargs(decode_kwargs), "rescue")
@@ -1313,6 +1423,8 @@ def transcribe_audio(file_path, guid):
     selected = select_pass(passes)
     rescue_selected = selected["label"] == "rescue"
     if rescue_attempted:
+        # The directional cross-check, against the pass that is actually published.
+        unpublished_run = longest_unpublished_run(selected["transcript"], rescue["transcript"])
         if rescue_selected:
             speech_seconds = rescue_speech
         logger.info(
@@ -1334,8 +1446,12 @@ def transcribe_audio(file_path, guid):
         f"Transcription completed for GUID: {guid} in {total_time:.2f} seconds: "
         f"{selected['words']} words in {duration_sec:.1f}s audio ({wps:.2f} words/sec), "
         f"{speech_seconds:.1f}s speech, rescue_attempted={rescue_attempted}, "
-        f"rescue_selected={rescue_selected}, anomaly_count={selected['anomaly_count']}, "
-        f"anomaly_windows={selected['anomaly_windows']}"
+        f"rescue_triggers={'+'.join(triggers) if triggers else 'none'}, "
+        f"rescue_selected={rescue_selected}, "
+        f"rescue_unpublished_run={unpublished_run}, "
+        f"anomaly_count={selected['anomaly_count']}, "
+        f"anomaly_windows={selected['anomaly_windows']}, "
+        f"primary_uncovered_max_gap_s={primary['uncovered_max_gap_s']}"
     )
 
     return {
@@ -1349,12 +1465,19 @@ def transcribe_audio(file_path, guid):
         "anomaly_windows": selected["anomaly_windows"],
         "flagged_segments": selected["flagged_segments"],
         "rescue_attempted": rescue_attempted,
+        # Which signals fired, joined, or "" when the rescue did not run. A log and
+        # review field only: nothing downstream branches on it.
+        "rescue_triggers": "+".join(triggers),
         "rescue_selected": rescue_selected,
+        # The directional cross-check. None when no rescue ran, since it takes two
+        # decodes and no second decode is run to obtain it.
+        "rescue_unpublished_run": unpublished_run,
         "mean_logprob": selected["mean_logprob"],
         # The primary's own figures, for review: they say what the file looked like
         # before the rescue ran, which is not recoverable from the published pass.
         "primary_words": primary["words"],
         "primary_anomaly_windows": primary["anomaly_windows"],
+        "primary_uncovered_max_gap_s": primary["uncovered_max_gap_s"],
         "uncovered_s": selected["uncovered_s"],
         "uncovered_max_gap_s": selected["uncovered_max_gap_s"],
         "speech_seconds": speech_seconds,
