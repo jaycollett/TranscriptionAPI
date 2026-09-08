@@ -61,6 +61,14 @@ C4_VAD = {
     "speech_pad_ms": 300,
 }
 
+# The 0.6.0 release candidate. Identical to C4 except that the threshold is chosen
+# per file from its measured level, and the decode is followed by the production
+# post-processing (segment-level boundary dedupe, anomaly score, loop flags). Both
+# come from transcribe.py itself rather than a copy, so what this measures is what
+# ships; `level_aware_vad` and `production_postprocess` are the two flags decode.py
+# reads to do that.
+RC060_VAD = dict(C4_VAD)
+
 
 def _delta(name, note, transcribe=None, **top):
     cfg = copy.deepcopy(BASE)
@@ -114,6 +122,50 @@ CONFIGS = {
     ),
     "C9": _delta("C9", "domain glossary as hotwords on every window", {"hotwords": GLOSSARY}),
     "C10": _delta("C10", "coarser fallback ladder", {"temperature": [0.0, 0.4, 0.8, 1.0]}),
+    "RC060": _delta(
+        "RC060",
+        "the 0.6.0 candidate: C1 decode, C4 VAD at a level-chosen threshold, production post-processing",
+        {"vad_parameters": dict(RC060_VAD), "hallucination_silence_threshold": 0.5},
+        level_aware_vad=True,
+        production_postprocess=True,
+    ),
+    # Probes for the quiet branch of the level rule, run on women_retreat_2025_session3
+    # only. RC060's first run lost 3.0 percent of C1's words on that file at threshold
+    # 0.35 with the C4 silence and padding, so the two candidate causes are separated:
+    # QUIET_A keeps the C4 silence and padding and only drops the hallucination filter,
+    # QUIET_B is the BASE/C1 VAD profile entire.
+    "QUIET_A": _delta(
+        "QUIET_A",
+        "quiet branch probe: threshold 0.35 with the C4 silence and padding, no hallucination filter",
+        {
+            "vad_parameters": {
+                "threshold": 0.35,
+                "min_speech_duration_ms": 250,
+                "min_silence_duration_ms": 1000,
+                "speech_pad_ms": 300,
+            },
+            "hallucination_silence_threshold": None,
+        },
+        production_postprocess=True,
+    ),
+    "QUIET_B": _delta(
+        "QUIET_B",
+        "quiet branch probe: the BASE/C1 VAD profile, which measured 8904 words on the retreat file",
+        {"hallucination_silence_threshold": None},
+        production_postprocess=True,
+    ),
+    # RC060 plus the anomaly-triggered rescue pass. Run alongside RC060 so the cost
+    # of the rescue (how often it fires) and its benefit (whether it is selected, and
+    # what it changes) are both measured rather than assumed.
+    "RC060_RESCUE": _delta(
+        "RC060_RESCUE",
+        "RC060 with the anomaly-triggered rescue pass and the production selection rule",
+        {"vad_parameters": dict(RC060_VAD), "hallucination_silence_threshold": 0.5},
+        level_aware_vad=True,
+        production_postprocess=True,
+        production_rescue=True,
+        selection={"rule": "anomaly_then_words_then_logprob"},
+    ),
 }
 
 # Keys the batched pipeline does not accept or ignores; dropped before the call.

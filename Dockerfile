@@ -48,7 +48,7 @@ RUN wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/
     rm cuda-keyring_1.0-1_all.deb && \
     apt-get update && apt-get install -y --no-install-recommends \
     wget gnupg cmake git sox ffmpeg unzip \
-    libsndfile1 \
+    libsndfile1 libnghttp2-14 \
     cuda-libraries-12-2 libcudnn9-cuda-12 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -61,10 +61,43 @@ ENV PATH="/usr/local/cuda/bin:${PATH}"
 # reports CUDA available and ctranslate2 still sees the device.
 ENV LD_LIBRARY_PATH="/env/lib:/usr/local/cuda/lib64"
 
+# 2026-09-07 (0.5.4): residual CVE pass. /opt/conda is the mambaforge bootstrap
+# environment the MFA base image was built from (Python 3.10, conda 22.11). The
+# service runs from /env and never imports from /opt/conda, but its 2023-era
+# packages are what the release gate reports:
+#   certifi 2022.12.7    CVE-2023-37920
+#   cryptography 39.0.1  CVE-2023-50782, CVE-2024-26130, CVE-2026-26007,
+#                        GHSA-537c-gmf6-5ccf
+#   pyOpenSSL 23.0.0     CVE-2026-27459
+#   setuptools 65.6.3    CVE-2024-6345, CVE-2025-47273
+#   urllib3 1.26.14      CVE-2023-43804, CVE-2025-66418, CVE-2025-66471,
+#                        CVE-2026-21441, CVE-2026-44431
+# requests moves with urllib3 (2.28 pins urllib3<1.27) so that `pip check`
+# stays clean. Only the named packages are touched, with that environment's
+# own pip; nothing in /env changes here. libnghttp2-14 (CVE-2023-44487) is
+# handled by the apt line above, which pulls the focal-security build.
+RUN /opt/conda/bin/pip install --no-cache-dir \
+        "certifi>=2023.7.22" "cryptography>=48.0.1" "pyOpenSSL>=26.0.0" \
+        "setuptools>=78.1.1" "urllib3>=2.7.0" "requests>=2.32.0" && \
+    /opt/conda/bin/pip check
+
 # Create the MFA model directory and download the pre-trained models into it.
-RUN mkdir -p ${MFA_MODEL_PATH} && \
-    mfa model download acoustic english_mfa && \
-    mfa model download dictionary english_mfa && \
+#
+# `mfa model download` resolves the model through the GitHub releases API of
+# MontrealCorpusTools/mfa-models. Unauthenticated, that API allows 60 requests
+# per hour per source address, and the shared GitHub Actions runner pool burns
+# through that, so the release build fails with ModelsConnectionError while a
+# build on the GPU host succeeds. The workflow passes its GITHUB_TOKEN as the
+# BuildKit secret `github_token` (1,000 requests per hour per repository); a
+# local build supplies no secret, the file is absent, and the download runs
+# unauthenticated as before. Secret mounts are not image layers, so the token
+# is never persisted in the image or its history.
+RUN --mount=type=secret,id=github_token,required=false \
+    set -e; TOKEN_ARG=""; \
+    if [ -s /run/secrets/github_token ]; then TOKEN_ARG="--github_token $(cat /run/secrets/github_token)"; fi; \
+    mkdir -p ${MFA_MODEL_PATH} && \
+    mfa model download acoustic english_mfa $TOKEN_ARG && \
+    mfa model download dictionary english_mfa $TOKEN_ARG && \
     ls -lah ${MFA_MODEL_PATH}
 
 # Set working directory
@@ -76,6 +109,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Download Whisper models to cache them
 RUN python -c "from faster_whisper import WhisperModel; import os; os.makedirs('/app/models/whisper', exist_ok=True); model = WhisperModel('large-v3-turbo', download_root='/app/models/whisper'); print('Whisper models downloaded successfully')"
+
+# 2026-09-07 (0.5.4): pip 26.2.1 in /env ships a CycloneDX inventory of the
+# libraries it vendors (pip/_vendor/bom.cdx.json) and Trivy reads it, so the
+# gate reports the vendored msgpack 1.1.2 (GHSA-6v7p-g79w-8964) and the
+# pkg_resources copy of setuptools 70.3.0 (CVE-2025-47273). The newest pip on
+# PyPI vendors the same versions, so no upgrade clears them, and /env's own
+# msgpack 1.2.1 and setuptools 81 are already clean. Nothing runs pip after the
+# requirements install above, so pip is removed from the runtime image, which
+# takes the vendored code with it rather than only the manifest. This sits
+# after the Whisper bake so the model and requirements layers stay cached.
+RUN python -m pip uninstall -y pip
 
 # Copy application files
 COPY . .

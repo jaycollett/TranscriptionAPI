@@ -226,7 +226,118 @@ def run_shared_clips(model, audio, cfg):
     }
 
 
-def run_config(model, audio, duration, name, ref_chunks):
+def apply_level_aware_vad(kwargs, audio_path, duration, result):
+    """Take the whole VAD profile from the file's level using transcribe.py's own rule.
+
+    Imported rather than copied: a config named after the release candidate has to
+    make the same decision the release makes, and a second implementation of the
+    -26 dBFS cutover would be free to drift. The profile carries the threshold, the
+    minimum silence, the padding and the hallucination filter, because the quiet
+    branch needs all four (a softer threshold alone still loses 5.6 percent of the
+    words on the retreat file).
+    """
+    from transcribe import choose_vad_profile, hallucination_threshold, measure_mean_dbfs, vad_parameters
+
+    mean_dbfs = measure_mean_dbfs(audio_path, duration)
+    profile, why = choose_vad_profile(mean_dbfs)
+    kwargs["vad_parameters"] = vad_parameters(profile)
+    kwargs["hallucination_silence_threshold"] = hallucination_threshold(profile)
+    result["level"] = {
+        "mean_dbfs": mean_dbfs,
+        "profile": profile,
+        "threshold": kwargs["vad_parameters"]["threshold"],
+        "why": why,
+    }
+    log.info("level %s dBFS -> VAD profile %s %s (%s)", mean_dbfs, profile, kwargs["vad_parameters"], why)
+    return kwargs
+
+
+def _record_production(result, record, raw_segments, extra=None):
+    """Copy one pass record into the result's production block."""
+    block = {
+        "selected_pass": record["label"],
+        "anomaly_count": record["anomaly_count"],
+        "anomaly_windows": record["anomaly_windows"],
+        "windows": record["windows"],
+        "flagged_segments": record["flagged_segments"],
+        "mean_logprob": record["mean_logprob"],
+        "uncovered_s": record.get("uncovered_s"),
+        "uncovered_max_gap_s": record.get("uncovered_max_gap_s"),
+        "words_before_dedupe": sum(len(s["text"].split()) for s in raw_segments if s["text"].strip()),
+        "segments_before_dedupe": sum(1 for s in raw_segments if s["text"].strip()),
+    }
+    block.update(extra or {})
+    result["production"] = block
+
+
+def apply_production_postprocess(segments, duration, result, speech_intervals=None):
+    """Run transcribe.py's post-decode stage: dedupe, anomaly score, loop flags.
+
+    Returns (segments, transcript, timings) as the service would publish them, so the
+    harness's word counts, agreement and API invariants are measured on the shipped
+    output and not on the raw decode.
+    """
+    from transcribe import summarize_pass, timings_from_segments
+
+    record = summarize_pass(segments, duration, "primary", speech_intervals=speech_intervals)
+    _record_production(result, record, segments, {"rescue_attempted": False, "rescue_selected": False})
+    return record["segments"], record["transcript"], timings_from_segments(record["segments"])
+
+
+def run_with_rescue(model, audio, kwargs, duration, result, speech_intervals=None):
+    """The production two-pass path: primary, one rescue if it scores badly, then select.
+
+    Uses transcribe.py's own trigger, rescue parameters and selection rule, so the
+    harness measures the shipped decision and not a second implementation of it.
+    """
+    from transcribe import (
+        rescue_decode_kwargs,
+        select_pass,
+        should_attempt_rescue,
+        summarize_pass,
+        timings_from_segments,
+    )
+
+    primary_run = run_sequential(model, audio, kwargs)
+    primary = summarize_pass(primary_run["segments"], duration, "primary",
+                             speech_intervals=speech_intervals)
+    passes, runs = [primary], [primary_run]
+
+    attempted = should_attempt_rescue(primary["anomaly_windows"])
+    if attempted:
+        log.info(
+            "primary scored anomaly_count=%d anomaly_windows=%d; running the rescue pass",
+            primary["anomaly_count"], primary["anomaly_windows"],
+        )
+        rescue_run = run_sequential(model, audio, rescue_decode_kwargs(kwargs))
+        passes.append(summarize_pass(rescue_run["segments"], duration, "rescue",
+                                     speech_intervals=speech_intervals))
+        runs.append(rescue_run)
+
+    selected = select_pass(passes)
+    chosen_run = runs[passes.index(selected)]
+    _record_production(
+        result, selected, chosen_run["segments"],
+        {
+            "rescue_attempted": attempted,
+            "rescue_selected": selected["label"] == "rescue",
+            "pass_scores": [
+                {k: p[k] for k in ("label", "anomaly_count", "anomaly_windows", "words", "mean_logprob")}
+                for p in passes
+            ],
+            "pass_wall_s": [r["wall_s"] for r in runs],
+        },
+    )
+    return (
+        selected["segments"],
+        selected["transcript"],
+        timings_from_segments(selected["segments"]),
+        runs,
+        chosen_run,
+    )
+
+
+def run_config(model, audio, duration, name, ref_chunks, audio_path=None):
     """Run config `name`; return a result dict ready to be written as segments.json."""
     cfg = get_config(name)
     result = {"config": name, "pipeline": cfg["pipeline"], "note": cfg.get("note")}
@@ -268,16 +379,37 @@ def run_config(model, audio, duration, name, ref_chunks):
             kwargs = dict(cfg["transcribe"])
             if not kwargs.get("vad_filter"):
                 kwargs.pop("vad_parameters", None)
-            p = run_sequential(model, audio, kwargs)
+            elif cfg.get("level_aware_vad"):
+                if audio_path is None:
+                    raise ValueError(f"config {name} needs the audio path to measure its level")
+                kwargs = apply_level_aware_vad(kwargs, audio_path, duration, result)
+            # The detector's own intervals, which is what production now measures
+            # coverage against; a plain sum of segment spans is not bounded by them.
+            own_intervals = (
+                vad_chunks_seconds(audio, kwargs["vad_parameters"])
+                if kwargs.get("vad_filter") else []
+            )
+            if cfg.get("production_rescue"):
+                segments, transcript, timings, runs, p = run_with_rescue(
+                    model, audio, kwargs, duration, result, speech_intervals=own_intervals
+                )
+            else:
+                p = run_sequential(model, audio, kwargs)
+                runs = [p]
+                segments, transcript, timings = p["segments"], p["transcript"], prod_timings(p["segments"])
+                if cfg.get("production_postprocess"):
+                    segments, transcript, timings = apply_production_postprocess(
+                        segments, duration, result, speech_intervals=own_intervals
+                    )
             result.update(
                 {
-                    "passes": [p],
-                    "segments": p["segments"],
-                    "transcript": p["transcript"],
-                    "timings": prod_timings(p["segments"]),
+                    "passes": runs,
+                    "segments": segments,
+                    "transcript": transcript,
+                    "timings": timings,
                     "ladder_base": kwargs["temperature"][0],
                     "selection": {"rule": "single"},
-                    "vad_chunks": vad_chunks_seconds(audio, kwargs["vad_parameters"]) if kwargs.get("vad_filter") else [],
+                    "vad_chunks": own_intervals,
                     "duration_after_vad": p["duration_after_vad"],
                 }
             )

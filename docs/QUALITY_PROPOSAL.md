@@ -216,10 +216,74 @@ Concrete changes against `transcribe.py` and `app.py` as they stand on
 `word_timestamps=True`, `language="en"`, no prompt, no hotwords. Construct the
 model with `num_workers=1` [19]. Keep the per-segment `Segment` fields
 (`temperature`, `compression_ratio`, `avg_logprob`, `no_speech_prob`) on the
-returned segments; the harness's C1 is exactly this configuration. A second
-pass runs only if the first fails the gate below, with
-`condition_on_previous_text=False` and the ladder starting at 0.4, and the
-pass with the lower anomaly score is kept.
+returned segments; the harness's C1 is exactly this configuration. A second pass runs only when the
+first shows an anomaly; see 3.1 below.
+
+### 3.1 The anomaly-triggered rescue pass
+
+The five-pass decode was buying redundancy, and the measurements say it was
+buying it in the wrong place: passes 1, 4 and 5 sampled at temperature 0.2-0.3,
+where faster-whisper ignores `beam_size` and `patience` (F3), so four of the five
+passes were noisy variants of one beam decode, and no pass on any of the six
+reference files tripped an anomaly. The service paid 5x runtime on every file for
+redundancy that never fired.
+
+The rescue keeps the redundancy and moves the cost to where the evidence is. If
+the primary pass scores any anomaly at all, `anomaly_count >=
+RESCUE_ANOMALY_SEGMENTS` (default 1) or `anomaly_windows >=
+RESCUE_ANOMALY_WINDOWS` (default 1), exactly one rescue pass runs. Never more
+than one, so the worst case is two passes and the common case, on the evidence
+of the reference set, is one.
+
+The rescue differs from the primary in two settings and nothing else:
+
+- `condition_on_previous_text=False`. Previous-text conditioning is the mechanism
+  by which a repetition loop propagates from window to window, and a loop is what
+  the compression-ratio and temperature flags actually describe. Disabling it is
+  the one lever that addresses the failure mode rather than merely producing a
+  different decode. It is also what C8 (batched) gets for free by construction,
+  and the reason C8 was worth considering as a second opinion (2.8) even though
+  it is not worth having as a primary.
+- Temperature ladder from 0.2 rather than 0.0. The primary already decoded this
+  audio at 0.0 and produced the anomalies, so repeating that rung is the one
+  outcome guaranteed not to help; C10 showed that coarsening the ladder changes
+  nothing, so the change here is the base, not the spacing.
+
+Model, beam, `best_of`, patience, VAD threshold and every faster-whisper
+threshold are identical, so any difference between the two passes is
+attributable to those two settings and not to sampling noise.
+
+Selection is the C2 anomaly score, never the retired duration-weighted word
+probability: lowest `anomaly_count + anomaly_windows` wins, ties break on higher
+word count, then on higher mean `avg_logprob`, and an exact tie keeps the
+primary. Word count is the first tie-break because of 2.2: on every file where
+the production metric disagreed with the anomaly rule it preferred the pass with
+fewer words, and on the retreat recording its winner had dropped two runs of
+Psalm 91 that the losing pass contained.
+
+Ordering is primary, maybe rescue, select, then gate. The quarantine thresholds
+in `process_pending_job` see the selected result, so a file that only the rescue
+could save is not requeued on the primary pass's score. The rescue trigger (1
+anomaly) sits far below the quarantine gate (5 anomalous segments or 2 low
+windows) deliberately: a second opinion costs one decode and a requeue costs a
+whole job plus a queue slot.
+
+One guard sits above that ordering, added after the validation run measured the
+rule failing. A rescue is ineligible unless it keeps at least
+`RESCUE_MIN_WORD_RETENTION` (0.99) of the primary pass's words. On
+`tcf.20240319b` with the trigger forced on, the primary scored one anomalous
+segment out of 323 with 3599 words and the rescue scored none with 3525; the
+anomaly score alone publishes the pass with 74 fewer words, which is exactly the
+2.2 failure in new clothes. A rule that counts defects prefers the transcript
+with less content to be defective about, so the content floor is not optional.
+Within the retention band the ordering above decides; outside it the primary is
+kept and the discard is logged with both word counts and both scores.
+
+`rescue_attempted` and `rescue_selected` are returned by `transcribe_audio`,
+stored, and exposed on `/status` and `/transcriptions`, so the firing rate and
+the hit rate are observable in production rather than assumed. The harness config
+`RC060_RESCUE` is `RC060` plus the rescue and differs in nothing else, so the two
+can be compared directly.
 
 **Selection and gate (`transcribe.py` and `app.py`, `process_pending_job`).**
 Delete `calculate_weighted_confidence` and the 1.4 words-per-second scaler.
@@ -233,17 +297,31 @@ computed over `speech_seconds` when available, and also requeues when
 `low_windows` is non-zero, so a partial collapse is caught where the
 whole-file rate is not [22]. Both numbers go to the success log line.
 
-**VAD (`transcribe.py`).** `vad_parameters` becomes
-`{"threshold": T, "min_speech_duration_ms": 250, "min_silence_duration_ms": 1000, "speech_pad_ms": 300}`
-with `hallucination_silence_threshold=0.5`. `T` is level-aware: measure the
-file's mean level once with `ffmpeg -af volumedetect` (or the equivalent RMS
-in dBFS from the decoded samples), use `T=0.5` when the mean is at or above
--26 dBFS and `T=0.35` below it. The -26 dBFS cut sits between the loudest
-file that worked at 0.5 (-24.5 dBFS) and the one that failed (-28.6 dBFS);
-it is a starting point, and the 0.35 branch has not been measured with the
-1000 ms and 300 ms values. It must be tuned on `women_retreat_2025_session3`
-before release, with the acceptance test that its word count and agreement
-against C1 stay within the section 4 thresholds.
+**VAD (`transcribe.py`).** The file's mean level, measured once with
+`ffmpeg -af volumedetect`, selects one of two whole profiles:
+
+- loud, at or above -26 dBFS: `{"threshold": 0.5, "min_speech_duration_ms": 250, "min_silence_duration_ms": 1000, "speech_pad_ms": 300}` with `hallucination_silence_threshold=0.5`. This is C4, measured on the five files at -17.3 to -24.4 dBFS.
+- quiet, below -26 dBFS: `{"threshold": 0.35, "min_speech_duration_ms": 250, "min_silence_duration_ms": 300, "speech_pad_ms": 400}` with `hallucination_silence_threshold=None`. This is BASE/C1, the only profile ever measured on quiet material.
+
+The -26 dBFS cut sits between the quietest file that worked on the loud
+profile (-24.4 dBFS) and the one that failed (-28.4 dBFS), and is therefore
+calibrated on two files and provisional. The corpus sweep found 34 of 100
+files within 2 dB of it, the histogram densest at the line, so it is held at
+-26 for the sweep to measure both sides and is expected to move. The original form
+of this proposal varied only `T` and left the rest of C4 in place; that was
+tuned on `women_retreat_2025_session3` before release, as required, and the
+measurement rejected it. Three configurations on that file:
+
+| profile | threshold | min silence | pad | halluc. | segments | words | agreement with C1 |
+|---|---|---|---|---|---|---|---|
+| C4 (loud) | 0.5 | 1000 | 300 | 0.5 | 1157 | 8639 | 0.979 |
+| threshold only | 0.35 | 1000 | 300 | none | 4693 | 8407 | 0.965 |
+| BASE/C1 (quiet) | 0.35 | 300 | 400 | none | 435 | 8904 | 1.000 |
+
+So the long minimum silence is what shreds quiet audio, not the threshold and
+not the hallucination filter, and the quiet branch has to be the whole
+profile. An unmeasurable level takes the quiet profile: fragmenting quiet
+speech loses words, cutting a few extra seams on loud speech does not.
 
 **Text and timings (`transcribe.py`).** Remove `clean_boundary_duplicates`
 and the `re.sub` in `run_forced_alignment`. De-duplicate per segment: where
@@ -307,8 +385,8 @@ Beyond the standard release-candidate recipe in `docs/SESSION_KNOWLEDGE.md`:
    - Wall time under 60 s end to end for the 755 s file.
    - `" ".join(timings[].text) == transcription`, zero non-monotonic and zero
      overlapping timings on every file.
-   - The retreat file's word count within 1 percent of C1 with the level-aware
-     threshold taking the 0.35 branch, and the other five files taking 0.5.
+   - The retreat file's word count within 1 percent of C1 with the level rule
+     taking the quiet profile, and the other five files taking the loud one.
 3. Run the candidate twice on the 755 s file; text and segments must be
    identical.
 4. First week in production: for every completed job, log and review
@@ -317,6 +395,96 @@ Beyond the standard release-candidate recipe in `docs/SESSION_KNOWLEDGE.md`:
    flagged segments that read as rhetorical repetition. A job with a flagged
    segment that is a real loop, or a normal recording requeued by the window
    check, is a threshold to revisit before 0.6.1.
+
+## 4.1 Sweep results, 2026-09-07
+
+The acceptance thresholds in section 4 were written against six files. A 100-file
+sweep of the production archive then ran the candidate end to end. Headline
+numbers: median word delta +0.18 percent over 99 files with two regressions,
+neither trim-related and both on material already above 2.5 words per second over
+speech; the legacy low-rate tail improving 1.46 percent; alignment applied on 100
+percent of files, all on the first attempt; the rescue firing on 5 percent and
+kept on 4 percent; five of five repeat submissions byte-identical.
+
+Four changes followed, three of them corrections to decisions section 3 got wrong
+on six files:
+
+- The anomaly gate could deliver nothing. `tcf.20150424` re-decoded identically
+  three times and quarantined with no transcript published against a legacy 8292
+  words. An identical re-decode is now published with its anomaly fields set;
+  quarantine is reserved for the garbage check and the word-rate floor.
+- The omission check gains a gate on the largest contiguous uncovered stretch
+  (default 20 s, a policy value off a smooth curve rather than a measured
+  boundary), because the uncovered total is contaminated by disagreement between
+  the two speech detectors (0.81 to 1.27 times). The total remains a loose
+  backstop at 0.25. The per-window word-rate check stays and stays load-bearing:
+  both of the sweep's word-count regressions drop a single passage while leaving
+  gaps of only 5.4 and 6.7 s, because output there is sparse rather than absent,
+  and no coverage threshold reaches that shape. The window clock now runs over
+  speech rather than over coverage so a thin passage keeps its duration, and the
+  score is the maximum of the signals rather than their sum.
+- The boundary de-duplication proposed in section 3 is disabled by default. In 64
+  trims across 32 files it produced zero plausible decoder artifacts and about 38
+  clear false positives, including four consecutive dropped segments of 1 Kings
+  18:39. The implementation is retained behind `BOUNDARY_DEDUPE_ENABLED`.
+- Open for 0.6.1: the level-based profile selector is keyed on the wrong signal,
+  and non-monotonically so. Files under -26 dBFS fragment at 12.1 segments per
+  minute, the -26 to -19 middle at about 9, and files over -19 at 14.2, so both
+  extremes fragment and a one-sided threshold cannot express that at any value.
+  Sample rate tracks it instead (13.2 per minute at 22.05 kHz against 9.1 at
+  48 kHz). The selector should key on fidelity first, and any surviving level term
+  must be two-sided.
+
+## 4.2 The read-aloud omission
+
+The sweep's word-count regressions turned out to be one defect: read-aloud passages,
+scripture or quoted text read formally rather than preached, dropped silently. Four
+single-parameter changes each recover a different subset and no two recover the same
+pair, so it is a deterministic decode landing in a bad path rather than a
+misconfigured knob. The strongest lever is starting the ladder at 0.2, which stops
+the beam search (faster-whisper beam-searches only at temperature 0.0), and recovers
+four of four.
+
+The decode's own guards cannot see it: the model drops these passages without
+crossing the compression-ratio or log-probability thresholds, so no rung above the
+first is attempted and five rungs go unused. The only signal that registers is a
+stretch of speech carrying almost no words, so:
+
+- `ANOMALY_WINDOW_MIN_WPS` rises 1.2 to 1.5. The omitted stretches score 0.42, 0.38,
+  0.82 and 1.20 words/sec per 60 s window; the corpus median is 2.65 over speech and
+  the healthy minimum across the reference files is 2.37.
+- A low-rate window fires the rescue pass, which already decodes with
+  `condition_on_previous_text=False` and its ladder at 0.2, the two most effective
+  variants combined.
+- A low-rate window never requeues. The decode is deterministic, so requeueing
+  re-derives the same result; only the per-segment anomaly count can quarantine.
+
+Deferred to 0.6.1: whether the primary pass should sample rather than beam-search. It
+recovers all four passages but changes the core decode for every file on the evidence
+of seven passages, so it needs its own measured release.
+
+## 4.3 The per-segment anomaly count is retired
+
+Measured over 102 recordings and 204 decodes, `anomaly_count` never exceeded 1,
+identified none of the seven confirmed bad transcripts, and flagged six files that
+were all healthy and within 0.2 percent of their previous word counts. Every one of
+those six carried a temperature flag, so the only thing that creates an anomalous
+segment on this corpus is the ladder engaging, which is a property of the decode path
+rather than of the output. The window check caught six of the seven bad files and the
+two signals were perfectly disjoint; all twelve rescues came from the window trigger.
+
+`ANOMALY_SEGMENTS_MAX` and `RESCUE_ANOMALY_SEGMENTS` are deleted rather than left
+inert. The counts remain as published diagnostics. No anomaly signal can quarantine a
+job: that is reserved for the garbage check and the word-rate floor.
+
+Converting the cap to a rate was considered and rejected. One flag in a 34-segment
+recording is 2.94 per hundred against 0.027 for the same flag in a 3646-segment one,
+so normalising would make short files look catastrophic to fix a scale-dependence
+that this corpus never exhibits.
+
+Known and currently undetected, for 0.6.1: `tcf.20150424` publishes about 15 percent
+short of its legacy transcript with zero flagged segments, zero low-rate windows and
+no uncovered gap over 20 s. Neither signal sees it.
 
 ## 5. Deferred and rejected
 

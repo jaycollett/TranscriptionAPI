@@ -13,6 +13,10 @@ Meant to run inside the deployed image on the GPU host:
 
 All state lives under --out (default /harness/results); `report` only reads it, so
 the tables can be regenerated on any machine from a copy of that directory.
+
+The RC060 config imports transcribe.py directly for its level rule and its post-decode
+stage, so a release-candidate run needs `transcribe.py` and `textnorm.py` copied into
+this directory alongside the harness. Every other config is self-contained.
 """
 
 import argparse
@@ -95,7 +99,7 @@ def cmd_run(args):
                 continue
             log.info("=== %s on %s", name, meta["stem"])
             try:
-                result = run_config(model, audio, duration, name, ref_chunks)
+                result = run_config(model, audio, duration, name, ref_chunks, audio_path=audio_path)
             except Exception:
                 log.error("config %s failed on %s:\n%s", name, meta["stem"], traceback.format_exc())
                 write_json(os.path.join(cdir, "error.json"), {"error": traceback.format_exc()})
@@ -114,6 +118,25 @@ def cmd_run(args):
                     "invariants": api_invariants(result["transcript"], result["timings"]),
                 }
             )
+            if result.get("level"):
+                metrics["mean_dbfs"] = result["level"]["mean_dbfs"]
+                metrics["vad_threshold"] = result["level"]["threshold"]
+                metrics["vad_profile"] = result["level"].get("profile")
+            if result.get("production"):
+                production = result["production"]
+                metrics["anomaly_count"] = production["anomaly_count"]
+                metrics["anomaly_windows"] = production["anomaly_windows"]
+                metrics["flagged_segments"] = len(production["flagged_segments"])
+                metrics["words_raw"] = production["words_before_dedupe"]
+                metrics["dedupe_removed_words"] = production["words_before_dedupe"] - metrics["words"]
+                metrics["rescue_attempted"] = production.get("rescue_attempted")
+                metrics["rescue_selected"] = production.get("rescue_selected")
+                metrics["selected_pass"] = production.get("selected_pass")
+                metrics["uncovered_s"] = production.get("uncovered_s")
+                metrics["uncovered_max_gap_s"] = production.get("uncovered_max_gap_s")
+                if production.get("pass_scores"):
+                    metrics["pass_scores"] = production["pass_scores"]
+                    metrics["pass_wall_s"] = production["pass_wall_s"]
             if result["pipeline"] == "prod":
                 metrics["words_raw"] = len(result["transcript_raw"].split())
                 metrics["dedupe_removed_words"] = metrics["words_raw"] - metrics["words"]
