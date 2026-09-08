@@ -38,7 +38,10 @@ RE_COMPLETED = re.compile(
 RE_ALIGNMENT = re.compile(r"Alignment for (?P<guid>" + GUID + r"):(?P<rest>.*)")
 RE_VAD_REMOVED = re.compile(r"VAD filter removed (?P<hh>\d+):(?P<mm>\d+)\.(?P<ms>\d+) of audio")
 RE_PROCESSING_DURATION = re.compile(r"Processing audio with duration (?P<hh>\d+):(?P<mm>\d+)\.(?P<ms>\d+)")
-RE_KV = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>-?[\w.]+)")
+# `+` is in the value class for rescue_triggers=window+gap, which 0.6.1 logs on the
+# completion line so the firing mix of the two triggers can be read off a sweep rather
+# than guessed at. Without it the value silently truncates to the first trigger.
+RE_KV = re.compile(r"(?P<key>[A-Za-z_][A-Za-z0-9_]*)=(?P<value>-?[\w.+]+)")
 RE_MFA_WORDS = re.compile(r"(?P<mfa_words>\d+) MFA words over (?P<mfa_segments>\d+) segments")
 RE_WHISPER_FALLBACK = re.compile(r"(?P<whisper_fallback_segments>\d+) segments on Whisper word timings")
 

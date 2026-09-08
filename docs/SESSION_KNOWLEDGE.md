@@ -1185,3 +1185,83 @@ nine files better and six worse, seven files losing more than 1 percent of their
 and the subset moving from 981 words under the legacy archive to 1357 under it. The
 non-monotonic level finding stands as a reason to distrust the current rule and is not a
 reason to adopt this one.
+
+## 2026-09-08 - 0.6.1: `RESCUE_MAX_GAP_S`, and the lesson that a threshold belongs to the consequence, not to the signal
+
+One change: `RESCUE_MAX_GAP_S`, default 8.0, added as a second rescue trigger beside
+`RESCUE_ANOMALY_WINDOWS`. A primary pass whose largest contiguous uncovered stretch of
+speech reaches it fires one rescue, exactly as a low-rate window does. Selection is
+untouched: the retention floor at 0.99 and the 40-word cap still decide whether the
+rescue's output is published, and the rescue still runs at most once per job.
+
+**The general lesson, which is the part worth keeping.** The same signal wants a
+different threshold depending on what firing costs. The largest contiguous uncovered gap
+had been measured across 101 files and tuned once, as a quarantine gate, where a false
+positive withholds a finished transcript from the people waiting for it. At that price
+the value landed at 20 s and nothing below 10 s was ever evaluated, because nothing
+below 10 s was worth evaluating for that consequence. As a trigger for a second decode a
+false positive costs GPU time on a file that was fine, and at that price the same
+untouched measurement is one of the best detectors in the project: 8.5 s reaches all
+seven files where a second decode and the legacy archive agree the shipped transcript
+lost a run of 25 words or more, flagging one healthy recording, against three for the
+shipped low-rate window. The detector was not missing. It was sitting in the codebase
+priced for a different consequence, and nobody re-priced it when the consequence changed.
+When a signal is rewired to a cheaper outcome, its threshold is not inherited. It is a
+new question.
+
+The two thresholds are now separate constants on purpose, and 0.6.1 keeps
+`ANOMALY_MAX_UNCOVERED_GAP_SEC` at exactly 20.0. They read the same number and mean
+different things, which is precisely the confusion worth guarding, so the test suite
+asserts they are distinct and that no gap value on any path can quarantine a job,
+requeue it, or complete one with an empty row.
+
+**Predicted effect, measured rather than hoped.** On the 32-file fidelity subset the
+rescue fires on 8 files instead of 3, and the 8 are exactly the gap set: all three files
+the window trigger catches also have a gap of 8 s or more, so this widens the net rather
+than replacing it. All seven confirmed content losses are reached, against two before,
+and nothing outside the two label sets is flagged. On the 101-file sweep the union of
+the two triggers selects 19 files where 5 fired before, which is 29.6 percent of the
+corpus by duration against 5.8 percent, so budget about 24 percentage points more decode
+time across the corpus. That is the top of the 15 to 25 percent the analysis predicted,
+not the middle of it. Note the sweep's gap figures come from the sweep's own speech
+basis rather than the service's `coverage_report`, so treat 19 of 101 as an estimate to
+be confirmed by the re-run and not as a measurement of the shipped code.
+
+**Firing more often is not recovering more, and the release does not claim it is.** On
+at least one recording in the subset the rescue already runs with both levers at their
+best measured values and is correctly refused by the retention guards, and the extra
+rescues on the other files may well be refused too. What the trigger buys on those files
+is a second attempt and a review marker, not a guaranteed recovery.
+
+**The review marker is free where it is available, and it is not bought anywhere else.**
+The completion line now carries `rescue_triggers` (window, gap, or window+gap) so the
+firing mix is readable off production logs, and `rescue_unpublished_run`, the longest
+contiguous run of words the rescue has that the published pass lacks. That statistic
+needs two decodes, which is why it can never be a trigger, but where the rescue has
+already run both transcripts are in memory and it costs one difflib pass, a fraction of
+a second against a decode measured in minutes. It is directional on purpose: symmetric
+disagreement fires just as hard when the second decode is the wrong one, and the largest
+one-sided run in the whole experiment was a 137-word repetition loop. It is zero by
+construction when the rescue was the pass published.
+
+**Deferred, not rejected: sampling on the primary pass.** Starting
+`WHISPER_TEMPERATURE_BASE` at 0.2 instead of 0.0 recovered fourteen runs totalling 578
+words that the shipped decode loses and the legacy archive has, ten of them scripture
+read aloud, and eight of those ten were not previously known to be missing at all. That
+is a real finding about the corpus and it is the reason this line of work should be
+picked up again, not dropped. It was not adopted for three reasons, all of them about
+evidence rather than about the result. It is one unseeded draw per file, and the same
+configuration family contradicts itself inside the dataset: the shipped rescue samples
+from the same base, ran on `tcf.20250607`, and was not selected on the very file where
+the sampled primary recovered Exodus 24. It moves segment counts by up to a factor of
+four in both directions, from 18 325 to 15 449 in total, under a release that runs MFA
+once per segment. And every configuration in the experiment was decode-only, so the
+aligner, the stage most exposed to that change, was never exercised. Three submissions
+of the sampled configuration with alignment enabled, reporting the run inventory per
+draw and `agree250`, would settle it.
+
+**Validation still owed.** Re-run the 101-file sweep against this branch and confirm
+three things: no file loses words to a selected rescue, the retention floor still blocks
+the cases it was built for, and `agree250` does not move. The firing rate above is a
+prediction from the 2026-09-07 and 2026-09-08 result sets, not a measurement of this
+code.

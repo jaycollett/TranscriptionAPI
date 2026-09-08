@@ -600,6 +600,19 @@ The 0.6.1 note on `tcf.20150424` in 4.3 is superseded. It is not undetectable; i
 invisible to every free signal and visible to a second decode, which finds Colossians
 1:11-12 read aloud and missing from the published transcript.
 
+**Shipped in 0.6.1.** `RESCUE_MAX_GAP_S` defaults to 8.0 and fires the rescue alongside
+`RESCUE_ANOMALY_WINDOWS`; `ANOMALY_MAX_UNCOVERED_GAP_SEC` stays at 20.0 and no gap value
+on any path quarantines, requeues or empties a row. The completion line carries
+`rescue_triggers` (window, gap or window+gap) and `rescue_unpublished_run`, the
+directional cross-check, which is computed from the two decodes already in memory and is
+never a reason to run one. On the 32-file subset the union of the two triggers selects
+the same eight files the gap filter selects, because all three files the window trigger
+catches also carry a gap of 8 s or more. On the 101-file sweep the union selects 19 files
+where 5 fired before, 29.6 percent of the corpus by duration against 5.8 percent, so the
+expected extra decode is about 24 points, the top of the 15 to 25 range above. Those
+sweep figures are on the sweep tooling's own speech basis and are a prediction to be
+confirmed by the re-run, not a measurement of the shipped code.
+
 ## 5. Deferred and rejected
 
 - C8 batched pipeline: deferred; 2-3x faster than C1 but loses 1-4 percent of
