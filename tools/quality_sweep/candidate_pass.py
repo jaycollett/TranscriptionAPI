@@ -57,6 +57,16 @@ def summarise(result, wall):
         "flag_counts": flag_counts(result.get("flagged_segments")),
         "rescue_attempted": result.get("rescue_attempted"),
         "rescue_selected": result.get("rescue_selected"),
+        # 0.6.1 names which signal asked for the second decode, so the firing mix is
+        # observable rather than inferred, and reports the longest run of words the
+        # unpublished pass had that the published one lacks. That run is the directional
+        # check: a rescue that is merely different scores near zero, one that recovered a
+        # passage scores the length of it.
+        "rescue_triggers": result.get("rescue_triggers"),
+        "rescue_unpublished_run": result.get("rescue_unpublished_run"),
+        "primary_words": result.get("primary_words"),
+        "primary_uncovered_max_gap_s": result.get("primary_uncovered_max_gap_s"),
+        "vad_profile": result.get("vad_profile"),
         "mean_logprob": result.get("mean_logprob"),
         "speech_seconds": result.get("speech_seconds"),
         "duration_sec": result.get("duration_sec"),
