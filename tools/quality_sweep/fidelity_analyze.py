@@ -27,10 +27,17 @@ from agreement import compare, separation  # noqa: E402
 from norm import norm_words  # noqa: E402
 
 
-def load_config(path):
+# A pass written by an older tool carries no note of its own; A2 is the shipped decode
+# run a second time, which is exactly what makes it the noise floor.
+DEFAULT_NOTES = {
+    "A2": "0.6.0 as shipped, decoded a second time: the run-to-run noise floor",
+}
+
+
+def load_config(path, label):
     with open(path) as handle:
         doc = json.load(handle)
-    return doc.get("note"), doc["files"]
+    return doc.get("note") or DEFAULT_NOTES.get(label, "(no note recorded)"), doc["files"]
 
 
 def pct(new, old):
@@ -40,6 +47,12 @@ def pct(new, old):
 def seg_per_min(entry):
     duration = entry.get("duration_sec") or 0
     return round((entry.get("segments") or 0) / (duration / 60.0), 2) if duration else None
+
+
+def median_or_none(values, digits):
+    """statistics.median raises on an empty sequence, and an arm can legitimately have no
+    comparable files (an errored control, or a subset that was not run)."""
+    return round(statistics.median(values), digits) if values else None
 
 
 def fmt(value, digits=3):
@@ -52,9 +65,16 @@ def fmt(value, digits=3):
 
 def build(configs, file_list, notes):
     control = configs["A"]
+    # Every configuration other than the control is an arm, including A2, a second run of
+    # A itself. A2 is not a variant under test: it is the noise floor. 0.6.0's decode is
+    # not bit-reproducible on every file, so a word delta or a disagreement smaller than
+    # what two runs of the *same* configuration produce is not evidence of anything, and
+    # no arm can be read without it.
+    arms = [label for label in sorted(configs) if label != "A"]
     bad_names = {r["file"] for r in file_list["files"] if r["bad_reasons"]}
     tags = {r["file"]: r["tags"] for r in file_list["files"]}
     split = {r["file"] for r in file_list["files"] if r["selector_split"]}
+    legacy = {r["file"]: r.get("legacy_words") for r in file_list["files"]}
 
     per_file = {}
     for name, base in sorted(control.items()):
@@ -62,6 +82,7 @@ def build(configs, file_list, notes):
             continue
         row = {"tags": tags.get(name, []), "bad": name in bad_names,
                "selector_split": name in split,
+               "legacy_words": legacy.get(name),
                "duration_sec": base.get("duration_sec"),
                "A": {"words": base.get("words"), "segments": base.get("segments"),
                      "seg_per_min": seg_per_min(base),
@@ -70,9 +91,11 @@ def build(configs, file_list, notes):
                      "rescue_attempted": base.get("rescue_attempted"),
                      "rescue_selected": base.get("rescue_selected"),
                      "uncovered_max_gap_s": base.get("uncovered_max_gap_s"),
-                     "wall_s": base.get("wall_s")}}
+                     "wall_s": base.get("wall_s"),
+                     "mean_dbfs": base.get("mean_dbfs"),
+                     "vs_legacy_pct": pct(base.get("words") or 0, legacy.get(name))}}
         base_words = norm_words(base.get("transcription") or "")
-        for label in ("B", "C", "D"):
+        for label in arms:
             entry = (configs.get(label) or {}).get(name)
             if not entry or entry.get("error"):
                 continue
@@ -85,7 +108,12 @@ def build(configs, file_list, notes):
                     "uncovered_max_gap_s": entry.get("uncovered_max_gap_s"),
                     "wall_s": entry.get("wall_s"),
                     "word_delta": (entry.get("words") or 0) - (base.get("words") or 0),
-                    "word_delta_pct": pct(entry.get("words") or 0, base.get("words") or 0)}
+                    "word_delta_pct": pct(entry.get("words") or 0, base.get("words") or 0),
+                    # Against the legacy transcript too. Legacy is a different service on
+                    # a different decode, so agreeing with it is weak evidence on its own;
+                    # but a configuration that recovers content the legacy decode also has
+                    # is recovering something real rather than inventing it.
+                    "vs_legacy_pct": pct(entry.get("words") or 0, legacy.get(name))}
             cell.update(compare(base_words, norm_words(entry.get("transcription") or "")))
             cell["disagreement"] = (round(1.0 - cell["agreement"], 5)
                                    if cell["agreement"] is not None else None)
@@ -94,46 +122,55 @@ def build(configs, file_list, notes):
             row[label] = cell
         per_file[name] = row
 
-    # The detector question, on the A/B pair.
-    ab = {name: row["B"] for name, row in per_file.items() if "B" in row}
-    detector = {
-        "disagreement": separation(ab, "disagreement", bad_names, True),
-        "max_run": separation(ab, "max_run", bad_names, True),
-        "max_run_rate": separation(ab, "max_run_rate", bad_names, True),
-    }
+    # The detector question, on the A/B pair, and the same question on the A/A2 pair so
+    # the noise floor is visible next to the signal.
+    detector = {}
+    for pair in ("B", "A2"):
+        rows = {name: row[pair] for name, row in per_file.items() if pair in row}
+        if not rows:
+            continue
+        detector[pair] = {
+            key: separation(rows, key, bad_names, True)
+            for key in ("disagreement", "max_run", "max_run_rate")
+        }
 
     summary = {}
-    for label in ("B", "C", "D"):
+    for label in arms:
         rows = [row[label] for row in per_file.values() if label in row]
         if not rows:
             continue
         deltas = [r["word_delta_pct"] for r in rows if r["word_delta_pct"] is not None]
         summary[label] = {
             "n": len(rows),
-            "median_word_delta_pct": round(statistics.median(deltas), 3) if deltas else None,
+            "median_word_delta_pct": median_or_none(deltas, 3),
             "mean_word_delta_pct": round(statistics.mean(deltas), 3) if deltas else None,
             "files_worse_1pct": sum(1 for d in deltas if d <= -1.0),
             "files_worse_5pct": sum(1 for d in deltas if d <= -5.0),
             "files_better_1pct": sum(1 for d in deltas if d >= 1.0),
-            "median_agreement": round(statistics.median(
-                r["agreement"] for r in rows if r["agreement"] is not None), 5),
+            "median_agreement": median_or_none(
+                [r["agreement"] for r in rows if r["agreement"] is not None], 5),
             "rescue_selected": sum(1 for r in rows if r.get("rescue_selected")),
-            "median_seg_per_min": round(statistics.median(
-                r["seg_per_min"] for r in rows if r["seg_per_min"] is not None), 2),
+            "median_seg_per_min": median_or_none(
+                [r["seg_per_min"] for r in rows if r["seg_per_min"] is not None], 2),
             "total_wall_s": round(sum(r["wall_s"] or 0 for r in rows), 1),
         }
+        summary[label]["median_vs_legacy_pct"] = median_or_none(
+            [r["vs_legacy_pct"] for r in rows if r["vs_legacy_pct"] is not None], 3)
+    control_legacy = [row["A"]["vs_legacy_pct"] for row in per_file.values()
+                      if row["A"]["vs_legacy_pct"] is not None]
     summary["A"] = {
         "n": len(per_file),
-        "median_seg_per_min": round(statistics.median(
-            row["A"]["seg_per_min"] for row in per_file.values()
-            if row["A"]["seg_per_min"] is not None), 2),
+        "median_seg_per_min": median_or_none(
+            [row["A"]["seg_per_min"] for row in per_file.values()
+             if row["A"]["seg_per_min"] is not None], 2),
         "rescue_selected": sum(1 for row in per_file.values()
                                if row["A"].get("rescue_selected")),
         "total_wall_s": round(sum(row["A"]["wall_s"] or 0 for row in per_file.values()), 1),
+        "median_vs_legacy_pct": median_or_none(control_legacy, 3),
     }
 
-    return {"notes": notes, "bad_files": sorted(bad_names), "summary": summary,
-            "detector": detector, "per_file": per_file}
+    return {"notes": notes, "arms": arms, "bad_files": sorted(bad_names),
+            "summary": summary, "detector": detector, "per_file": per_file}
 
 
 def render(doc):
@@ -147,11 +184,11 @@ def render(doc):
 
     out.append("## Whole-set summary, every configuration against A")
     out.append("")
-    out.append("| config | files | median word delta | mean word delta | worse by 1% | "
-               "worse by 5% | better by 1% | median agreement with A | median seg/min | "
-               "rescues kept | wall |")
-    out.append("|---|---|---|---|---|---|---|---|---|---|---|")
-    for label in ("A", "B", "C", "D"):
+    out.append("| config | files | median word delta vs A | mean | worse by 1% | "
+               "worse by 5% | better by 1% | median agreement with A | median vs legacy | "
+               "median seg/min | rescues kept | wall |")
+    out.append("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for label in ["A"] + sorted(k for k in doc["summary"] if k != "A"):
         s = doc["summary"].get(label)
         if not s:
             continue
@@ -159,8 +196,15 @@ def render(doc):
             f"| {label} | {s['n']} | {fmt(s.get('median_word_delta_pct'), 2)}% "
             f"| {fmt(s.get('mean_word_delta_pct'), 2)}% | {s.get('files_worse_1pct', '-')} "
             f"| {s.get('files_worse_5pct', '-')} | {s.get('files_better_1pct', '-')} "
-            f"| {fmt(s.get('median_agreement'), 4)} | {fmt(s.get('median_seg_per_min'), 2)} "
+            f"| {fmt(s.get('median_agreement'), 4)} "
+            f"| {fmt(s.get('median_vs_legacy_pct'), 2)}% "
+            f"| {fmt(s.get('median_seg_per_min'), 2)} "
             f"| {s.get('rescue_selected')} | {fmt(s.get('total_wall_s'), 0)}s |")
+    out.append("")
+    out.append("The word delta columns compare like with like across configurations. The "
+               "legacy column is a different service on a different decode and is weak "
+               "evidence on its own, but a configuration that recovers content the legacy "
+               "decode also carries is recovering something rather than inventing it.")
     out.append("")
 
     out.append("## Open item 2: does A-vs-B disagreement detect a bad transcript")
@@ -169,10 +213,15 @@ def render(doc):
                "sampling, so unlike the two builds already on disk their disagreement "
                "measures the decode rather than a downstream gate.")
     out.append("")
-    for key, title in [("max_run", "Longest one-sided run, in words"),
-                       ("max_run_rate", "Longest one-sided run, as a share of the transcript"),
-                       ("disagreement", "Whole-file disagreement")]:
-        sep = doc["detector"].get(key)
+    for pair, key, title in [
+        ("B", "max_run", "A vs B: longest one-sided run, in words"),
+        ("A2", "max_run", "A vs A2 (the noise floor): longest one-sided run, in words"),
+        ("B", "max_run_rate", "A vs B: longest one-sided run, as a share of the transcript"),
+        ("A2", "max_run_rate", "A vs A2 (the noise floor): run as a share of the transcript"),
+        ("B", "disagreement", "A vs B: whole-file disagreement"),
+        ("A2", "disagreement", "A vs A2 (the noise floor): whole-file disagreement"),
+    ]:
+        sep = (doc["detector"].get(pair) or {}).get(key)
         out.append(f"### {title}")
         out.append("")
         if not sep:
@@ -224,13 +273,14 @@ def render(doc):
 
     out.append("## Every file")
     out.append("")
-    out.append("| file | tags | A words | B delta | C delta | D delta | A seg/min | "
-               "B seg/min | A gap | B gap | bad |")
-    out.append("|---|---|---|---|---|---|---|---|---|---|---|")
+    out.append("| file | tags | A words | "
+               + " | ".join(f"{a} delta" for a in doc["arms"])
+               + " | A seg/min | B seg/min | A gap | B gap | bad |")
+    out.append("|---|---|---|" + "---|" * (len(doc["arms"]) + 5))
     for name, row in sorted(doc["per_file"].items()):
         a = row["A"]
         cells = []
-        for label in ("B", "C", "D"):
+        for label in doc["arms"]:
             cell = row.get(label)
             cells.append("-" if not cell else f"{fmt(cell['word_delta_pct'], 2)}%")
         b = row.get("B") or {}
@@ -254,7 +304,7 @@ def main(argv=None):
     configs, notes = {}, {}
     for spec in args.config:
         label, path = spec.split("=", 1)
-        notes[label], configs[label] = load_config(path)
+        notes[label], configs[label] = load_config(path, label)
     with open(args.file_list) as handle:
         file_list = json.load(handle)
 

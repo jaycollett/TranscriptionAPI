@@ -326,3 +326,77 @@ def test_every_passage_reference_is_in_the_committed_cache():
         text = bible.passage("web", entry["book"], entry["chapter"],
                              entry["first_verse"], entry["last_verse"])
         assert text, f"no cached reference for {entry['label']}"
+
+
+# --- the analyzer -------------------------------------------------------------------------
+
+
+def _pass(words_by_file, **extra):
+    out = {}
+    for name, text in words_by_file.items():
+        out[name] = {"transcription": text, "words": len(text.split()), "segments": 10,
+                     "duration_sec": 600.0, "speech_seconds": 500.0,
+                     "uncovered_max_gap_s": 2.0, "wall_s": 10.0, "vad_profile": "loud",
+                     "anomaly_windows": 0, "rescue_attempted": False,
+                     "rescue_selected": False, **extra.get(name, {})}
+    return out
+
+
+def _file_list(names, **overrides):
+    return {"files": [{"file": n, "tags": ["control"], "bad_reasons": [],
+                       "selector_split": False, "legacy_words": 100,
+                       **overrides.get(n, {})} for n in names]}
+
+
+def test_analyzer_scores_every_arm_against_the_control():
+    import fidelity_analyze
+    base = " ".join(f"w{i}" for i in range(100))
+    configs = {
+        "A": _pass({"a.mp3": base, "b.mp3": base}),
+        "B": _pass({"a.mp3": base, "b.mp3": base + " extra words here"}),
+    }
+    doc = fidelity_analyze.build(configs, _file_list(["a.mp3", "b.mp3"]), {"A": "", "B": ""})
+    assert doc["arms"] == ["B"]
+    assert doc["per_file"]["a.mp3"]["B"]["word_delta"] == 0
+    assert doc["per_file"]["a.mp3"]["B"]["agreement"] == 1.0
+    assert doc["per_file"]["b.mp3"]["B"]["word_delta"] == 3
+    assert doc["summary"]["B"]["n"] == 2
+
+
+def test_analyzer_treats_a_replicate_as_an_arm_so_the_noise_floor_is_visible():
+    import fidelity_analyze
+    base = " ".join(f"w{i}" for i in range(100))
+    configs = {
+        "A": _pass({"a.mp3": base}),
+        "A2": _pass({"a.mp3": base + " drifted"}),
+        "B": _pass({"a.mp3": base}),
+    }
+    doc = fidelity_analyze.build(configs, _file_list(["a.mp3"]), {"A": "", "A2": "", "B": ""})
+    assert doc["arms"] == ["A2", "B"]
+    assert "A2" in doc["detector"] and "B" in doc["detector"]
+
+
+def test_analyzer_renders_without_an_arm_that_was_not_run():
+    import fidelity_analyze
+    base = " ".join(f"w{i}" for i in range(50))
+    configs = {"A": _pass({"a.mp3": base, "b.mp3": base}),
+               "D": _pass({"a.mp3": base})}
+    doc = fidelity_analyze.build(configs, _file_list(["a.mp3", "b.mp3"]), {"A": "", "D": ""})
+    assert "D" in doc["per_file"]["a.mp3"]
+    assert "D" not in doc["per_file"]["b.mp3"]
+    assert "b.mp3" in fidelity_analyze.render(doc)
+
+
+def test_analyzer_skips_a_control_entry_that_errored():
+    import fidelity_analyze
+    configs = {"A": {"a.mp3": {"error": "boom"}}, "B": _pass({"a.mp3": "one two"})}
+    doc = fidelity_analyze.build(configs, _file_list(["a.mp3"]), {"A": "", "B": ""})
+    assert doc["per_file"] == {}
+
+
+def test_a_replicate_gets_a_default_note_saying_what_it_is(tmp_path):
+    import fidelity_analyze
+    path = tmp_path / "a2.json"
+    path.write_text(json.dumps({"files": {}}))
+    note, _ = fidelity_analyze.load_config(str(path), "A2")
+    assert "noise floor" in note
