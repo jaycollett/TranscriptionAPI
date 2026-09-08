@@ -1114,3 +1114,74 @@ failure the job still completes on Whisper timings and reports
 `mfa_applied=false`. Nothing errors, so the run looks fine until the MFA rate in
 the results is zero. Copy `/mfa/pretrained_models` (90 MB) out of the image into the
 new root first; `tools/quality_sweep/run_sweep.sh` does it once and caches it.
+
+
+## 2026-09-08 - The fidelity experiment: three candidate changes, none adopted
+
+Four configurations over 32 files, decode-only, plus a second submission of the shipped
+one. Full argument in `tools/quality_sweep/results/2026-09-08-fidelity/`.
+
+**Word count is not evidence of fidelity, and this run finally proves it on a real file.**
+The single largest one-sided run in the whole experiment is 137 words the shipped decode
+has and the sampled one does not, and it is a repetition loop: "the sins we commit"
+fifteen times over at 97 percent through `tcf.20201003`. On word count the shipped decode
+wins that file by 3 percent. On content it lost. The instrument that works is the run
+inventory: every contiguous one-sided run of twelve or more words between two decodes,
+checked against the legacy archive. All twenty such runs are in the legacy transcript,
+which makes each one a real difference in content judged by a baseline predating this
+release line.
+
+**Scoring scripture by word error rate works as a comparator and only as a comparator.**
+The preacher's translation is unknown, so absolute rates run 0.16 to 0.83 on passages that
+are transcribed perfectly well, and quoting one as accuracy would be a lie. What holds is
+the ordering: on the four passages with six cached translations the ranking of the
+configurations is identical under all six. Where two configurations produced the same text
+the rate matches to three decimals, which is the check that the scorer measures the
+transcript rather than the reference.
+
+**Sampling on the primary pass recovers more than it loses, and is still not worth
+shipping.** 578 words in fourteen runs recovered, ten of them scripture read aloud
+including Exodus 24 and 1 Peter 1, against 273 lost of which 137 are the loop. Eight of
+the ten recovered passages were not previously known to be missing, which says the
+read-aloud defect is roughly four times commoner than the sweep found. But it is one
+unseeded draw per file; the shipped rescue, which samples from the same base, failed to be
+selected on the very file the sampled primary recovered; every file becomes
+irreproducible where 23 of 32 are byte-identical today; total segments move from 18 325 to
+15 449 with individual files moving by a factor of four, and the per-utterance aligner was
+never run in this experiment. Three seeded draws with alignment enabled would settle it.
+
+**The uncovered-speech fraction is dead as a detector, definitively.** Bad files 0.053 to
+0.134, healthy 0.011 to 0.128, the three highest values in the subset all healthy, one of
+seven caught at every false-positive budget. Coverage ratio is the same number inverted.
+This is the fifth quality rule in two days that looked reasonable and measures the wrong
+thing: it measures how ragged the segment edges are, which is a property of the speaker.
+
+**The largest contiguous gap does work, at 8 s, and the reason nobody found that is
+instructive.** Every earlier evaluation of the gap statistic set the threshold for a
+quarantine gate, where a false positive costs a published transcript, so nothing below
+10 s was ever considered. As the trigger for a second decode a false positive costs GPU
+time only, and at 8.5 s the statistic reaches all seven files where a second decode and
+the legacy archive agree content was lost, flagging one healthy file. **The right
+threshold for a signal depends on what the signal is wired to, not on the signal.**
+
+**Cross-configuration disagreement detects a loss only in its directional form.**
+Symmetric disagreement catches one of seven, because it fires just as hard when the second
+decode is the wrong one; the largest reverse run in the corpus is the hallucination loop.
+The longest run the second decode has that the published pass lacks is the statistic that
+works, and it is the only thing that sees `tcf.20150424`, where it finds Colossians
+1:11-12 read aloud and missing. That file is therefore not undetectable, as the previous
+entry recorded; it is invisible to every free signal and plain to a second decode.
+
+**The rescue's two levers do not compose.** Running the rescue ladder from 0.2 with
+`condition_on_previous_text` left on loses a 91-word run on `tcf.20210217`, taking
+Matthew 6 from 0.435 to 0.770, and a 70-word run on `tcf.20260626`. Conditioning-off is
+doing the work; the higher ladder does not substitute for it. And Exodus 24 cannot be
+recovered by tuning the rescue at all: the rescue already runs on that file with both
+levers at their best measured values and its output was not selected.
+
+**Keying the VAD profile on sample and bit rate instead of level does not pay.** Median
+segments per minute 15.16 to 14.66 and mean segment length unchanged at 3.48 to 3.50 s,
+nine files better and six worse, seven files losing more than 1 percent of their words,
+and the subset moving from 981 words under the legacy archive to 1357 under it. The
+non-monotonic level finding stands as a reason to distrust the current rule and is not a
+reason to adopt this one.

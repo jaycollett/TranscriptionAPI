@@ -1,0 +1,710 @@
+{
+ "config_subsets": {
+  "A": [
+   "sermon_from_thomas_wingfold_by_george_macdonald.m4a",
+   "tcf.20150424.mp3",
+   "tcf.20200422.mp3",
+   "tcf.20200726.mp3",
+   "tcf.20200729.mp3",
+   "tcf.20200922.mp3",
+   "tcf.20201003.mens_.mp3",
+   "tcf.20201021.mp3",
+   "tcf.20210210.mp3",
+   "tcf.20210217.mp3",
+   "tcf.20210514.mp3",
+   "tcf.20210611.mp3",
+   "tcf.20211203.mp3",
+   "tcf.20220205.mp3",
+   "tcf.20220729.mp3",
+   "tcf.20221203.mp3",
+   "tcf.20230603_mens_fast.mp3",
+   "tcf.20240301a.mp3",
+   "tcf.20240319a.mp3",
+   "tcf.20240326a.mp3",
+   "tcf.20250607.mp3",
+   "tcf.20250725.mp3",
+   "tcf.20260331a.mp3",
+   "tcf.20260331b.mp3",
+   "tcf.20260626.mp3",
+   "tcf.20260710.mp3",
+   "tcf.20260717.mp3",
+   "tcf.20260904.mp3",
+   "ucf20211106b.mp3",
+   "women_retreat_2025_session1.mp3",
+   "women_retreat_2025_session4.mp3",
+   "women_retreat_2026_session1.mp3"
+  ],
+  "B": [
+   "sermon_from_thomas_wingfold_by_george_macdonald.m4a",
+   "tcf.20150424.mp3",
+   "tcf.20200422.mp3",
+   "tcf.20200726.mp3",
+   "tcf.20200729.mp3",
+   "tcf.20200922.mp3",
+   "tcf.20201003.mens_.mp3",
+   "tcf.20201021.mp3",
+   "tcf.20210210.mp3",
+   "tcf.20210217.mp3",
+   "tcf.20210514.mp3",
+   "tcf.20210611.mp3",
+   "tcf.20211203.mp3",
+   "tcf.20220205.mp3",
+   "tcf.20220729.mp3",
+   "tcf.20221203.mp3",
+   "tcf.20230603_mens_fast.mp3",
+   "tcf.20240301a.mp3",
+   "tcf.20240319a.mp3",
+   "tcf.20240326a.mp3",
+   "tcf.20250607.mp3",
+   "tcf.20250725.mp3",
+   "tcf.20260331a.mp3",
+   "tcf.20260331b.mp3",
+   "tcf.20260626.mp3",
+   "tcf.20260710.mp3",
+   "tcf.20260717.mp3",
+   "tcf.20260904.mp3",
+   "ucf20211106b.mp3",
+   "women_retreat_2025_session1.mp3",
+   "women_retreat_2025_session4.mp3",
+   "women_retreat_2026_session1.mp3"
+  ],
+  "C": [
+   "tcf.20210210.mp3",
+   "tcf.20210217.mp3",
+   "tcf.20250607.mp3",
+   "tcf.20260626.mp3",
+   "tcf.20260717.mp3",
+   "ucf20211106b.mp3",
+   "women_retreat_2025_session4.mp3",
+   "women_retreat_2026_session1.mp3"
+  ],
+  "D": [
+   "sermon_from_thomas_wingfold_by_george_macdonald.m4a",
+   "tcf.20150424.mp3",
+   "tcf.20200422.mp3",
+   "tcf.20200726.mp3",
+   "tcf.20200922.mp3",
+   "tcf.20201003.mens_.mp3",
+   "tcf.20201021.mp3",
+   "tcf.20210514.mp3",
+   "tcf.20210611.mp3",
+   "tcf.20220205.mp3",
+   "tcf.20220729.mp3",
+   "tcf.20221203.mp3",
+   "tcf.20250725.mp3",
+   "tcf.20260626.mp3",
+   "tcf.20260710.mp3",
+   "tcf.20260717.mp3",
+   "tcf.20260904.mp3",
+   "ucf20211106b.mp3",
+   "women_retreat_2025_session1.mp3",
+   "women_retreat_2025_session4.mp3"
+  ]
+ },
+ "files": [
+  {
+   "bad_reasons": [],
+   "bit_rate": 65171,
+   "duration_sec": 628.864,
+   "fidelity_profile": "loud",
+   "file": "sermon_from_thomas_wingfold_by_george_macdonald.m4a",
+   "legacy_words": 1860,
+   "level_profile": "quiet",
+   "mean_dbfs": -26.3,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 9.16,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 1856
+  },
+  {
+   "bad_reasons": [
+    "short vs legacy"
+   ],
+   "bit_rate": 51452,
+   "duration_sec": 2998.0,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20150424.mp3",
+   "legacy_words": 8292,
+   "level_profile": "loud",
+   "mean_dbfs": -17.8,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 23.14,
+   "selector_split": true,
+   "tags": [
+    "bad",
+    "selector_split"
+   ],
+   "words": 7060
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 90360,
+   "duration_sec": 486.891995,
+   "fidelity_profile": "loud",
+   "file": "tcf.20200422.mp3",
+   "legacy_words": 1355,
+   "level_profile": "quiet",
+   "mean_dbfs": -27.9,
+   "rescue_attempted": false,
+   "sample_rate": 44100,
+   "segments_per_min": 12.57,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 1355
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 256000,
+   "duration_sec": 450.396213,
+   "fidelity_profile": "loud",
+   "file": "tcf.20200726.mp3",
+   "legacy_words": 1232,
+   "level_profile": "quiet",
+   "mean_dbfs": -26.9,
+   "rescue_attempted": false,
+   "sample_rate": 44100,
+   "segments_per_min": 8.66,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 1234
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 256000,
+   "duration_sec": 543.730816,
+   "fidelity_profile": "loud",
+   "file": "tcf.20200729.mp3",
+   "legacy_words": 1421,
+   "level_profile": "loud",
+   "mean_dbfs": -20.2,
+   "rescue_attempted": false,
+   "sample_rate": 44100,
+   "segments_per_min": 8.5,
+   "selector_split": false,
+   "tags": [
+    "control"
+   ],
+   "words": 1421
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 63946,
+   "duration_sec": 378.601361,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20200922.mp3",
+   "legacy_words": 1164,
+   "level_profile": "loud",
+   "mean_dbfs": -20.2,
+   "rescue_attempted": false,
+   "sample_rate": 44100,
+   "segments_per_min": 20.6,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 1160
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 62532,
+   "duration_sec": 1639.324521,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20201003.mens_.mp3",
+   "legacy_words": 4422,
+   "level_profile": "loud",
+   "mean_dbfs": -18.7,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 16.8,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 4384
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 61317,
+   "duration_sec": 603.148957,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20201021.mp3",
+   "legacy_words": 1641,
+   "level_profile": "loud",
+   "mean_dbfs": -25.2,
+   "rescue_attempted": false,
+   "sample_rate": 44100,
+   "segments_per_min": 8.56,
+   "selector_split": true,
+   "tags": [
+    "selector_split"
+   ],
+   "words": 1635
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap",
+    "short vs legacy"
+   ],
+   "bit_rate": 66042,
+   "duration_sec": 469.878707,
+   "fidelity_profile": "loud",
+   "file": "tcf.20210210.mp3",
+   "legacy_words": 1248,
+   "level_profile": "loud",
+   "mean_dbfs": -20.3,
+   "rescue_attempted": true,
+   "sample_rate": 44100,
+   "segments_per_min": 10.34,
+   "selector_split": false,
+   "tags": [
+    "bad",
+    "scripture"
+   ],
+   "words": 1172
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap"
+   ],
+   "bit_rate": 56250,
+   "duration_sec": 616.814898,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20210217.mp3",
+   "legacy_words": 1683,
+   "level_profile": "quiet",
+   "mean_dbfs": -26.4,
+   "rescue_attempted": true,
+   "sample_rate": 44100,
+   "segments_per_min": 10.7,
+   "selector_split": false,
+   "tags": [
+    "bad",
+    "scripture"
+   ],
+   "words": 1683
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 37889,
+   "duration_sec": 2141.499048,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20210514.mp3",
+   "legacy_words": 6203,
+   "level_profile": "loud",
+   "mean_dbfs": -18.4,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 36.0,
+   "selector_split": true,
+   "tags": [
+    "fragmented",
+    "selector_split"
+   ],
+   "words": 6214
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 38027,
+   "duration_sec": 1728.885533,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20210611.mp3",
+   "legacy_words": 4972,
+   "level_profile": "loud",
+   "mean_dbfs": -20.2,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 16.9,
+   "selector_split": true,
+   "tags": [
+    "scripture"
+   ],
+   "words": 4947
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 50191,
+   "duration_sec": 3875.093438,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20211203.mp3",
+   "legacy_words": 9870,
+   "level_profile": "quiet",
+   "mean_dbfs": -27.4,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 12.15,
+   "selector_split": false,
+   "tags": [
+    "scripture"
+   ],
+   "words": 9996
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 36057,
+   "duration_sec": 1371.509841,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20220205.mp3",
+   "legacy_words": 3558,
+   "level_profile": "loud",
+   "mean_dbfs": -18.8,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 36.57,
+   "selector_split": true,
+   "tags": [
+    "fragmented"
+   ],
+   "words": 3486
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 97778,
+   "duration_sec": 2215.129667,
+   "fidelity_profile": "loud",
+   "file": "tcf.20220729.mp3",
+   "legacy_words": 5769,
+   "level_profile": "quiet",
+   "mean_dbfs": -27.9,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 37.92,
+   "selector_split": true,
+   "tags": [
+    "fragmented"
+   ],
+   "words": 5667
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 81460,
+   "duration_sec": 3704.728435,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20221203.mp3",
+   "legacy_words": 9514,
+   "level_profile": "loud",
+   "mean_dbfs": -18.7,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 59.05,
+   "selector_split": true,
+   "tags": [
+    "fragmented",
+    "scripture"
+   ],
+   "words": 9697
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 81667,
+   "duration_sec": 1978.274333,
+   "fidelity_profile": "loud",
+   "file": "tcf.20230603_mens_fast.mp3",
+   "legacy_words": 5700,
+   "level_profile": "loud",
+   "mean_dbfs": -18.1,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 42.13,
+   "selector_split": false,
+   "tags": [
+    "fragmented"
+   ],
+   "words": 5767
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 128111,
+   "duration_sec": 238.798583,
+   "fidelity_profile": "loud",
+   "file": "tcf.20240301a.mp3",
+   "legacy_words": 660,
+   "level_profile": "loud",
+   "mean_dbfs": -21.5,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 8.54,
+   "selector_split": false,
+   "tags": [
+    "control"
+   ],
+   "words": 653
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 144611,
+   "duration_sec": 2345.408208,
+   "fidelity_profile": "loud",
+   "file": "tcf.20240319a.mp3",
+   "legacy_words": 6248,
+   "level_profile": "loud",
+   "mean_dbfs": -17.7,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 15.43,
+   "selector_split": false,
+   "tags": [
+    "scripture"
+   ],
+   "words": 6186
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 146181,
+   "duration_sec": 2006.036646,
+   "fidelity_profile": "loud",
+   "file": "tcf.20240326a.mp3",
+   "legacy_words": 5296,
+   "level_profile": "loud",
+   "mean_dbfs": -21.5,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 8.64,
+   "selector_split": false,
+   "tags": [
+    "control"
+   ],
+   "words": 5373
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap"
+   ],
+   "bit_rate": 94307,
+   "duration_sec": 2846.525479,
+   "fidelity_profile": "loud",
+   "file": "tcf.20250607.mp3",
+   "legacy_words": 7619,
+   "level_profile": "loud",
+   "mean_dbfs": -19.9,
+   "rescue_attempted": true,
+   "sample_rate": 48000,
+   "segments_per_min": 15.89,
+   "selector_split": false,
+   "tags": [
+    "bad",
+    "scripture"
+   ],
+   "words": 7815
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 94711,
+   "duration_sec": 1629.034667,
+   "fidelity_profile": "loud",
+   "file": "tcf.20250725.mp3",
+   "legacy_words": 4439,
+   "level_profile": "quiet",
+   "mean_dbfs": -27.1,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 33.41,
+   "selector_split": true,
+   "tags": [
+    "fragmented"
+   ],
+   "words": 4437
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 83596,
+   "duration_sec": 3794.883271,
+   "fidelity_profile": "loud",
+   "file": "tcf.20260331a.mp3",
+   "legacy_words": 9942,
+   "level_profile": "loud",
+   "mean_dbfs": -25.0,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 8.65,
+   "selector_split": false,
+   "tags": [
+    "scripture"
+   ],
+   "words": 9982
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 52820,
+   "duration_sec": 764.168707,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20260331b.mp3",
+   "legacy_words": 1940,
+   "level_profile": "quiet",
+   "mean_dbfs": -27.1,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 8.64,
+   "selector_split": false,
+   "tags": [
+    "scripture"
+   ],
+   "words": 1958
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap"
+   ],
+   "bit_rate": 51566,
+   "duration_sec": 1505.30322,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20260626.mp3",
+   "legacy_words": 3697,
+   "level_profile": "loud",
+   "mean_dbfs": -24.1,
+   "rescue_attempted": true,
+   "sample_rate": 22050,
+   "segments_per_min": 13.19,
+   "selector_split": true,
+   "tags": [
+    "bad",
+    "scripture"
+   ],
+   "words": 3752
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 79651,
+   "duration_sec": 1562.683447,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20260710.mp3",
+   "legacy_words": 4075,
+   "level_profile": "loud",
+   "mean_dbfs": -20.5,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 8.64,
+   "selector_split": true,
+   "tags": [
+    "scripture"
+   ],
+   "words": 4041
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 63391,
+   "duration_sec": 1419.333469,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20260717.mp3",
+   "legacy_words": 3779,
+   "level_profile": "loud",
+   "mean_dbfs": -23.5,
+   "rescue_attempted": true,
+   "sample_rate": 22050,
+   "segments_per_min": 12.34,
+   "selector_split": true,
+   "tags": [
+    "control"
+   ],
+   "words": 3762
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 53686,
+   "duration_sec": 1129.989388,
+   "fidelity_profile": "quiet",
+   "file": "tcf.20260904.mp3",
+   "legacy_words": 2759,
+   "level_profile": "loud",
+   "mean_dbfs": -21.1,
+   "rescue_attempted": false,
+   "sample_rate": 22050,
+   "segments_per_min": 32.28,
+   "selector_split": true,
+   "tags": [
+    "control"
+   ],
+   "words": 2837
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap"
+   ],
+   "bit_rate": 51775,
+   "duration_sec": 2248.436208,
+   "fidelity_profile": "quiet",
+   "file": "ucf20211106b.mp3",
+   "legacy_words": 4974,
+   "level_profile": "loud",
+   "mean_dbfs": -21.3,
+   "rescue_attempted": true,
+   "sample_rate": 48000,
+   "segments_per_min": 10.3,
+   "selector_split": true,
+   "tags": [
+    "bad",
+    "scripture"
+   ],
+   "words": 5050
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 95928,
+   "duration_sec": 1242.325563,
+   "fidelity_profile": "loud",
+   "file": "women_retreat_2025_session1.mp3",
+   "legacy_words": 2226,
+   "level_profile": "quiet",
+   "mean_dbfs": -26.9,
+   "rescue_attempted": false,
+   "sample_rate": 48000,
+   "segments_per_min": 12.12,
+   "selector_split": true,
+   "tags": [
+    "scripture"
+   ],
+   "words": 2245
+  },
+  {
+   "bad_reasons": [],
+   "bit_rate": 98853,
+   "duration_sec": 1625.809438,
+   "fidelity_profile": "loud",
+   "file": "women_retreat_2025_session4.mp3",
+   "legacy_words": 3216,
+   "level_profile": "quiet",
+   "mean_dbfs": -28.0,
+   "rescue_attempted": true,
+   "sample_rate": 48000,
+   "segments_per_min": 7.49,
+   "selector_split": true,
+   "tags": [
+    "control"
+   ],
+   "words": 3195
+  },
+  {
+   "bad_reasons": [
+    "uncovered gap"
+   ],
+   "bit_rate": 73319,
+   "duration_sec": 3183.8705,
+   "fidelity_profile": "loud",
+   "file": "women_retreat_2026_session1.mp3",
+   "legacy_words": 7975,
+   "level_profile": "loud",
+   "mean_dbfs": -23.9,
+   "rescue_attempted": true,
+   "sample_rate": 48000,
+   "segments_per_min": 17.3,
+   "selector_split": false,
+   "tags": [
+    "bad"
+   ],
+   "words": 7886
+  }
+ ],
+ "thresholds": {
+  "fidelity_bit_rate": 64000,
+  "fidelity_sample_rate_hz": 22050,
+  "level_cutover_dbfs": -26.0
+ }
+}
