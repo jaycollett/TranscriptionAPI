@@ -136,17 +136,57 @@ def decide_shipped(primary, rescue):
     return "rescue" if pass_sort_key_words(rescue) < pass_sort_key_words(primary) else "primary"
 
 
-def decide_proposed(primary, rescue, deficit_run, threshold):
-    """The proposal: the same ordering, gated on lost contiguous content instead.
+def decide_proposed(primary, rescue, p_run, r_run, threshold):
+    """The proposal as written: refuse when `P >= N`, then the shipped ordering.
 
-    `deficit_run` is P. `None` means the file has no transcript pair, so the rule cannot
-    be evaluated and the caller is told rather than guessed at.
+    `None` means the file has no transcript pair, so the rule cannot be evaluated and
+    the caller is told rather than guessed at.
     """
-    if deficit_run is None:
+    if p_run is None:
         return None
-    if deficit_run >= threshold:
+    if p_run >= threshold:
         return "primary"
     return "rescue" if pass_sort_key_words(rescue) < pass_sort_key_words(primary) else "primary"
+
+
+def decide_net_content(primary, rescue, p_run, r_run, threshold):
+    """The proposal, refusing only when the rescue loses more than it gains.
+
+    `P >= N` alone refuses a rescue that drops one corroborated passage while recovering
+    a longer one, which is a trade and not a loss. Requiring `P > R` as well is the
+    smallest change that stops the rule punishing a net improvement.
+    """
+    if p_run is None:
+        return None
+    if p_run >= threshold and p_run > r_run:
+        return "primary"
+    return "rescue" if pass_sort_key_words(rescue) < pass_sort_key_words(primary) else "primary"
+
+
+def decide_content_first(primary, rescue, p_run, r_run, threshold):
+    """`net_content`, and contiguous corroborated content ahead of raw words.
+
+    The other three rules all end in `-words`, so a rescue that is shorter than the
+    primary is refused by the ordering even after the retention guard stops refusing it.
+    This is the only replayed rule under which a shorter rescue holding a scripture
+    reading the primary dropped can actually be published, which is what the whole
+    question was about.
+    """
+    if p_run is None:
+        return None
+    if p_run >= threshold and p_run > r_run:
+        return "primary"
+    p_key = (score(primary), 0, -primary["words"], -primary["mean_logprob"])
+    r_key = (score(rescue), -(r_run - p_run), -rescue["words"], -rescue["mean_logprob"])
+    return "rescue" if r_key < p_key else "primary"
+
+
+RULE_ORDER = ("proposed", "net_content", "content_first")
+RULE_FNS = {
+    "proposed": decide_proposed,
+    "net_content": decide_net_content,
+    "content_first": decide_content_first,
+}
 
 
 def build(args):
@@ -191,12 +231,15 @@ def build(args):
                 "pair_primary_words": len(left),
                 "pair_rescue_words": len(right),
             })
-        for n in THRESHOLDS:
-            entry["verdicts"]["N=%d" % n] = decide_proposed(
-                row["primary"], row["rescue"], entry["primary_only_run"], n)
+        for rule in RULE_ORDER:
+            for n in THRESHOLDS:
+                entry["verdicts"]["%s N=%d" % (rule, n)] = RULE_FNS[rule](
+                    row["primary"], row["rescue"],
+                    entry["primary_only_run"], entry["rescue_only_run"], n)
         entry["verdicts"]["shipped_replay"] = decide_shipped(row["primary"], row["rescue"])
         out.append(entry)
-    return {"thresholds": list(THRESHOLDS), "search_floor": SEARCH_FLOOR, "files": out}
+    return {"thresholds": list(THRESHOLDS), "rules": list(RULE_ORDER),
+            "search_floor": SEARCH_FLOOR, "files": out}
 
 
 def render(doc):
@@ -219,18 +262,27 @@ def render(doc):
              "-" if r["primary_only_run"] is None else r["primary_only_run"],
              "-" if r["rescue_only_run"] is None else r["rescue_only_run"],
              r["source"] or "none", r["shipped"],
-             " | ".join(r["verdicts"]["N=%d" % n] or "?" for n in doc["thresholds"])))
+             " | ".join(r["verdicts"]["proposed N=%d" % n] or "?" for n in doc["thresholds"])))
     w("")
-    for n in doc["thresholds"]:
-        key = "N=%d" % n
-        flips = [r for r in rows if r["verdicts"][key] and r["verdicts"][key] != r["shipped"]]
-        unknown = [r["file"] for r in rows if r["verdicts"][key] is None]
-        w("- **N=%d** changes %d of %d decisions%s%s"
-          % (n, len(flips), len(rows),
-             (": " + ", ".join("%s %s to %s" % (f["file"], f["shipped"], f["verdicts"][key])
-                               for f in flips)) if flips else "",
-             (" (not evaluable: " + ", ".join(unknown) + ")") if unknown else ""))
+    w("## Every rule at every threshold")
     w("")
+    w("`proposed` is the rule as written. `net_content` adds `P > R`, so a rescue that")
+    w("trades one corroborated passage for a longer one is not refused. `content_first`")
+    w("also ranks corroborated contiguous content ahead of raw words in the ordering.")
+    w("")
+    for rule in doc["rules"]:
+        for n in doc["thresholds"]:
+            key = "%s N=%d" % (rule, n)
+            flips = [r for r in rows if r["verdicts"][key] and r["verdicts"][key] != r["shipped"]]
+            unknown = [r["file"] for r in rows if r["verdicts"][key] is None]
+            gained = [f["file"] for f in flips if f["verdicts"][key] == "rescue"]
+            lost = [f["file"] for f in flips if f["verdicts"][key] == "primary"]
+            w("- **%s, N=%d** changes %d of %d: %d rescues gained%s, %d lost%s%s"
+              % (rule, n, len(flips), len(rows),
+                 len(gained), (" (" + ", ".join(gained) + ")") if gained else "",
+                 len(lost), (" (" + ", ".join(lost) + ")") if lost else "",
+                 (" [not evaluable: " + ", ".join(unknown) + "]") if unknown else ""))
+        w("")
     w("## What each flip costs or buys")
     w("")
     w("| file | direction | P | the primary-only run | R | the rescue-only run |")
@@ -239,12 +291,12 @@ def render(doc):
         if r["primary_only_run"] is None:
             continue
         flipped = sorted(n for n in doc["thresholds"]
-                         if r["verdicts"]["N=%d" % n] != r["shipped"])
+                         if r["verdicts"]["proposed N=%d" % n] != r["shipped"])
         if not flipped:
             continue
         w("| %s | %s to %s at N=%s | %d | %s | %d | %s |"
           % (r["file"], r["shipped"],
-             r["verdicts"]["N=%d" % flipped[0]],
+             r["verdicts"]["proposed N=%d" % flipped[0]],
              ",".join(str(n) for n in flipped),
              r["primary_only_run"], (r["primary_only_text"] or "-")[:140].replace("|", "/"),
              r["rescue_only_run"], (r["rescue_only_text"] or "-")[:140].replace("|", "/")))
