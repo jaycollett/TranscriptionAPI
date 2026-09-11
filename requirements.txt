@@ -11,7 +11,7 @@
 #
 # torch and torchvision must move together: torchvision declares torch==<same>.
 torch==2.12.1
-torchvision==0.27.1
+torchvision==0.29.0
 faster-whisper==1.2.1
 ctranslate2==4.8.0
 Flask==3.1.3
