@@ -290,7 +290,30 @@ def score(entry):
     return entry["anomaly_count"] + entry["anomaly_windows"]
 
 
+# The shipped ordering, and the three variants the tie-break proposal asked for, as
+# named functions so another tool can import the shipped one and apply exactly it.
+def pass_sort_key_words(entry):
+    """0.6.1: fewest anomalies, then most words, then best mean log-probability."""
+    return (score(entry), -entry["words"], -entry["mean_logprob"])
+
+
+def pass_sort_key_gap_tiebreak(entry):
+    """A tie on the anomaly score falls to the smaller uncovered gap."""
+    return (score(entry), entry["max_gap_s"], -entry["words"], -entry["mean_logprob"])
+
+
+def pass_sort_key_gap_first(entry):
+    """The uncovered gap ahead of the anomaly score entirely."""
+    return (entry["max_gap_s"], score(entry), -entry["words"], -entry["mean_logprob"])
+
+
 RULES = {}
+
+
+def _better(primary, rescue, key):
+    """The rescue only displaces the primary on a strict win, as `min` does in
+    `select_pass` where the primary is always first."""
+    return "rescue" if key(rescue) < key(primary) else "primary"
 
 
 def rule(name):
@@ -306,8 +329,7 @@ def rule_shipped(primary, rescue):
     the primary because it is first into `min`."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (score(e), -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_words)
 
 
 @rule("gap_tiebreak")
@@ -316,16 +338,14 @@ def rule_gap_tiebreak(primary, rescue):
     uncovered gap instead of to the primary. The retention gate still runs first."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (score(e), e["max_gap_s"], -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_tiebreak)
 
 
 @rule("gap_tiebreak_no_retention")
 def rule_gap_tiebreak_open(primary, rescue):
     """The proposal with the retention gate removed, which is what it would take for the
     tie-break to reach tcf.20250607 at all."""
-    key = lambda e: (score(e), e["max_gap_s"], -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_tiebreak)
 
 
 @rule("gap_first")
@@ -333,8 +353,7 @@ def rule_gap_first(primary, rescue):
     """Gap ahead of the anomaly score entirely, retention still gating."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (e["max_gap_s"], score(e), -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_first)
 
 
 def replay(rows):
