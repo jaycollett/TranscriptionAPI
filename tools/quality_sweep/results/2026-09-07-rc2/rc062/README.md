@@ -149,3 +149,8 @@ by default: keep `RESCUE_TRANSCRIPT_DIR` on in production, so the discarded pass
 the jobs where it mattered, and revisit this with a human reading a handful of the blocked
 pairs. Nine files is a small enough set to adjudicate by eye, and eye adjudication is the
 only method here that has ever separated the cases correctly.
+
+The reading has been prepared: `docs/review-blocked-rescues-2026-09-11.md` quotes all
+thirty-five contiguous runs of eight or more words that separate the nine pairs, with
+timestamps and context, and holds the recall table above back to an appendix so the
+verdicts are not anchored by it.
