@@ -8,7 +8,7 @@
 requests>=2.32
 pytest>=8.0
 pytest-cov>=5.0
-ruff>=0.5
+ruff>=0.16.6
 # app.py imports Flask and transcribe.py imports numpy at module import time;
 # the tests stub torch, faster-whisper and pydub but need these two for real.
 Flask>=3.1
