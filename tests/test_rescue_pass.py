@@ -6,6 +6,8 @@ extra pass, with previous-text conditioning off and the ladder started above the
 the primary already failed on, and the better of the two kept on the anomaly score.
 """
 
+import json
+
 import pytest
 
 
@@ -516,3 +518,56 @@ def test_the_rescue_columns_migrate_onto_an_older_database(app_module):
     for column in ("rescue_attempted", "rescue_selected"):
         assert app_module.column_exists(cursor, "transcriptions", column)
     conn.close()
+
+
+# ---------------------------------------------------------------------------------
+# Keeping the pass that was not published
+# ---------------------------------------------------------------------------------
+def _pass(label, words, text):
+    return {
+        "label": label,
+        "words": words,
+        "transcript": text,
+        "anomaly_count": 0,
+        "anomaly_windows": 0,
+        "mean_logprob": -0.3,
+        "uncovered_s": 1.0,
+        "uncovered_max_gap_s": 1.0,
+    }
+
+
+def test_retain_both_passes_is_off_by_default(transcribe_module, tmp_path, monkeypatch):
+    """Production sets no directory, so nothing is written and nothing is touched."""
+    monkeypatch.setattr(transcribe_module, "RESCUE_TRANSCRIPT_DIR", "")
+    primary = _pass("primary", 3, "one two three")
+    rescue = _pass("rescue", 2, "one two")
+    transcribe_module.retain_both_passes("g", "/audio/x.mp3", [primary, rescue], primary)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_retain_both_passes_keeps_the_discarded_transcript(
+    transcribe_module, tmp_path, monkeypatch
+):
+    """The refused rescue's text is the thing no other record holds, so it is the
+    thing this has to survive with."""
+    monkeypatch.setattr(transcribe_module, "RESCUE_TRANSCRIPT_DIR", str(tmp_path))
+    primary = _pass("primary", 3, "one two three")
+    rescue = _pass("rescue", 2, "one two")
+    transcribe_module.retain_both_passes("abc-123", "/audio/x.mp3", [primary, rescue], primary)
+
+    written = json.loads((tmp_path / "abc-123.json").read_text())
+    assert written["guid"] == "abc-123"
+    assert written["file"] == "x.mp3"
+    assert written["published"] == "primary"
+    assert [p["label"] for p in written["passes"]] == ["primary", "rescue"]
+    assert [p["transcription"] for p in written["passes"]] == ["one two three", "one two"]
+    assert [p["words"] for p in written["passes"]] == [3, 2]
+
+
+def test_retain_both_passes_never_fails_the_job(transcribe_module, tmp_path, monkeypatch):
+    """A review facility that can lose a transcript is worse than no review facility."""
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("")
+    monkeypatch.setattr(transcribe_module, "RESCUE_TRANSCRIPT_DIR", str(blocker))
+    primary = _pass("primary", 3, "one two three")
+    transcribe_module.retain_both_passes("g", "/audio/x.mp3", [primary], primary)
