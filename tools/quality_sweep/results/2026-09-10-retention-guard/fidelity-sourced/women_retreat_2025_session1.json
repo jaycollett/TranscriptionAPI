@@ -1,0 +1,231 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 6,
+   "left_words": 6,
+   "right_runs": 5,
+   "right_words": 5
+  },
+  "12+": {
+   "left_runs": 2,
+   "left_words": 37,
+   "right_runs": 1,
+   "right_words": 26
+  },
+  "2-3": {
+   "left_runs": 2,
+   "left_words": 4,
+   "right_runs": 6,
+   "right_words": 10
+  },
+  "4-11": {
+   "left_runs": 5,
+   "left_words": 33,
+   "right_runs": 1,
+   "right_words": 11
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -29,
+  "legacy_minus_rescue": -1,
+  "legacy_words": 2226,
+  "primary_words": 2255,
+  "rescue_minus_primary": -28,
+  "rescue_words": 2227
+ },
+ "file": "women_retreat_2025_session1.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "12:01",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5869,
+   "side": "rescue-only",
+   "start_s": 721.17,
+   "text": "in time of need let us then with confidence not groveling with confidence draw near to the throne of grace that we may receive mercy and",
+   "word_index": 1307,
+   "words": 26
+  },
+  {
+   "class": "real content",
+   "clock": "18:18",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.9007,
+   "side": "primary-only",
+   "start_s": 1098.32,
+   "text": "have a cheerful or optimistic view of things often without a valid basis to put on rose colored glasses is according to google to",
+   "word_index": 2031,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "11:38",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5769,
+   "side": "primary-only",
+   "start_s": 698.0,
+   "text": "often on his side but the path to victory in those cases is",
+   "word_index": 1301,
+   "words": 13
+  },
+  {
+   "class": "real content",
+   "clock": "5:00",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.2257,
+   "side": "primary-only",
+   "start_s": 300.94,
+   "text": "presence will go with you and i will give you rest",
+   "word_index": 509,
+   "words": 11
+  },
+  {
+   "class": "real content",
+   "clock": "10:41",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5259,
+   "side": "primary-only",
+   "start_s": 641.51,
+   "text": "he's patient and he often waits for a time of weakness",
+   "word_index": 1186,
+   "words": 11
+  },
+  {
+   "class": "real content",
+   "clock": "15:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.7432,
+   "side": "rescue-only",
+   "start_s": 902.24,
+   "text": "what do we have to do to have peace with god",
+   "word_index": 1655,
+   "words": 11
+  },
+  {
+   "class": "real content",
+   "clock": "7:12",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.3472,
+   "side": "primary-only",
+   "start_s": 432.67,
+   "text": "it or that we deserve",
+   "word_index": 783,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "5:21",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2426,
+   "side": "primary-only",
+   "start_s": 321.93,
+   "text": "god and start with",
+   "word_index": 547,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "5:50",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2687,
+   "side": "primary-only",
+   "start_s": 350.85,
+   "text": "and this is love",
+   "word_index": 606,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "12:01",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5869,
+   "side": "rescue-only",
+   "start_s": 721.17,
+   "text": "in time of need let us then with confidence not groveling with confidence draw near to the throne of grace that we may receive mercy and",
+   "word_index": 1307,
+   "words": 26
+  },
+  {
+   "class": "real content",
+   "clock": "18:18",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.9007,
+   "side": "primary-only",
+   "start_s": 1098.32,
+   "text": "have a cheerful or optimistic view of things often without a valid basis to put on rose colored glasses is according to google to",
+   "word_index": 2031,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "11:38",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5769,
+   "side": "primary-only",
+   "start_s": 698.0,
+   "text": "often on his side but the path to victory in those cases is",
+   "word_index": 1301,
+   "words": 13
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "for",
+   1
+  ],
+  [
+   "our",
+   1
+  ],
+  [
+   "rest",
+   1
+  ],
+  [
+   "all",
+   1
+  ],
+  [
+   "of",
+   1
+  ],
+  [
+   "have",
+   1
+  ],
+  [
+   "god",
+   1
+  ]
+ ],
+ "timings_words": 2255
+}

@@ -1,0 +1,446 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 185,
+   "left_words": 185,
+   "right_runs": 9,
+   "right_words": 9
+  },
+  "12+": {
+   "left_runs": 3,
+   "left_words": 112,
+   "right_runs": 0,
+   "right_words": 0
+  },
+  "2-3": {
+   "left_runs": 58,
+   "left_words": 123,
+   "right_runs": 9,
+   "right_words": 16
+  },
+  "4-11": {
+   "left_runs": 13,
+   "left_words": 74,
+   "right_runs": 4,
+   "right_words": 18
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": 260,
+  "legacy_minus_rescue": 711,
+  "legacy_words": 8056,
+  "primary_words": 7796,
+  "rescue_minus_primary": -451,
+  "rescue_words": 7345
+ },
+ "file": "tcf.20241105.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "23:24",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2656,
+   "max_self_repeat": 1,
+   "position": 0.4593,
+   "side": "primary-only",
+   "start_s": 1404.3,
+   "text": "yeah yeah i was thinking along with lines these are in a lot of ways you know the manager there are standards that we all must comply with or else we'll have serious problems if you don't have like confidentiality agreements if you don't don't violate contracts or whatever right those are things are command oriented but then there's we're going to set the vision for this like what",
+   "word_index": 3581,
+   "words": 69
+  },
+  {
+   "class": "real content",
+   "clock": "29:36",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2105,
+   "max_self_repeat": 1,
+   "position": 0.5818,
+   "side": "primary-only",
+   "start_s": 1776.72,
+   "text": "i just feel like a lot of the council is actually you know appeals to husband as an elder you're actually you're in scripture",
+   "word_index": 4536,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "48:57",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.6429,
+   "max_self_repeat": 1,
+   "position": 0.9841,
+   "side": "primary-only",
+   "start_s": 2937.5,
+   "text": "but ultimately i realize that when the commander's not around under this command your children still make wise decisions",
+   "word_index": 7672,
+   "words": 19
+  },
+  {
+   "class": "real content",
+   "clock": "29:57",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.587,
+   "side": "primary-only",
+   "start_s": 1797.72,
+   "text": "scripture says about this it's like please appeal to this",
+   "word_index": 4576,
+   "words": 10
+  },
+  {
+   "class": "ambiguous",
+   "clock": "39:59",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.8068,
+   "side": "primary-only",
+   "start_s": 2399.15,
+   "text": "you don't go sorry i told this one to work",
+   "word_index": 6290,
+   "words": 10
+  },
+  {
+   "class": "ambiguous",
+   "clock": "22:23",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.4352,
+   "side": "primary-only",
+   "start_s": 1343.42,
+   "text": "what about man's story of the environment for clients",
+   "word_index": 3393,
+   "words": 9
+  },
+  {
+   "class": "ambiguous",
+   "clock": "45:52",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.9238,
+   "side": "primary-only",
+   "start_s": 2752.04,
+   "text": "you know left at some point right yep and",
+   "word_index": 7202,
+   "words": 9
+  },
+  {
+   "class": "real content",
+   "clock": "40:11",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.8075,
+   "side": "rescue-only",
+   "start_s": 2411.48,
+   "text": "and i mean i think that's true in",
+   "word_index": 5931,
+   "words": 8
+  },
+  {
+   "class": "ambiguous",
+   "clock": "28:27",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.5498,
+   "side": "rescue-only",
+   "start_s": 1707.36,
+   "text": "not going to lie to it",
+   "word_index": 4038,
+   "words": 6
+  },
+  {
+   "class": "ambiguous",
+   "clock": "46:06",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.9306,
+   "side": "primary-only",
+   "start_s": 2766.42,
+   "text": "it's it's it's a it's a",
+   "word_index": 7255,
+   "words": 6
+  },
+  {
+   "class": "ambiguous",
+   "clock": "14:20",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2831,
+   "side": "primary-only",
+   "start_s": 860.33,
+   "text": "is a it's it's a",
+   "word_index": 2207,
+   "words": 5
+  },
+  {
+   "class": "ambiguous",
+   "clock": "22:08",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4312,
+   "side": "primary-only",
+   "start_s": 1328.74,
+   "text": "it's a fear pre where",
+   "word_index": 3362,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "43:52",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8788,
+   "side": "rescue-only",
+   "start_s": 2632.55,
+   "text": "start trying to define those",
+   "word_index": 6455,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "4:41",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.0874,
+   "side": "primary-only",
+   "start_s": 281.54,
+   "text": "all right if there's",
+   "word_index": 681,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "14:09",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2792,
+   "side": "primary-only",
+   "start_s": 849.31,
+   "text": "you don't have to",
+   "word_index": 2177,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "14:31",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2864,
+   "side": "primary-only",
+   "start_s": 871.73,
+   "text": "uh it requires somebody",
+   "word_index": 2233,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "28:29",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.5509,
+   "side": "rescue-only",
+   "start_s": 1709.36,
+   "text": "the focus of me",
+   "word_index": 4046,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "31:43",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.6312,
+   "side": "primary-only",
+   "start_s": 1903.16,
+   "text": "they you know if",
+   "word_index": 4921,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "44:19",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.891,
+   "side": "primary-only",
+   "start_s": 2659.64,
+   "text": "you know even i",
+   "word_index": 6946,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "45:55",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9252,
+   "side": "primary-only",
+   "start_s": 2755.38,
+   "text": "i think that is",
+   "word_index": 7213,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "23:24",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2656,
+   "max_self_repeat": 1,
+   "position": 0.4593,
+   "side": "primary-only",
+   "start_s": 1404.3,
+   "text": "yeah yeah i was thinking along with lines these are in a lot of ways you know the manager there are standards that we all must comply with or else we'll have serious problems if you don't have like confidentiality agreements if you don't don't violate contracts or whatever right those are things are command oriented but then there's we're going to set the vision for this like what",
+   "word_index": 3581,
+   "words": 69
+  },
+  {
+   "class": "real content",
+   "clock": "29:36",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2105,
+   "max_self_repeat": 1,
+   "position": 0.5818,
+   "side": "primary-only",
+   "start_s": 1776.72,
+   "text": "i just feel like a lot of the council is actually you know appeals to husband as an elder you're actually you're in scripture",
+   "word_index": 4536,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "48:57",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.6429,
+   "max_self_repeat": 1,
+   "position": 0.9841,
+   "side": "primary-only",
+   "start_s": 2937.5,
+   "text": "but ultimately i realize that when the commander's not around under this command your children still make wise decisions",
+   "word_index": 7672,
+   "words": 19
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "uh",
+   75
+  ],
+  [
+   "um",
+   70
+  ],
+  [
+   "i",
+   7
+  ],
+  [
+   "right",
+   4
+  ],
+  [
+   "it's",
+   3
+  ],
+  [
+   "to",
+   3
+  ],
+  [
+   "you",
+   2
+  ],
+  [
+   "the",
+   2
+  ],
+  [
+   "in",
+   2
+  ],
+  [
+   "he",
+   2
+  ],
+  [
+   "yeah",
+   2
+  ],
+  [
+   "and",
+   2
+  ],
+  [
+   "we're",
+   2
+  ],
+  [
+   "a",
+   1
+  ],
+  [
+   "or",
+   1
+  ],
+  [
+   "that's",
+   1
+  ],
+  [
+   "i'm",
+   1
+  ],
+  [
+   "give",
+   1
+  ],
+  [
+   "good",
+   1
+  ],
+  [
+   "it",
+   1
+  ],
+  [
+   "so",
+   1
+  ],
+  [
+   "but",
+   1
+  ],
+  [
+   "that",
+   1
+  ],
+  [
+   "great",
+   1
+  ],
+  [
+   "hot",
+   1
+  ]
+ ],
+ "timings_words": 7794
+}

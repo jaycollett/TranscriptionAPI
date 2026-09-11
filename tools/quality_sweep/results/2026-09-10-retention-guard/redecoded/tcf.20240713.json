@@ -1,0 +1,149 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 8,
+   "left_words": 8,
+   "right_runs": 7,
+   "right_words": 7
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 2,
+   "right_words": 41
+  },
+  "2-3": {
+   "left_runs": 8,
+   "left_words": 17,
+   "right_runs": 1,
+   "right_words": 2
+  },
+  "4-11": {
+   "left_runs": 2,
+   "left_words": 5,
+   "right_runs": 0,
+   "right_words": 0
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": 53,
+  "legacy_minus_rescue": 33,
+  "legacy_words": 6602,
+  "primary_words": 6549,
+  "rescue_minus_primary": 20,
+  "rescue_words": 6569
+ },
+ "file": "tcf.20240713.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "24:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5823,
+   "side": "rescue-only",
+   "start_s": 1442.08,
+   "text": "i had heard of you by the hearing of the ear but now my eye sees you therefore i despise myself and repent in dust and ashes",
+   "word_index": 3825,
+   "words": 27
+  },
+  {
+   "class": "real content",
+   "clock": "36:30",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2222,
+   "max_self_repeat": 1,
+   "position": 0.9122,
+   "side": "rescue-only",
+   "start_s": 2190.78,
+   "text": "maybe chase after the riches this guy's offering maybe he's trying to manipulate you",
+   "word_index": 5992,
+   "words": 14
+  },
+  {
+   "class": "ambiguous",
+   "clock": "17:05",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4159,
+   "side": "primary-only",
+   "start_s": 1025.97,
+   "text": "god doesn't you know",
+   "word_index": 2724,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "36:32",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9137,
+   "side": "primary-only",
+   "start_s": 2192.75,
+   "text": "so wrecking yeah yeah",
+   "word_index": 5984,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "24:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5823,
+   "side": "rescue-only",
+   "start_s": 1442.08,
+   "text": "i had heard of you by the hearing of the ear but now my eye sees you therefore i despise myself and repent in dust and ashes",
+   "word_index": 3825,
+   "words": 27
+  },
+  {
+   "class": "real content",
+   "clock": "36:30",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2222,
+   "max_self_repeat": 1,
+   "position": 0.9122,
+   "side": "rescue-only",
+   "start_s": 2190.78,
+   "text": "maybe chase after the riches this guy's offering maybe he's trying to manipulate you",
+   "word_index": 5992,
+   "words": 14
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "chapter",
+   2
+  ],
+  [
+   "to",
+   2
+  ],
+  [
+   "as",
+   1
+  ],
+  [
+   "what",
+   1
+  ],
+  [
+   "and",
+   1
+  ],
+  [
+   "summary",
+   1
+  ]
+ ],
+ "timings_words": 6545
+}

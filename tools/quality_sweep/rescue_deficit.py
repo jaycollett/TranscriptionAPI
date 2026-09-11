@@ -290,7 +290,30 @@ def score(entry):
     return entry["anomaly_count"] + entry["anomaly_windows"]
 
 
+# The shipped ordering, and the three variants the tie-break proposal asked for, as
+# named functions so another tool can import the shipped one and apply exactly it.
+def pass_sort_key_words(entry):
+    """0.6.1: fewest anomalies, then most words, then best mean log-probability."""
+    return (score(entry), -entry["words"], -entry["mean_logprob"])
+
+
+def pass_sort_key_gap_tiebreak(entry):
+    """A tie on the anomaly score falls to the smaller uncovered gap."""
+    return (score(entry), entry["max_gap_s"], -entry["words"], -entry["mean_logprob"])
+
+
+def pass_sort_key_gap_first(entry):
+    """The uncovered gap ahead of the anomaly score entirely."""
+    return (entry["max_gap_s"], score(entry), -entry["words"], -entry["mean_logprob"])
+
+
 RULES = {}
+
+
+def _better(primary, rescue, key):
+    """The rescue only displaces the primary on a strict win, as `min` does in
+    `select_pass` where the primary is always first."""
+    return "rescue" if key(rescue) < key(primary) else "primary"
 
 
 def rule(name):
@@ -306,8 +329,7 @@ def rule_shipped(primary, rescue):
     the primary because it is first into `min`."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (score(e), -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_words)
 
 
 @rule("gap_tiebreak")
@@ -316,16 +338,14 @@ def rule_gap_tiebreak(primary, rescue):
     uncovered gap instead of to the primary. The retention gate still runs first."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (score(e), e["max_gap_s"], -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_tiebreak)
 
 
 @rule("gap_tiebreak_no_retention")
 def rule_gap_tiebreak_open(primary, rescue):
     """The proposal with the retention gate removed, which is what it would take for the
     tie-break to reach tcf.20250607 at all."""
-    key = lambda e: (score(e), e["max_gap_s"], -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_tiebreak)
 
 
 @rule("gap_first")
@@ -333,8 +353,7 @@ def rule_gap_first(primary, rescue):
     """Gap ahead of the anomaly score entirely, retention still gating."""
     if not retains_enough_words(primary, rescue):
         return "primary"
-    key = lambda e: (e["max_gap_s"], score(e), -e["words"], -e["mean_logprob"])
-    return "rescue" if key(rescue) < key(primary) else "primary"
+    return _better(primary, rescue, pass_sort_key_gap_first)
 
 
 def replay(rows):
@@ -361,13 +380,47 @@ def replay(rows):
 
 # -------------------------------------------------------------------------------- build
 
+def _files_of(path):
+    """The `files` map of a sweep result document, keyed by recording name."""
+    with open(path) as handle:
+        doc = json.load(handle)
+    return doc["files"] if isinstance(doc, dict) and "files" in doc else doc
+
+
+def load_pair(args):
+    """The primary and rescue transcript maps, from whichever source was given.
+
+    Two sources exist and the caller picks one. `--fidelity` is a *directory* holding the
+    fidelity experiment's `A.json` and `B.json`, which is what the first run of this tool
+    used; passing a single JSON file there fails with `NotADirectoryError` and that
+    mistake cost a session. `--primary-json` and `--rescue-json` name the two documents
+    outright, which is what a decode-only re-run produces and what the error above was
+    reaching for. Giving neither, or a directory that is not one, says so plainly.
+    """
+    if args.primary_json or args.rescue_json:
+        if not (args.primary_json and args.rescue_json):
+            raise SystemExit(
+                "--primary-json and --rescue-json go together; give both or neither")
+        return _files_of(args.primary_json), _files_of(args.rescue_json)
+    if not args.fidelity:
+        raise SystemExit(
+            "give either --fidelity DIR (holding A.json and B.json) or both of "
+            "--primary-json FILE and --rescue-json FILE")
+    if not os.path.isdir(args.fidelity):
+        raise SystemExit(
+            "--fidelity wants the directory holding A.json and B.json, not a file; "
+            "%r is not a directory. To name two transcript documents directly, use "
+            "--primary-json and --rescue-json." % args.fidelity)
+    return (_files_of(os.path.join(args.fidelity, "A.json")),
+            _files_of(os.path.join(args.fidelity, "B.json")))
+
+
 def build(args):
     def load(path):
         with open(path) as handle:
             return json.load(handle)
 
-    shipped = load(os.path.join(args.fidelity, "A.json"))["files"]
-    rescue_cfg = load(os.path.join(args.fidelity, "B.json"))["files"]
+    shipped, rescue_cfg = load_pair(args)
     legacy_raw = load(args.legacy)
 
     name = args.file
@@ -564,23 +617,48 @@ def render(out):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fidelity", required=True)
+    parser.add_argument("--fidelity",
+                        help="directory holding the fidelity A.json and B.json")
+    parser.add_argument("--primary-json",
+                        help="a sweep result document to read the primary transcript from")
+    parser.add_argument("--rescue-json",
+                        help="a sweep result document to read the rescue transcript from")
     parser.add_argument("--legacy", required=True)
     parser.add_argument("--timings")
     parser.add_argument("--candidate")
     parser.add_argument("--primary-only")
     parser.add_argument("--log")
-    parser.add_argument("--file", default="tcf.20250607.mp3")
-    parser.add_argument("--out-json", required=True)
-    parser.add_argument("--out-md", required=True)
+    parser.add_argument("--file", action="append", dest="files",
+                        help="a recording to analyse; repeat for several")
+    parser.add_argument("--out-json")
+    parser.add_argument("--out-md")
+    parser.add_argument("--out-dir",
+                        help="write <stem>.json and <stem>.md per file here; required "
+                             "when more than one --file is given")
     args = parser.parse_args(argv)
 
-    out = build(args)
-    with open(args.out_json, "w") as handle:
-        json.dump(out, handle, indent=1, sort_keys=True)
-    with open(args.out_md, "w") as handle:
-        handle.write(render(out))
-    print("wrote %s and %s" % (args.out_json, args.out_md))
+    names = args.files or ["tcf.20250607.mp3"]
+    if len(names) > 1 and not args.out_dir:
+        raise SystemExit("several --file need --out-dir")
+    if len(names) == 1 and not (args.out_dir or (args.out_json and args.out_md)):
+        raise SystemExit("give --out-dir, or both --out-json and --out-md")
+    if args.out_dir:
+        os.makedirs(args.out_dir, exist_ok=True)
+
+    for name in names:
+        args.file = name
+        out = build(args)
+        if args.out_dir:
+            stem = os.path.splitext(name)[0]
+            out_json = os.path.join(args.out_dir, stem + ".json")
+            out_md = os.path.join(args.out_dir, stem + ".md")
+        else:
+            out_json, out_md = args.out_json, args.out_md
+        with open(out_json, "w") as handle:
+            json.dump(out, handle, indent=1, sort_keys=True)
+        with open(out_md, "w") as handle:
+            handle.write(render(out))
+        print("wrote %s and %s" % (out_json, out_md))
     return 0
 
 

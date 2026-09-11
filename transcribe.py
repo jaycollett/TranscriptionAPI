@@ -10,9 +10,17 @@ uncovered stretch of speech now buys a second decode. The signal was already mea
 and already used, priced for a quarantine gate at 20 s; priced for a second decode it
 belongs at 8. See docs/QUALITY_PROPOSAL.md section 4.4 and
 tools/quality_sweep/results/2026-09-08-fidelity/.
+
+0.6.2 changes no decision. It seeds the sampler per job (RESCUE_SEED_MODE) so the
+rescue is a reproducible draw rather than an unrecorded one, and keeps both passes on
+disk when a rescue runs (RESCUE_TRANSCRIPT_DIR, off by default). The retention guard
+and the selection ordering are untouched: see
+docs/analysis-retention-guard-2026-09-10.md for why, and for where the lever that does
+move the outcome actually is.
 """
 
 import difflib
+import hashlib
 import json
 import logging
 import math
@@ -255,6 +263,48 @@ RESCUE_MIN_WORD_RETENTION = _env_float("RESCUE_MIN_WORD_RETENTION", 0.99)
 # loss, which is larger than the two Psalm 91 runs (61 and 58 words) whose loss
 # motivated this whole rewrite. Both conditions have to hold.
 RESCUE_MAX_WORD_LOSS = _env_int("RESCUE_MAX_WORD_LOSS", 40)
+# Where to keep the pass that was not published, when a rescue runs.
+#
+# Only the selected pass survives a job: the other one is decoded, compared, scored and
+# then dropped on the floor. That cost a whole session. The 0.6.1 corpus run recorded
+# that nine rescues were refused and by how many words, but not what either transcript
+# said, so the question of whether those refusals threw away content could not be
+# answered from disk and needed the audio decoded a second time.
+#
+# Set this to a directory and every job that runs a rescue drops one JSON file there
+# holding both transcripts and both sets of counts. Unset, which is the default and is
+# what production runs, nothing is written and nothing changes. It is a review facility
+# for sweeps, so a failure to write it must never fail the job.
+RESCUE_TRANSCRIPT_DIR = os.getenv("RESCUE_TRANSCRIPT_DIR", "").strip()
+
+# Seeding the sampler.
+#
+# The rescue decodes from temperature 0.2, and above 0.0 faster-whisper samples rather
+# than beam-searches, so the rescue is a draw from a distribution and nothing seeded it.
+# The cost was measured on 2026-09-10: selection differed on two of eleven recordings
+# between two runs of the same build, and on tcf.20240713 a 67 word swing between two
+# draws of the same rescue flipped the shipped decision from refuse to publish. While
+# the input to a quality rule is a random draw nobody recorded, no quality rule in this
+# service can be validated.
+#
+# "guid", the default, derives the seed from the job GUID. "off" restores the previous
+# behaviour, so seeding can be withdrawn on a running container if it ever proves
+# harmful, without a rebuild.
+#
+# Why per-identifier and not a constant: a constant seed would fix every recording to
+# the same corner of the sampler, and the standing objection to seeding, that it could
+# be systematically worse on some material, would be fair. A per-GUID seed keeps the
+# draws as varied across the archive as they are now, and makes each individual sermon
+# reproducible. Each recording is decoded once either way; unseeded only means nobody
+# can say which draw it got.
+_SEED_MODES = ("guid", "off")
+RESCUE_SEED_MODE = os.getenv("RESCUE_SEED_MODE", "guid").strip().lower() or "guid"
+if RESCUE_SEED_MODE not in _SEED_MODES:
+    logger.warning(
+        f"RESCUE_SEED_MODE={RESCUE_SEED_MODE!r} is not one of {_SEED_MODES}; "
+        f"using the default 'guid'"
+    )
+    RESCUE_SEED_MODE = "guid"
 
 # Boundary de-duplication.
 #
@@ -1248,6 +1298,52 @@ def retains_enough_words(primary, candidate):
     )
 
 
+def retain_both_passes(guid, file_path, passes, selected):
+    """Write both decoded passes to `RESCUE_TRANSCRIPT_DIR`, when one is configured.
+
+    The published transcript is recoverable from the database; the pass that lost is
+    recoverable from nowhere, and it is exactly the thing anyone reviewing the retention
+    guard needs. One file per job, named for the GUID, holding the text and the counts
+    for every pass that ran and which one was published.
+
+    No-op unless the directory is set, and every failure is swallowed: this exists to
+    make a past run reviewable, and no review facility is worth losing a transcript over.
+    """
+    if not RESCUE_TRANSCRIPT_DIR:
+        return
+    try:
+        os.makedirs(RESCUE_TRANSCRIPT_DIR, exist_ok=True)
+        record = {
+            "guid": guid,
+            "file": os.path.basename(file_path or ""),
+            "published": selected["label"],
+            "passes": [
+                {
+                    "label": p["label"],
+                    "words": p["words"],
+                    "anomaly_count": p["anomaly_count"],
+                    "anomaly_windows": p["anomaly_windows"],
+                    "mean_logprob": p["mean_logprob"],
+                    "uncovered_s": p["uncovered_s"],
+                    "uncovered_max_gap_s": p["uncovered_max_gap_s"],
+                    "seed": p.get("seed"),
+                    "transcription": p["transcript"],
+                }
+                for p in passes
+            ],
+        }
+        path = os.path.join(RESCUE_TRANSCRIPT_DIR, f"{guid}.json")
+        with open(path, "w") as handle:
+            json.dump(record, handle, indent=1, sort_keys=True)
+        logger.info(
+            f"Kept both passes for {guid} at {path}: "
+            + ", ".join(f"{p['label']} {p['words']} words" for p in passes)
+            + f", published the {selected['label']}"
+        )
+    except Exception as exc:  # noqa: BLE001 - a review file must never fail a job
+        logger.warning(f"Could not keep both passes for {guid}: {exc}")
+
+
 def select_pass(passes):
     """Pick the best of the decoded passes.
 
@@ -1275,6 +1371,65 @@ def select_pass(passes):
                 f"against {primary['anomaly_count'] + primary['anomaly_windows']}"
             )
     return min(eligible, key=pass_sort_key)
+
+
+# ---------------------------------------------------------------------------------
+# Seeding
+# ---------------------------------------------------------------------------------
+# CTranslate2 reserves the largest unsigned 32 bit value as its "no seed was set"
+# sentinel and draws from the system generator when it sees it, so a derived seed has
+# to stay clear of that one value or it would silently mean the opposite of seeding.
+SEED_MODULUS = 2**32 - 1
+
+
+def seed_for_guid(guid):
+    """The decoder seed this job runs under, or None when seeding is off.
+
+    blake2b over the GUID bytes rather than Python's `hash()`: `hash()` is salted per
+    process, so the same GUID would seed differently in every worker and in every
+    restart, which is precisely the reproducibility this exists to provide. The
+    derivation is pinned by a test against an expected value, because changing it
+    silently would change every transcript the service produces from then on.
+    """
+    if RESCUE_SEED_MODE != "guid":
+        return None
+    digest = hashlib.blake2b(str(guid or "").encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "big") % SEED_MODULUS
+
+
+def apply_decode_seed(guid):
+    """Seed the decoder for `guid` and return the seed, or None when nothing was set.
+
+    Called immediately before every decode, primary and rescue alike. The primary
+    beam-searches from temperature 0.0 and is already deterministic, so seeding it
+    changes nothing; doing it uniformly is simpler than reasoning about which pass
+    samples, and it keeps the whole job reproducible if the primary's base temperature
+    is ever raised.
+
+    `ctranslate2.set_random_seed` is process-global, which is safe here because the
+    worker is single threaded and decodes one job at a time: app.py starts exactly one
+    `transcription-worker` thread, `worker_cycle` claims a single pending job and runs
+    it to completion before looking for the next, and the model is loaded with
+    `num_workers=1`. No two decodes are ever in flight in one process.
+    `tests/test_seeded_sampler.py` asserts that, so a future change to the assumption
+    fails a test rather than quietly randomising the archive again.
+
+    ctranslate2 is imported here rather than at module scope so the unit tests, which
+    stub the GPU stack, do not have to carry it. A failure to seed is logged and the
+    job continues: an unseeded transcript is the behaviour of every release up to 0.6.1
+    and is worth less than a refused job.
+    """
+    seed = seed_for_guid(guid)
+    if seed is None:
+        return None
+    try:
+        import ctranslate2  # noqa: PLC0415 - kept out of the module import for the tests
+
+        ctranslate2.set_random_seed(seed)
+    except Exception as exc:  # noqa: BLE001 - an unseeded decode beats a failed job
+        logger.warning(f"Could not seed the decoder for {guid}: {exc}")
+        return None
+    return seed
 
 
 # ---------------------------------------------------------------------------------
@@ -1364,6 +1519,9 @@ def transcribe_audio(file_path, guid):
     def run_pass(kwargs, label):
         """Decode once and score the result; returns (record, speech_seconds)."""
         decode_start = time.time()
+        # Immediately before the decode, so nothing between here and the sampler can
+        # consume draws from the generator and shift the result.
+        seed = apply_decode_seed(guid)
         try:
             raw_segments, info = model.transcribe(source, **kwargs)
             segments = [serialize_segment(s) for s in raw_segments]
@@ -1376,6 +1534,7 @@ def transcribe_audio(file_path, guid):
         record = summarize_pass(segments, duration_sec, label,
                                 speech_intervals=speech_intervals, guid=guid)
         record["decode_seconds"] = round(time.time() - decode_start, 2)
+        record["seed"] = seed
         # Prefer our own intervals: they are the basis coverage is measured on, so the
         # ratio below is bounded by construction. duration_after_vad is the fallback
         # when the detector could not run.
@@ -1387,7 +1546,8 @@ def transcribe_audio(file_path, guid):
         covered = record["covered_s"]
         ratio = covered / speech if speech > 0 else 0.0
         logger.info(
-            f"{label} pass for {guid} in {record['decode_seconds']:.2f}s: {record['words']} words, "
+            f"{label} pass for {guid} in {record['decode_seconds']:.2f}s "
+            f"(seed={'off' if seed is None else seed}): {record['words']} words, "
             f"{len(record['segments'])} segments covering {covered:.1f}s of {speech:.1f}s speech "
             f"(coverage_ratio={ratio:.3f} uncovered_total_s={record['uncovered_s']} "
             f"uncovered_max_gap_s={record['uncovered_max_gap_s']}), "
@@ -1423,6 +1583,7 @@ def transcribe_audio(file_path, guid):
     selected = select_pass(passes)
     rescue_selected = selected["label"] == "rescue"
     if rescue_attempted:
+        retain_both_passes(guid, file_path, passes, selected)
         # The directional cross-check, against the pass that is actually published.
         unpublished_run = longest_unpublished_run(selected["transcript"], rescue["transcript"])
         if rescue_selected:
@@ -1449,6 +1610,8 @@ def transcribe_audio(file_path, guid):
         f"rescue_triggers={'+'.join(triggers) if triggers else 'none'}, "
         f"rescue_selected={rescue_selected}, "
         f"rescue_unpublished_run={unpublished_run}, "
+        f"seed={'off' if selected.get('seed') is None else selected['seed']}, "
+        f"seed_mode={RESCUE_SEED_MODE}, "
         f"anomaly_count={selected['anomaly_count']}, "
         f"anomaly_windows={selected['anomaly_windows']}, "
         f"primary_uncovered_max_gap_s={primary['uncovered_max_gap_s']}"
@@ -1469,6 +1632,10 @@ def transcribe_audio(file_path, guid):
         # review field only: nothing downstream branches on it.
         "rescue_triggers": "+".join(triggers),
         "rescue_selected": rescue_selected,
+        # The seed the published pass decoded under, or None when seeding is off. It is
+        # what makes a published transcript reproducible, so it is carried out of the
+        # decode as well as logged.
+        "seed": selected.get("seed"),
         # The directional cross-check. None when no rescue ran, since it takes two
         # decodes and no second decode is run to obtain it.
         "rescue_unpublished_run": unpublished_run,

@@ -1,0 +1,225 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 219,
+   "left_words": 219,
+   "right_runs": 11,
+   "right_words": 11
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 1,
+   "right_words": 59
+  },
+  "2-3": {
+   "left_runs": 52,
+   "left_words": 109,
+   "right_runs": 3,
+   "right_words": 4
+  },
+  "4-11": {
+   "left_runs": 3,
+   "left_words": 12,
+   "right_runs": 1,
+   "right_words": 4
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -135,
+  "legacy_minus_rescue": 127,
+  "legacy_words": 9870,
+  "primary_words": 10005,
+  "rescue_minus_primary": -262,
+  "rescue_words": 9743
+ },
+ "file": "tcf.20211203.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "43:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.6398,
+   "side": "rescue-only",
+   "start_s": 2582.63,
+   "text": "but you're a chosen race a royal priesthood a holy nation a people for his own possession that you may proclaim the excellencies of him who called you out of darkness into his marvelous light once you were not a people but now you are god's people once you would not receive mercy but now you have received mercy",
+   "word_index": 6234,
+   "words": 59
+  },
+  {
+   "class": "real content",
+   "clock": "52:04",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.8013,
+   "side": "rescue-only",
+   "start_s": 3124.29,
+   "text": "because that's something god has been",
+   "word_index": 7807,
+   "words": 6
+  },
+  {
+   "class": "ambiguous",
+   "clock": "9:47",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.1458,
+   "side": "primary-only",
+   "start_s": 587.07,
+   "text": "i uh for about",
+   "word_index": 1459,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "32:17",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4678,
+   "side": "primary-only",
+   "start_s": 1937.68,
+   "text": "i just need to",
+   "word_index": 4680,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "63:51",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9882,
+   "side": "primary-only",
+   "start_s": 3831.89,
+   "text": "what i think and",
+   "word_index": 9887,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "43:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.6398,
+   "side": "rescue-only",
+   "start_s": 2582.63,
+   "text": "but you're a chosen race a royal priesthood a holy nation a people for his own possession that you may proclaim the excellencies of him who called you out of darkness into his marvelous light once you were not a people but now you are god's people once you would not receive mercy but now you have received mercy",
+   "word_index": 6234,
+   "words": 59
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "um",
+   131
+  ],
+  [
+   "uh",
+   27
+  ],
+  [
+   "i",
+   12
+  ],
+  [
+   "and",
+   10
+  ],
+  [
+   "that's",
+   3
+  ],
+  [
+   "that",
+   3
+  ],
+  [
+   "of",
+   3
+  ],
+  [
+   "to",
+   3
+  ],
+  [
+   "just",
+   3
+  ],
+  [
+   "if",
+   2
+  ],
+  [
+   "the",
+   2
+  ],
+  [
+   "it's",
+   2
+  ],
+  [
+   "hey",
+   1
+  ],
+  [
+   "got",
+   1
+  ],
+  [
+   "about",
+   1
+  ],
+  [
+   "20",
+   1
+  ],
+  [
+   "preach",
+   1
+  ],
+  [
+   "up",
+   1
+  ],
+  [
+   "meet",
+   1
+  ],
+  [
+   "add",
+   1
+  ],
+  [
+   "where",
+   1
+  ],
+  [
+   "those",
+   1
+  ],
+  [
+   "we're",
+   1
+  ],
+  [
+   "you",
+   1
+  ],
+  [
+   "there",
+   1
+  ]
+ ],
+ "timings_words": 10005
+}

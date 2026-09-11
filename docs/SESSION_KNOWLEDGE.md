@@ -1265,3 +1265,103 @@ three things: no file loses words to a selected rescue, the retention floor stil
 the cases it was built for, and `agree250` does not move. The firing rate above is a
 prediction from the 2026-09-07 and 2026-09-08 result sets, not a measurement of this
 code.
+
+## 2026-09-10 The rescue retention guard is not what refuses rescues
+
+Worked the open retention-guard question end to end. Three things are worth keeping.
+
+**Two word-count gates sit in series, and neither can be changed alone.**
+`retains_enough_words` is a hard pre-filter in `select_pass`, and the ordering that runs
+after it is `(anomaly score, -words, -mean logprob)`. Of the nine rescues the 0.6.1 corpus
+run refused, removing the retention guard entirely changes zero outcomes: seven are tied
+on the anomaly score and lose on `-words`, and two lose on the anomaly score. Any proposal
+that replaces one gate while leaving the other is a no-op. Two earlier reports each blamed
+one of the two gates; both were half right and both recommendations were dead ends.
+
+**Word count was the wrong instrument again, but not always.** On six of the nine refusals
+the primary held no corroborated contiguous run of even twelve words while the rescue held
+a scripture reading at full legacy n-gram coverage: Colossians 1:11-12, 1 Peter 2:9-10,
+Ephesians 4:11, Exodus 24, Job 42:5-6 and 1 Peter 1:22. Four are on the list of eight
+passages the quality proposal says are missing from current transcripts, so they were
+transcribed and then discarded. But on `tcf.20241105` the primary held 69, 24 and 19 word
+corroborated runs the rescue lost and the rescue held nothing above eight words, and the
+guard was right. Conservative refusal is not always wrong; it was wrong six times in nine.
+
+**The rescue sampler's draw-to-draw variance is large enough to change what is published.**
+Re-decoding three refused files, the primary reproduced the corpus run to within two words
+every time, being a deterministic beam search, while the rescue came out 67, 106 and 42
+words away from the corpus draw. On `tcf.20240713` that flipped the decision from refuse
+to publish. No quality rule in this service can be validated while the input to the rule
+is a coin flip. The recommendation is to seed from a hash of the job GUID, not from a
+constant: per-GUID keeps the draws as varied across the archive as they are now while
+making each one reproducible, and `ctranslate2.set_random_seed` is available in the 4.8.0
+the image ships.
+
+`RESCUE_TRANSCRIPT_DIR` now exists in `transcribe.py`: set it and a job that runs a rescue
+writes both transcripts and both sets of counts to a JSON file. Off by default. The 0.6.1
+corpus run stored the word counts of both passes but the text of neither, which is why
+this question needed the audio decoded a second time.
+
+Full analysis: `docs/analysis-retention-guard-2026-09-10.md`.
+
+## 2026-09-10 - 0.6.2: the sampler is seeded per job, and nothing else changes
+
+One behavioural change, plus the retention facility the analysis produced.
+
+**What shipped.**
+
+- `RESCUE_SEED_MODE`, default `guid`. Every decode, primary and rescue alike, is seeded
+  immediately before it runs from `blake2b(guid, digest_size=8)` reduced modulo
+  `2**32 - 1`, via `ctranslate2.set_random_seed(seed)`. Set it to `off` to restore the
+  0.6.1 behaviour on a running container without a rebuild.
+- `RESCUE_TRANSCRIPT_DIR`, unset by default, merged from the retention-guard branch. A
+  job that runs a rescue writes both transcripts, both sets of counts and now the seed
+  to one JSON file, so a discarded transcript is reviewable and reproducible from disk.
+- The retention guard is unchanged. The selection ordering is unchanged.
+
+**Why per-identifier rather than a constant.** A constant seed would fix every recording
+to the same corner of the sampler, and the standing objection to seeding, that it might
+be systematically worse on some material, would be fair. A per-GUID seed keeps the draws
+as varied across the archive as they are today while making each individual sermon
+reproducible. Each recording is decoded once either way; unseeded only ever meant that
+nobody could say which draw it got. The variety that matters is across the archive, not
+across hypothetical re-decodes of one file that never happen.
+
+**Why blake2b and not `hash()`.** Python salts `hash()` per process, so the same GUID
+would seed differently in every worker and after every restart, which is the one thing
+this must not do. The derivation is pinned by a test against an expected value:
+`f5e593e9-c7b8-4809-a476-2a82d7b613f3` must seed 2700934071. Changing the derivation
+changes every transcript decoded from then on, so it must not be possible to change it
+by accident during a refactor.
+
+**The seed call is process-global, and that is safe only because the worker is not
+concurrent.** `ctranslate2.set_random_seed` seeds the generator, not a call. app.py
+starts exactly one `transcription-worker` thread, `worker_cycle` claims one pending job
+and runs it to completion before looking for the next, and the model is loaded with
+`num_workers=1`. If a second decoding thread or a pool is ever added, two jobs interleave
+and each reseeds the generator the other is drawing from, with no visible symptom.
+`tests/test_seeded_sampler.py` parses app.py and asserts the only thread it constructs
+targets `transcription_worker`, so that assumption fails a test rather than quietly
+returning the archive to unrecorded draws.
+
+**The consequence that has to be paid, not argued away.** The seven measured recoveries
+of 0.6.1 were obtained unseeded. They are a property of draws that will never be drawn
+again. They must be re-measured under seeding before any further quality rule is judged
+against them, and that means a fresh hundred-file corpus run on this build establishing
+firing rate, selection rate, genuine recoveries and any file losing more than five
+percent, exactly as 0.6.1 was validated. Until that run exists, no 0.6.1 quality figure
+should be quoted as a baseline for 0.6.2.
+
+**Why this release deliberately contains no quality change.** The analysis identified the
+lever that moves the outcome: `content_first`, ranking corroborated contiguous content
+ahead of raw words inside the selection ordering, which gains five rescues and loses none
+in replay. It is not here. Shipping it in the same release as seeding would mean
+measuring a new selection rule against a baseline drawn from a sampler that was itself
+changing, and the whole point of 0.6.2 is to make the next measurement trustworthy. The
+ordering change is a separate release, and it needs the corpus run above to come first.
+
+**Logging.** Each pass line carries `seed=`, and the completion line carries `seed=` and
+`seed_mode=`, so a published transcript can be reproduced exactly from production logs.
+`transcribe_audio` also returns `seed` among its diagnostics.
+
+**Validation still owed.** All of the above is unit-level. No GPU ran in this release.
