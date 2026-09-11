@@ -18,6 +18,12 @@ The three things worth carrying forward:
 
 Progress log, newest last:
 
+- 2026-09-11 The nine blocked pairs prepared for reading by eye, in
+  `docs/review-blocked-rescues-2026-09-11.md`. The 0.6.2 seeded run changes the membership
+  of the nine: `tcf.20240713` now selects its rescue and `tcf.20210210` is refused in its
+  place. Thirty-five one-sided runs of eight words or more across the nine, quoted in full.
+  No verdicts recorded yet.
+
 - 2026-09-10 Counts reconciled. 20 rescues fired, 11 selected, **9 refused**, not six.
   The "six refused" table below was a subset and is corrected in place.
 - 2026-09-10 Fidelity coverage checked. Six of the nine refused rescues already have

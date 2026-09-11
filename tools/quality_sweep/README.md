@@ -263,3 +263,24 @@ image reports the new fields as absent rather than as clean.
 
 `tests/test_quality_sweep.py` covers the stratum boundaries, the selection rules, and
 every piece of the analyzer's arithmetic against small fixtures.
+
+## The fidelity experiment (2026-09-07)
+
+A second, smaller run that answers the three items 0.6.0 left open, and introduces the
+first non-relative measurement this project has had.
+
+| file | what it is |
+|---|---|
+| `scripture.py` | the scripture benchmark: finds read-aloud passages, fetches public-domain reference text, scores a transcript by the word error rate of the reference against its best-matching stretch |
+| `scripture_passages.json` | the 17 committed benchmark passages across 13 recordings |
+| `scripture_cache.json` | the reference chapters, committed so scoring needs no network |
+| `select_fidelity_set.py` | picks the 32 recordings and, per configuration, the subset that can move it |
+| `fidelity_file_list.json` | the committed selection |
+| `fidelity_pass.py` | decodes one configuration, applied as an overlay on the image's own module rather than by editing it |
+| `fidelity_analyze.py` | joins the passes, one open item at a time |
+| `agreement.py` | whether disagreement between two decodes predicts a bad transcript |
+| `replicate.py` | the noise floor: the shipped configuration against itself |
+
+Read `results/2026-09-07-fidelity/README.md` first; it states the design, the isolation
+guarantees and, in particular, the caveat that makes the scripture word error rates
+comparable between configurations and meaningless as absolute accuracy.

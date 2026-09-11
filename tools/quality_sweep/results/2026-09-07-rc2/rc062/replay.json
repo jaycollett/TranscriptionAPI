@@ -1,0 +1,785 @@
+{
+ "summary": {
+  "rescues": 20,
+  "flips": 0,
+  "flips_better": 0,
+  "flips_worse": 0,
+  "flips_indifferent": 0,
+  "better_files": [],
+  "worse_files": [],
+  "total_recall_gain": 0
+ },
+ "rows": [
+  {
+   "guid": "06890171-22bb-5c91-9775-09e05e544999",
+   "file": "women_retreat_2025_session1.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.9545,
+   "recall_content_first": 0.9545,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 2245,
+     "anomaly_score": 0,
+     "corroborated_run": 8,
+     "uncorroborated_run": 14,
+     "legacy_recall": 0.9545,
+     "seed": 1858691192,
+     "eligible": true,
+     "excerpt": "foot from being caught larry my husband says"
+    },
+    {
+     "label": "rescue",
+     "words": 2217,
+     "anomaly_score": 0,
+     "corroborated_run": 14,
+     "uncorroborated_run": 14,
+     "legacy_recall": 0.98626,
+     "seed": 1858691192,
+     "eligible": false,
+     "excerpt": "him or please him second corinthians 3 4 such is the confidence that we"
+    }
+   ]
+  },
+  {
+   "guid": "0831b33c-7f8b-524f-96ff-0945fd09bd80",
+   "file": "tcf.20240621.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.97922,
+   "recall_content_first": 0.97922,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 4417,
+     "anomaly_score": 5,
+     "corroborated_run": 9,
+     "uncorroborated_run": 9,
+     "legacy_recall": 0.94827,
+     "seed": 683125825,
+     "eligible": true,
+     "excerpt": "life in the flesh we'll reap the poisonous crops"
+    },
+    {
+     "label": "rescue",
+     "words": 4560,
+     "anomaly_score": 0,
+     "corroborated_run": 94,
+     "uncorroborated_run": 94,
+     "legacy_recall": 0.97922,
+     "seed": 683125825,
+     "eligible": true,
+     "excerpt": "from it verse 6 let the one who has taught the word share all good things with the one who teaches do not be deceived god is not"
+    }
+   ]
+  },
+  {
+   "guid": "08c6c415-b803-5b16-bd4d-7292984cbd5d",
+   "file": "tcf.20240412.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.97843,
+   "recall_content_first": 0.97843,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 3357,
+     "anomaly_score": 0,
+     "corroborated_run": 59,
+     "uncorroborated_run": 59,
+     "legacy_recall": 0.97843,
+     "seed": 2886448881,
+     "eligible": true,
+     "excerpt": "says in verse 12 but moses hands grew weary so they took a stone and put it under him and he sat on it while aaron and hur"
+    },
+    {
+     "label": "rescue",
+     "words": 3340,
+     "anomaly_score": 0,
+     "corroborated_run": 21,
+     "uncorroborated_run": 21,
+     "legacy_recall": 0.96809,
+     "seed": 2886448881,
+     "eligible": true,
+     "excerpt": "take that upon them i'll tell you about a time that i was admonished and needed it many of you know"
+    }
+   ]
+  },
+  {
+   "guid": "14cd4533-95e4-529f-8eb4-470c2e27bd85",
+   "file": "tcf.20210604.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.97699,
+   "recall_content_first": 0.97699,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 4497,
+     "anomaly_score": 0,
+     "corroborated_run": 10,
+     "uncorroborated_run": 10,
+     "legacy_recall": 0.98291,
+     "seed": 888294943,
+     "eligible": true,
+     "excerpt": "our 30th president was it was calvin coolidge so this"
+    },
+    {
+     "label": "rescue",
+     "words": 4536,
+     "anomaly_score": 0,
+     "corroborated_run": 10,
+     "uncorroborated_run": 10,
+     "legacy_recall": 0.97699,
+     "seed": 888294943,
+     "eligible": true,
+     "excerpt": "the sin so colossians 3 5 says put to death"
+    }
+   ]
+  },
+  {
+   "guid": "20e01b71-7f85-5850-990e-e9f7d0bfc546",
+   "file": "tcf.20240713.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.95876,
+   "recall_content_first": 0.95876,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 6532,
+     "anomaly_score": 1,
+     "corroborated_run": 48,
+     "uncorroborated_run": 61,
+     "legacy_recall": 0.97188,
+     "seed": 2990944010,
+     "eligible": true,
+     "excerpt": "verse 2 it says when the lord first spoke through hosea the lord said to hosea go take to yourself a wife of whoredom and have children of"
+    },
+    {
+     "label": "rescue",
+     "words": 6502,
+     "anomaly_score": 0,
+     "corroborated_run": 24,
+     "uncorroborated_run": 30,
+     "legacy_recall": 0.95876,
+     "seed": 2990944010,
+     "eligible": true,
+     "excerpt": "hearing of the ear but now my eye sees you therefore i despise myself and repent in dust and ashes job went through all"
+    }
+   ]
+  },
+  {
+   "guid": "24d43772-1a0b-5049-9889-f9616637adb6",
+   "file": "ucf20211106b.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.86863,
+   "recall_content_first": 0.86863,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 5050,
+     "anomaly_score": 1,
+     "corroborated_run": 13,
+     "uncorroborated_run": 17,
+     "legacy_recall": 0.86863,
+     "seed": 554419906,
+     "eligible": true,
+     "excerpt": "for us so ephesians 2 12 ephesians 2 12 says remember that you"
+    },
+    {
+     "label": "rescue",
+     "words": 4977,
+     "anomaly_score": 1,
+     "corroborated_run": 15,
+     "uncorroborated_run": 15,
+     "legacy_recall": 0.92131,
+     "seed": 554419906,
+     "eligible": false,
+     "excerpt": "verse 22 22 they believed their hearts were cleansed they were able to love people"
+    }
+   ]
+  },
+  {
+   "guid": "380eeb97-a12a-591f-ac1a-bc57e80b0970",
+   "file": "tcf.20211203.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.88968,
+   "recall_content_first": 0.88968,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 9996,
+     "anomaly_score": 0,
+     "corroborated_run": 23,
+     "uncorroborated_run": 26,
+     "legacy_recall": 0.88968,
+     "seed": 784867763,
+     "eligible": true,
+     "excerpt": "bel air every night and so so again i'm you know going into this like memorizing 16 verses is like how am i"
+    },
+    {
+     "label": "rescue",
+     "words": 9725,
+     "anomaly_score": 1,
+     "corroborated_run": 64,
+     "uncorroborated_run": 74,
+     "legacy_recall": 0.85645,
+     "seed": 784867763,
+     "eligible": false,
+     "excerpt": "says but you're a chosen race a royal priesthood a holy nation a people for his own possession that you may proclaim the excellencies of him who called"
+    }
+   ]
+  },
+  {
+   "guid": "39cda59f-99ac-5172-9796-44dc8f801c05",
+   "file": "tcf.20221203.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.91027,
+   "recall_content_first": 0.91027,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 9695,
+     "anomaly_score": 0,
+     "corroborated_run": 13,
+     "uncorroborated_run": 77,
+     "legacy_recall": 0.91027,
+     "seed": 3510497010,
+     "eligible": true,
+     "excerpt": "able to like for he can like you know you look at patrick"
+    },
+    {
+     "label": "rescue",
+     "words": 9478,
+     "anomaly_score": 1,
+     "corroborated_run": 32,
+     "uncorroborated_run": 32,
+     "legacy_recall": 0.96158,
+     "seed": 3510497010,
+     "eligible": false,
+     "excerpt": "at work i report to two different directors i would hope they would talk to the directors at work maybe talk to some of my colleagues you know"
+    }
+   ]
+  },
+  {
+   "guid": "648a1e84-e6ee-5420-8593-1deb79ff04f2",
+   "file": "tcf.20260724.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.95433,
+   "recall_content_first": 0.95433,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 4425,
+     "anomaly_score": 0,
+     "corroborated_run": 87,
+     "uncorroborated_run": 88,
+     "legacy_recall": 0.95433,
+     "seed": 2695884061,
+     "eligible": true,
+     "excerpt": "so verse 10 i rejoiced in the lord greatly that now at length you have revived your concern for me you were indeed concerned for me but you"
+    },
+    {
+     "label": "rescue",
+     "words": 4419,
+     "anomaly_score": 1,
+     "corroborated_run": 34,
+     "uncorroborated_run": 34,
+     "legacy_recall": 0.95616,
+     "seed": 2695884061,
+     "eligible": true,
+     "excerpt": "be anxious about anything but in everything by prayer and supplication with thanksgiving let your requests be made known to god and the peace of god which surpasses"
+    }
+   ]
+  },
+  {
+   "guid": "85882584-d474-5bff-8fc7-1ed3a13dc0e1",
+   "file": "tcf.202606623b.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.96679,
+   "recall_content_first": 0.96679,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 1306,
+     "anomaly_score": 1,
+     "corroborated_run": 25,
+     "uncorroborated_run": 28,
+     "legacy_recall": 0.93283,
+     "seed": 2104370031,
+     "eligible": true,
+     "excerpt": "5 for what we proclaim is not ourselves but jesus christ as lord with ourselves as your servants for jesus sake so those are the"
+    },
+    {
+     "label": "rescue",
+     "words": 1348,
+     "anomaly_score": 0,
+     "corroborated_run": 57,
+     "uncorroborated_run": 57,
+     "legacy_recall": 0.96679,
+     "seed": 2104370031,
+     "eligible": true,
+     "excerpt": "and he says this when the apostles saw that i had been entrusted with the gospel to the uncircumcised just as peter had been entrusted with the gospel"
+    }
+   ]
+  },
+  {
+   "guid": "8875f0b2-a9d3-5083-ac9d-c0500c4d56c9",
+   "file": "tcf.20150424.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.82393,
+   "recall_content_first": 0.82393,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 7060,
+     "anomaly_score": 0,
+     "corroborated_run": 84,
+     "uncorroborated_run": 99,
+     "legacy_recall": 0.82393,
+     "seed": 2215909889,
+     "eligible": true,
+     "excerpt": "got to back up let no one disqualify you insisting on asceticism and worship of angels going on in detail about visions puffed up without reason by his"
+    },
+    {
+     "label": "rescue",
+     "words": 6975,
+     "anomaly_score": 1,
+     "corroborated_run": 48,
+     "uncorroborated_run": 48,
+     "legacy_recall": 0.80976,
+     "seed": 2215909889,
+     "eligible": false,
+     "excerpt": "1 12 he says may you be strengthened with all power according to his glorious might for all endurance and patience with joy verse 12 giving thanks to"
+    }
+   ]
+  },
+  {
+   "guid": "89781cf4-8316-5e25-85aa-a587c8896323",
+   "file": "tcf.20250607.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.79564,
+   "recall_content_first": 0.79564,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 7815,
+     "anomaly_score": 1,
+     "corroborated_run": 61,
+     "uncorroborated_run": 85,
+     "legacy_recall": 0.79564,
+     "seed": 1578195993,
+     "eligible": true,
+     "excerpt": "public is there anything to say about it seems like when i'm reading or praying i almost think well i don't need to put a bunch of pressure"
+    },
+    {
+     "label": "rescue",
+     "words": 7506,
+     "anomaly_score": 1,
+     "corroborated_run": 55,
+     "uncorroborated_run": 108,
+     "legacy_recall": 0.90086,
+     "seed": 1578195993,
+     "eligible": false,
+     "excerpt": "tribes of israel and he sent young men of the people of israel who offered burnt offerings and sacrificed peace offerings and oxen to the lord and moses"
+    }
+   ]
+  },
+  {
+   "guid": "94ef64b2-f5e7-58be-a1c9-eeddda91b550",
+   "file": "tcf.20260428.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.90902,
+   "recall_content_first": 0.90902,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 13470,
+     "anomaly_score": 0,
+     "corroborated_run": 16,
+     "uncorroborated_run": 19,
+     "legacy_recall": 0.90902,
+     "seed": 1455105838,
+     "eligible": true,
+     "excerpt": "god you are worthy you are holy you are kind you are merciful adore would be"
+    },
+    {
+     "label": "rescue",
+     "words": 13333,
+     "anomaly_score": 3,
+     "corroborated_run": 14,
+     "uncorroborated_run": 38,
+     "legacy_recall": 0.91495,
+     "seed": 1455105838,
+     "eligible": false,
+     "excerpt": "is there in the scripture this is a follow up really a creepy question"
+    }
+   ]
+  },
+  {
+   "guid": "96fba003-ac24-58c0-8beb-e30e701e4ea0",
+   "file": "women_retreat_2026_session1.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.94216,
+   "recall_content_first": 0.94216,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 7886,
+     "anomaly_score": 2,
+     "corroborated_run": 14,
+     "uncorroborated_run": 14,
+     "legacy_recall": 0.92786,
+     "seed": 699862418,
+     "eligible": true,
+     "excerpt": "through love and in first corinthians one four through nine let's see i'm going"
+    },
+    {
+     "label": "rescue",
+     "words": 7977,
+     "anomaly_score": 0,
+     "corroborated_run": 67,
+     "uncorroborated_run": 91,
+     "legacy_recall": 0.94216,
+     "seed": 699862418,
+     "eligible": true,
+     "excerpt": "6 13 through 20 for when god made a promise to abraham since he had no one greater by whom to swear he swore by himself saying surely"
+    }
+   ]
+  },
+  {
+   "guid": "9a68aa27-73e1-58b7-a288-6202a125367a",
+   "file": "tcf.20210210.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.93204,
+   "recall_content_first": 0.93204,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 1172,
+     "anomaly_score": 1,
+     "corroborated_run": 42,
+     "uncorroborated_run": 46,
+     "legacy_recall": 0.93204,
+     "seed": 186636140,
+     "eligible": true,
+     "excerpt": "nor will anyone hear his voice in the streets a bruised reed he will not break and a smoldering wick he will not quench until he brings justice"
+    },
+    {
+     "label": "rescue",
+     "words": 1137,
+     "anomaly_score": 1,
+     "corroborated_run": 0,
+     "uncorroborated_run": 8,
+     "legacy_recall": 0.90049,
+     "seed": 186636140,
+     "eligible": false,
+     "excerpt": ""
+    }
+   ]
+  },
+  {
+   "guid": "ac18e465-4bb7-5b65-b128-22bdb8e66aae",
+   "file": "tcf.20210217.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.9921,
+   "recall_content_first": 0.9921,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 1591,
+     "anomaly_score": 1,
+     "corroborated_run": 9,
+     "uncorroborated_run": 11,
+     "legacy_recall": 0.94532,
+     "seed": 2463970632,
+     "eligible": true,
+     "excerpt": "they will break our heart and he's encouraging us"
+    },
+    {
+     "label": "rescue",
+     "words": 1685,
+     "anomaly_score": 1,
+     "corroborated_run": 62,
+     "uncorroborated_run": 70,
+     "legacy_recall": 0.9921,
+     "seed": 2463970632,
+     "eligible": true,
+     "excerpt": "do not lay up for yourself treasures on earth where moth and rust destroy and where thieves break in and steal but lay up for yourself treasures in"
+    }
+   ]
+  },
+  {
+   "guid": "daeb0c37-3b2e-50f5-b7a0-97c0d0f5a2ca",
+   "file": "tcf.20260626.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.97317,
+   "recall_content_first": 0.97317,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 3735,
+     "anomaly_score": 1,
+     "corroborated_run": 9,
+     "uncorroborated_run": 9,
+     "legacy_recall": 0.96513,
+     "seed": 1468506737,
+     "eligible": true,
+     "excerpt": "watched them before too there's it's the great pumpkin"
+    },
+    {
+     "label": "rescue",
+     "words": 3802,
+     "anomaly_score": 0,
+     "corroborated_run": 30,
+     "uncorroborated_run": 30,
+     "legacy_recall": 0.97317,
+     "seed": 1468506737,
+     "eligible": true,
+     "excerpt": "the likeness of men and being found in human form he humbled himself by becoming obedient to the point of death even death on a cross therefore god"
+    }
+   ]
+  },
+  {
+   "guid": "ef0aa838-4fc3-5aaf-977a-1e59fa4b174b",
+   "file": "tcf.20260717.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": 0.98621,
+   "recall_content_first": 0.98621,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 3700,
+     "anomaly_score": 1,
+     "corroborated_run": 10,
+     "uncorroborated_run": 10,
+     "legacy_recall": 0.96708,
+     "seed": 1541098192,
+     "eligible": true,
+     "excerpt": "it's the year 33 a d and you're inside a"
+    },
+    {
+     "label": "rescue",
+     "words": 3766,
+     "anomaly_score": 0,
+     "corroborated_run": 74,
+     "uncorroborated_run": 74,
+     "legacy_recall": 0.98621,
+     "seed": 1541098192,
+     "eligible": true,
+     "excerpt": "2 20 and 21 i have been crucified with christ it is no longer i who live but christ who lives in me and the life i now"
+    }
+   ]
+  },
+  {
+   "guid": "f4c0bd0f-4350-5bc4-877a-88ffdb0d0bb9",
+   "file": "tcf.20240326b.mp3",
+   "published_label": "rescue",
+   "current": "rescue",
+   "content_first": "rescue",
+   "flips": false,
+   "eligible": [
+    "primary",
+    "rescue"
+   ],
+   "recall_current": null,
+   "recall_content_first": null,
+   "recall_gain": null,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 2758,
+     "anomaly_score": 1,
+     "corroborated_run": 13,
+     "uncorroborated_run": 13,
+     "legacy_recall": null,
+     "seed": 2475916725,
+     "eligible": true,
+     "excerpt": "then it's like well not a whole lot i can say if you're"
+    },
+    {
+     "label": "rescue",
+     "words": 2828,
+     "anomaly_score": 0,
+     "corroborated_run": 82,
+     "uncorroborated_run": 82,
+     "legacy_recall": null,
+     "seed": 2475916725,
+     "eligible": true,
+     "excerpt": "says this she says i could see that love is a great room with a lot of doors where we are invited to knock and come in though"
+    }
+   ]
+  },
+  {
+   "guid": "feac614f-aea7-56df-aba4-585760454cb1",
+   "file": "tcf.20241105.mp3",
+   "published_label": "primary",
+   "current": "primary",
+   "content_first": "primary",
+   "flips": false,
+   "eligible": [
+    "primary"
+   ],
+   "recall_current": 0.76092,
+   "recall_content_first": 0.76092,
+   "recall_gain": 0.0,
+   "passes": [
+    {
+     "label": "primary",
+     "words": 7786,
+     "anomaly_score": 0,
+     "corroborated_run": 18,
+     "uncorroborated_run": 77,
+     "legacy_recall": 0.76092,
+     "seed": 2265783000,
+     "eligible": true,
+     "excerpt": "like this is what scripture says about this it's like please appeal to this yeah and again i"
+    },
+    {
+     "label": "rescue",
+     "words": 7396,
+     "anomaly_score": 0,
+     "corroborated_run": 27,
+     "uncorroborated_run": 89,
+     "legacy_recall": 0.8306,
+     "seed": 2265783000,
+     "eligible": false,
+     "excerpt": "how do you balance that like again the state's authority here comes from the constitution law the church and the scripture like the rules of the road"
+    }
+   ]
+  }
+ ]
+}
