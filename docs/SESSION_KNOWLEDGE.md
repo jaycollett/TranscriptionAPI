@@ -1265,3 +1265,41 @@ three things: no file loses words to a selected rescue, the retention floor stil
 the cases it was built for, and `agree250` does not move. The firing rate above is a
 prediction from the 2026-09-07 and 2026-09-08 result sets, not a measurement of this
 code.
+
+## 2026-09-10 The rescue retention guard is not what refuses rescues
+
+Worked the open retention-guard question end to end. Three things are worth keeping.
+
+**Two word-count gates sit in series, and neither can be changed alone.**
+`retains_enough_words` is a hard pre-filter in `select_pass`, and the ordering that runs
+after it is `(anomaly score, -words, -mean logprob)`. Of the nine rescues the 0.6.1 corpus
+run refused, removing the retention guard entirely changes zero outcomes: seven are tied
+on the anomaly score and lose on `-words`, and two lose on the anomaly score. Any proposal
+that replaces one gate while leaving the other is a no-op. Two earlier reports each blamed
+one of the two gates; both were half right and both recommendations were dead ends.
+
+**Word count was the wrong instrument again, but not always.** On six of the nine refusals
+the primary held no corroborated contiguous run of even twelve words while the rescue held
+a scripture reading at full legacy n-gram coverage: Colossians 1:11-12, 1 Peter 2:9-10,
+Ephesians 4:11, Exodus 24, Job 42:5-6 and 1 Peter 1:22. Four are on the list of eight
+passages the quality proposal says are missing from current transcripts, so they were
+transcribed and then discarded. But on `tcf.20241105` the primary held 69, 24 and 19 word
+corroborated runs the rescue lost and the rescue held nothing above eight words, and the
+guard was right. Conservative refusal is not always wrong; it was wrong six times in nine.
+
+**The rescue sampler's draw-to-draw variance is large enough to change what is published.**
+Re-decoding three refused files, the primary reproduced the corpus run to within two words
+every time, being a deterministic beam search, while the rescue came out 67, 106 and 42
+words away from the corpus draw. On `tcf.20240713` that flipped the decision from refuse
+to publish. No quality rule in this service can be validated while the input to the rule
+is a coin flip. The recommendation is to seed from a hash of the job GUID, not from a
+constant: per-GUID keeps the draws as varied across the archive as they are now while
+making each one reproducible, and `ctranslate2.set_random_seed` is available in the 4.8.0
+the image ships.
+
+`RESCUE_TRANSCRIPT_DIR` now exists in `transcribe.py`: set it and a job that runs a rescue
+writes both transcripts and both sets of counts to a JSON file. Off by default. The 0.6.1
+corpus run stored the word counts of both passes but the text of neither, which is why
+this question needed the audio decoded a second time.
+
+Full analysis: `docs/analysis-retention-guard-2026-09-10.md`.
