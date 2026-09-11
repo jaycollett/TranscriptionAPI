@@ -1,0 +1,102 @@
+{
+ "tcf.20150424.mp3": {
+  "guid": "8875f0b2-a9d3-5083-ac9d-c0500c4d56c9",
+  "rescue_seed": 2215909889,
+  "trigger": "gap"
+ },
+ "tcf.20210210.mp3": {
+  "guid": "9a68aa27-73e1-58b7-a288-6202a125367a",
+  "rescue_seed": 186636140,
+  "trigger": "window+gap"
+ },
+ "tcf.20210217.mp3": {
+  "guid": "ac18e465-4bb7-5b65-b128-22bdb8e66aae",
+  "rescue_seed": 2463970632,
+  "trigger": "window+gap"
+ },
+ "tcf.20210604.mp3": {
+  "guid": "14cd4533-95e4-529f-8eb4-470c2e27bd85",
+  "rescue_seed": 888294943,
+  "trigger": "gap"
+ },
+ "tcf.20211203.mp3": {
+  "guid": "380eeb97-a12a-591f-ac1a-bc57e80b0970",
+  "rescue_seed": 784867763,
+  "trigger": "gap"
+ },
+ "tcf.20221203.mp3": {
+  "guid": "39cda59f-99ac-5172-9796-44dc8f801c05",
+  "rescue_seed": 3510497010,
+  "trigger": "gap"
+ },
+ "tcf.20240326b.mp3": {
+  "guid": "f4c0bd0f-4350-5bc4-877a-88ffdb0d0bb9",
+  "rescue_seed": 2475916725,
+  "trigger": "window+gap"
+ },
+ "tcf.20240412.mp3": {
+  "guid": "08c6c415-b803-5b16-bd4d-7292984cbd5d",
+  "rescue_seed": 2886448881,
+  "trigger": "gap"
+ },
+ "tcf.20240621.mp3": {
+  "guid": "0831b33c-7f8b-524f-96ff-0945fd09bd80",
+  "rescue_seed": 683125825,
+  "trigger": "window+gap"
+ },
+ "tcf.20240713.mp3": {
+  "guid": "20e01b71-7f85-5850-990e-e9f7d0bfc546",
+  "rescue_seed": 2990944010,
+  "trigger": "gap"
+ },
+ "tcf.20241105.mp3": {
+  "guid": "feac614f-aea7-56df-aba4-585760454cb1",
+  "rescue_seed": 2265783000,
+  "trigger": "gap"
+ },
+ "tcf.20250607.mp3": {
+  "guid": "89781cf4-8316-5e25-85aa-a587c8896323",
+  "rescue_seed": 1578195993,
+  "trigger": "window+gap"
+ },
+ "tcf.20260428.mp3": {
+  "guid": "94ef64b2-f5e7-58be-a1c9-eeddda91b550",
+  "rescue_seed": 1455105838,
+  "trigger": "gap"
+ },
+ "tcf.20260626.mp3": {
+  "guid": "daeb0c37-3b2e-50f5-b7a0-97c0d0f5a2ca",
+  "rescue_seed": 1468506737,
+  "trigger": "window+gap"
+ },
+ "tcf.202606623b.mp3": {
+  "guid": "85882584-d474-5bff-8fc7-1ed3a13dc0e1",
+  "rescue_seed": 2104370031,
+  "trigger": "window+gap"
+ },
+ "tcf.20260717.mp3": {
+  "guid": "ef0aa838-4fc3-5aaf-977a-1e59fa4b174b",
+  "rescue_seed": 1541098192,
+  "trigger": "window+gap"
+ },
+ "tcf.20260724.mp3": {
+  "guid": "648a1e84-e6ee-5420-8593-1deb79ff04f2",
+  "rescue_seed": 2695884061,
+  "trigger": "gap"
+ },
+ "ucf20211106b.mp3": {
+  "guid": "24d43772-1a0b-5049-9889-f9616637adb6",
+  "rescue_seed": 554419906,
+  "trigger": "window+gap"
+ },
+ "women_retreat_2025_session1.mp3": {
+  "guid": "06890171-22bb-5c91-9775-09e05e544999",
+  "rescue_seed": 1858691192,
+  "trigger": "gap"
+ },
+ "women_retreat_2026_session1.mp3": {
+  "guid": "96fba003-ac24-58c0-8beb-e30e701e4ea0",
+  "rescue_seed": 699862418,
+  "trigger": "window+gap"
+ }
+}
