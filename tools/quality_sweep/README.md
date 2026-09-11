@@ -253,6 +253,13 @@ image reports the new fields as absent rather than as clean.
 | `determinism.py` | pairs two runs of the same files: word, anomaly and rescue-decision spread |
 | `legacy_eras.py` | single-pass against multi-pass legacy words per second, raw and stratified |
 | `norm.py` | the harness's word normalisation, so both sides normalise identically |
+| `gaps.py` | uncovered speech, total and largest contiguous, measured outside the service |
+| `trims.py` | the boundary de-duplication trims, with every removed phrase |
+| `passage_probe.py`, `passage_rescore.py` | decode one passage several ways, to find which parameter loses it |
+| `candidate_pass.py`, `candidate_anomaly.py` | a decode-only pass over the corpus using the image's own scoring |
+| `fidelity.py` | the 2026-09-08 four-configuration comparison: passage word error rate, the contiguous-run inventory, and detector power |
+| `fidelity_file_list.json` | the committed 32-file subset with its profile, rate and label columns |
+| `scripture_passages.json`, `scripture_cache.json` | the scored passages and the public-domain chapters they are scored against |
 
 `tests/test_quality_sweep.py` covers the stratum boundaries, the selection rules, and
 every piece of the analyzer's arithmetic against small fixtures.

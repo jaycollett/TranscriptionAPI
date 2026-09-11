@@ -1,0 +1,459 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 124,
+   "left_words": 124,
+   "right_runs": 24,
+   "right_words": 24
+  },
+  "12+": {
+   "left_runs": 1,
+   "left_words": 35,
+   "right_runs": 4,
+   "right_words": 88
+  },
+  "2-3": {
+   "left_runs": 47,
+   "left_words": 101,
+   "right_runs": 11,
+   "right_words": 19
+  },
+  "4-11": {
+   "left_runs": 12,
+   "left_words": 71,
+   "right_runs": 2,
+   "right_words": 6
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -63,
+  "legacy_minus_rescue": 131,
+  "legacy_words": 13427,
+  "primary_words": 13490,
+  "rescue_minus_primary": -194,
+  "rescue_words": 13296
+ },
+ "file": "tcf.20260428.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "62:50",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.9,
+   "max_self_repeat": 1,
+   "position": 0.7418,
+   "side": "primary-only",
+   "start_s": 3770.02,
+   "text": "rich individuals or what advice do you have for those who are struggling to like relax into the presence of god and enjoy his presence because of the more regimental shift or direction they're taking",
+   "word_index": 10007,
+   "words": 35
+  },
+  {
+   "class": "real content",
+   "clock": "43:16",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.1379,
+   "max_self_repeat": 1,
+   "position": 0.5154,
+   "side": "rescue-only",
+   "start_s": 2596.91,
+   "text": "pushback so i mean when we do because i look it up it's all i don't understand right what it means but it could just be something i need to change in my heart",
+   "word_index": 6853,
+   "words": 34
+  },
+  {
+   "class": "real content",
+   "clock": "75:15",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2778,
+   "max_self_repeat": 1,
+   "position": 0.8949,
+   "side": "rescue-only",
+   "start_s": 4515.35,
+   "text": "scripture this is a follow up really a creepy question for noah when he asked about communion and maybe i didn't hear in",
+   "word_index": 11899,
+   "words": 23
+  },
+  {
+   "class": "real content",
+   "clock": "70:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2667,
+   "max_self_repeat": 1,
+   "position": 0.8375,
+   "side": "rescue-only",
+   "start_s": 4202.44,
+   "text": "laura i'm going to figure out how to turn it over i'm running on a little bit of a week",
+   "word_index": 11136,
+   "words": 20
+  },
+  {
+   "class": "real content",
+   "clock": "21:00",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.2498,
+   "side": "rescue-only",
+   "start_s": 1260.51,
+   "text": "they've gathered they've said all that the lord says we will do the",
+   "word_index": 3321,
+   "words": 13
+  },
+  {
+   "class": "real content",
+   "clock": "41:50",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.4962,
+   "side": "primary-only",
+   "start_s": 2510.46,
+   "text": "so we said this is the word of the lord",
+   "word_index": 6694,
+   "words": 10
+  },
+  {
+   "class": "ambiguous",
+   "clock": "60:26",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.7122,
+   "side": "primary-only",
+   "start_s": 3626.06,
+   "text": "so i've had that for worship when we're by ourselves",
+   "word_index": 9608,
+   "words": 10
+  },
+  {
+   "class": "real content",
+   "clock": "41:54",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.75,
+   "max_self_repeat": 1,
+   "position": 0.497,
+   "side": "primary-only",
+   "start_s": 2514.58,
+   "text": "yeah raised catholic and it goes all over me",
+   "word_index": 6705,
+   "words": 9
+  },
+  {
+   "class": "real content",
+   "clock": "74:51",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.5,
+   "max_self_repeat": 1,
+   "position": 0.8916,
+   "side": "primary-only",
+   "start_s": 4491.99,
+   "text": "uh i don't want to say no",
+   "word_index": 12028,
+   "words": 7
+  },
+  {
+   "class": "real content",
+   "clock": "55:06",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.6377,
+   "side": "primary-only",
+   "start_s": 3306.77,
+   "text": "i don't know if you noticed",
+   "word_index": 8603,
+   "words": 6
+  },
+  {
+   "class": "ambiguous",
+   "clock": "15:15",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.1837,
+   "side": "rescue-only",
+   "start_s": 915.33,
+   "text": "the and the worship at",
+   "word_index": 2443,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "70:43",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8408,
+   "side": "primary-only",
+   "start_s": 4243.62,
+   "text": "cause i would you know",
+   "word_index": 11342,
+   "words": 5
+  },
+  {
+   "class": "ambiguous",
+   "clock": "22:17",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2615,
+   "side": "primary-only",
+   "start_s": 1337.42,
+   "text": "his human or adding",
+   "word_index": 3528,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "41:34",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4926,
+   "side": "primary-only",
+   "start_s": 2494.4,
+   "text": "it all of the",
+   "word_index": 6645,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "41:48",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4958,
+   "side": "primary-only",
+   "start_s": 2508.97,
+   "text": "go ahead and ask",
+   "word_index": 6688,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "68:26",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8107,
+   "side": "primary-only",
+   "start_s": 4106.56,
+   "text": "if you you know",
+   "word_index": 10937,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "70:49",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8451,
+   "side": "rescue-only",
+   "start_s": 4249.72,
+   "text": "and a cost illish",
+   "word_index": 11237,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "70:47",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8414,
+   "side": "primary-only",
+   "start_s": 4247.45,
+   "text": "work let's just say",
+   "word_index": 11351,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "84:49",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9987,
+   "side": "primary-only",
+   "start_s": 5089.53,
+   "text": "uh if you have",
+   "word_index": 13472,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "62:50",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.9,
+   "max_self_repeat": 1,
+   "position": 0.7418,
+   "side": "primary-only",
+   "start_s": 3770.02,
+   "text": "rich individuals or what advice do you have for those who are struggling to like relax into the presence of god and enjoy his presence because of the more regimental shift or direction they're taking",
+   "word_index": 10007,
+   "words": 35
+  },
+  {
+   "class": "real content",
+   "clock": "43:16",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.1379,
+   "max_self_repeat": 1,
+   "position": 0.5154,
+   "side": "rescue-only",
+   "start_s": 2596.91,
+   "text": "pushback so i mean when we do because i look it up it's all i don't understand right what it means but it could just be something i need to change in my heart",
+   "word_index": 6853,
+   "words": 34
+  },
+  {
+   "class": "real content",
+   "clock": "75:15",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2778,
+   "max_self_repeat": 1,
+   "position": 0.8949,
+   "side": "rescue-only",
+   "start_s": 4515.35,
+   "text": "scripture this is a follow up really a creepy question for noah when he asked about communion and maybe i didn't hear in",
+   "word_index": 11899,
+   "words": 23
+  },
+  {
+   "class": "real content",
+   "clock": "70:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.2667,
+   "max_self_repeat": 1,
+   "position": 0.8375,
+   "side": "rescue-only",
+   "start_s": 4202.44,
+   "text": "laura i'm going to figure out how to turn it over i'm running on a little bit of a week",
+   "word_index": 11136,
+   "words": 20
+  },
+  {
+   "class": "real content",
+   "clock": "21:00",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.2498,
+   "side": "rescue-only",
+   "start_s": 1260.51,
+   "text": "they've gathered they've said all that the lord says we will do the",
+   "word_index": 3321,
+   "words": 13
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "um",
+   49
+  ],
+  [
+   "uh",
+   19
+  ],
+  [
+   "i",
+   12
+  ],
+  [
+   "that",
+   6
+  ],
+  [
+   "the",
+   4
+  ],
+  [
+   "and",
+   4
+  ],
+  [
+   "we're",
+   3
+  ],
+  [
+   "it",
+   2
+  ],
+  [
+   "a",
+   2
+  ],
+  [
+   "it's",
+   2
+  ],
+  [
+   "like",
+   2
+  ],
+  [
+   "of",
+   2
+  ],
+  [
+   "we",
+   2
+  ],
+  [
+   "yeah",
+   2
+  ],
+  [
+   "baptism",
+   1
+  ],
+  [
+   "there's",
+   1
+  ],
+  [
+   "jesus",
+   1
+  ],
+  [
+   "thanks",
+   1
+  ],
+  [
+   "but",
+   1
+  ],
+  [
+   "or",
+   1
+  ],
+  [
+   "little",
+   1
+  ],
+  [
+   "what",
+   1
+  ],
+  [
+   "do",
+   1
+  ],
+  [
+   "yep",
+   1
+  ],
+  [
+   "off",
+   1
+  ]
+ ],
+ "timings_words": 13490
+}

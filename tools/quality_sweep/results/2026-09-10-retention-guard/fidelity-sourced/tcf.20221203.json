@@ -1,0 +1,342 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 92,
+   "left_words": 92,
+   "right_runs": 9,
+   "right_words": 9
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 3,
+   "right_words": 68
+  },
+  "2-3": {
+   "left_runs": 38,
+   "left_words": 79,
+   "right_runs": 8,
+   "right_words": 13
+  },
+  "4-11": {
+   "left_runs": 5,
+   "left_words": 20,
+   "right_runs": 4,
+   "right_words": 23
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -191,
+  "legacy_minus_rescue": -113,
+  "legacy_words": 9514,
+  "primary_words": 9705,
+  "rescue_minus_primary": -78,
+  "rescue_words": 9627
+ },
+ "file": "tcf.20221203.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "56:18",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.9151,
+   "side": "rescue-only",
+   "start_s": 3378.86,
+   "text": "in ephesians chapter 4 he gave some as apostles some as prophets some as evangelists and some as pastors and teachers so the term was",
+   "word_index": 8810,
+   "words": 25
+  },
+  {
+   "class": "real content",
+   "clock": "34:34",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5754,
+   "side": "rescue-only",
+   "start_s": 2074.23,
+   "text": "to two different directors i would hope they would talk to the directors at work maybe talk to some of my colleagues you know",
+   "word_index": 5539,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "39:56",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.6638,
+   "side": "rescue-only",
+   "start_s": 2396.27,
+   "text": "always been kind of an annoying thing to me in the scriptures that we don't really get job descriptions",
+   "word_index": 6390,
+   "words": 19
+  },
+  {
+   "class": "real content",
+   "clock": "34:02",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5668,
+   "side": "rescue-only",
+   "start_s": 2042.24,
+   "text": "godly living and their faith may be shaken and",
+   "word_index": 5457,
+   "words": 9
+  },
+  {
+   "class": "real content",
+   "clock": "33:32",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5579,
+   "side": "rescue-only",
+   "start_s": 2012.74,
+   "text": "he must not be a recent convert",
+   "word_index": 5371,
+   "words": 7
+  },
+  {
+   "class": "real content",
+   "clock": "56:44",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9237,
+   "side": "rescue-only",
+   "start_s": 3404.53,
+   "text": "16 11 the apostles used",
+   "word_index": 8892,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "61:25",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9944,
+   "side": "primary-only",
+   "start_s": 3685.31,
+   "text": "yep so you know we",
+   "word_index": 9651,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "34:35",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.5783,
+   "side": "rescue-only",
+   "start_s": 2075.35,
+   "text": "like or what's kelly",
+   "word_index": 5567,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "45:09",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.7356,
+   "side": "primary-only",
+   "start_s": 2709.04,
+   "text": "you can be the",
+   "word_index": 7139,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "49:05",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.7984,
+   "side": "primary-only",
+   "start_s": 2945.35,
+   "text": "but as far as",
+   "word_index": 7748,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "53:06",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.8663,
+   "side": "primary-only",
+   "start_s": 3186.84,
+   "text": "yeah um kind of",
+   "word_index": 8407,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "60:08",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9735,
+   "side": "primary-only",
+   "start_s": 3608.59,
+   "text": "in a lot of",
+   "word_index": 9448,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "56:18",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.9151,
+   "side": "rescue-only",
+   "start_s": 3378.86,
+   "text": "in ephesians chapter 4 he gave some as apostles some as prophets some as evangelists and some as pastors and teachers so the term was",
+   "word_index": 8810,
+   "words": 25
+  },
+  {
+   "class": "real content",
+   "clock": "34:34",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5754,
+   "side": "rescue-only",
+   "start_s": 2074.23,
+   "text": "to two different directors i would hope they would talk to the directors at work maybe talk to some of my colleagues you know",
+   "word_index": 5539,
+   "words": 24
+  },
+  {
+   "class": "real content",
+   "clock": "39:56",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.6638,
+   "side": "rescue-only",
+   "start_s": 2396.27,
+   "text": "always been kind of an annoying thing to me in the scriptures that we don't really get job descriptions",
+   "word_index": 6390,
+   "words": 19
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "um",
+   18
+  ],
+  [
+   "and",
+   12
+  ],
+  [
+   "i",
+   9
+  ],
+  [
+   "the",
+   8
+  ],
+  [
+   "uh",
+   7
+  ],
+  [
+   "that's",
+   6
+  ],
+  [
+   "that",
+   3
+  ],
+  [
+   "there",
+   3
+  ],
+  [
+   "in",
+   3
+  ],
+  [
+   "this",
+   2
+  ],
+  [
+   "to",
+   2
+  ],
+  [
+   "let's",
+   1
+  ],
+  [
+   "a",
+   1
+  ],
+  [
+   "through",
+   1
+  ],
+  [
+   "he's",
+   1
+  ],
+  [
+   "another",
+   1
+  ],
+  [
+   "our",
+   1
+  ],
+  [
+   "at",
+   1
+  ],
+  [
+   "gonna",
+   1
+  ],
+  [
+   "some",
+   1
+  ],
+  [
+   "then",
+   1
+  ],
+  [
+   "they",
+   1
+  ],
+  [
+   "was",
+   1
+  ],
+  [
+   "yeah",
+   1
+  ],
+  [
+   "of",
+   1
+  ]
+ ],
+ "timings_words": 9703
+}

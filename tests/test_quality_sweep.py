@@ -1382,3 +1382,108 @@ def test_summarise_splits_flips_by_whether_recall_improved():
     assert s["rescues"] == 4 and s["flips"] == 3
     assert s["flips_better"] == 1 and s["flips_worse"] == 1 and s["flips_indifferent"] == 1
     assert s["better_files"] == ["a.mp3"]
+# ---------------------------------------------------------------------------------
+# fidelity.py: the passage scorer and the run inventory
+# ---------------------------------------------------------------------------------
+from tools.quality_sweep import fidelity  # noqa: E402
+
+
+def test_substring_wer_is_zero_when_the_passage_is_present_verbatim():
+    ref = "the lord is my shepherd i shall not want".split()
+    hyp = ("and so he said".split() + ref + "and that is the whole of it".split())
+    assert fidelity.substring_wer(ref, hyp) == 0.0
+
+
+def test_substring_wer_counts_only_reference_length_not_hypothesis_padding():
+    """Free start and free end: a passage buried in an hour of speech scores the same."""
+    ref = "a b c d".split()
+    near = "x " * 200 + "a b z d " + "y " * 200
+    assert fidelity.substring_wer(ref, near.split()) == 0.25
+
+
+def test_substring_wer_is_one_when_nothing_matches():
+    assert fidelity.substring_wer("a b c d".split(), "w x y z".split()) == 1.0
+
+
+def test_best_window_finds_the_passage_and_keeps_it_whole():
+    ref = "alpha bravo charlie delta echo foxtrot".split()
+    hyp = ["filler"] * 500 + ref + ["filler"] * 500
+    lo, hi = fidelity.best_window(ref, hyp)
+    assert hyp[lo:hi][: len(ref)] or True
+    assert " ".join(ref) in " ".join(hyp[lo:hi])
+
+
+def test_containment_counts_reference_ngrams_found_anywhere():
+    ref = "a b c d e f".split()
+    assert fidelity.containment(ref, ref, n=5) == 1.0
+    assert fidelity.containment(ref, "z z z z z z".split(), n=5) == 0.0
+
+
+def test_one_sided_runs_reports_a_loss_on_each_side():
+    head = ["h%d" % i for i in range(10)]
+    middle = ["m%d" % i for i in range(10)]
+    tail = ["t%d" % i for i in range(10)]
+    left = head + ["lost%d" % i for i in range(15)] + middle + tail
+    right = head + middle + ["gained%d" % i for i in range(14)] + tail
+    runs = fidelity.one_sided_runs(left, right, minimum=12)
+    sides = {side: size for side, size, _pos, _words in runs}
+    assert sides == {"left": 15, "right": 14}
+
+
+def test_one_sided_runs_treats_a_same_length_rewrite_as_one_sided_only_if_longer():
+    """A replace of equal size is a rewording, not a loss, so neither side is reported."""
+    left = ["same"] * 10 + ["lost"] * 14 + ["same"] * 10
+    right = ["same"] * 10 + ["gained"] * 14 + ["same"] * 10
+    assert fidelity.one_sided_runs(left, right, minimum=12) == []
+
+
+def test_one_sided_runs_ignores_short_wording_differences():
+    left = "one two three four five".split()
+    right = "one two THREE four five".split()
+    assert fidelity.one_sided_runs(left, right, minimum=12) == []
+
+
+def test_diff_stats_directional_runs_do_not_cancel():
+    left = ["x"] * 40
+    right = ["x"] * 20 + ["y"] * 30
+    stats = fidelity.diff_stats(left, right)
+    assert stats["run_only_left"] == 20
+    assert stats["run_only_right"] == 30
+
+
+def test_legacy_has_needs_a_real_overlap_not_a_stock_phrase():
+    legacy = "the reason we gather is that god is good all the time".split()
+    assert fidelity.legacy_has(legacy, "the reason we gather is that god".split())
+    assert not fidelity.legacy_has(legacy, "moses came and told the people all".split())
+    assert fidelity.legacy_has(None, ["anything"]) is None
+
+
+def test_detector_power_prefers_the_threshold_that_catches_most_within_budget():
+    rows = [
+        {"file": "bad1", "signal": 30.0},
+        {"file": "bad2", "signal": 20.0},
+        {"file": "ok1", "signal": 25.0},
+        {"file": "ok2", "signal": 1.0},
+        {"file": "ok3", "signal": 2.0},
+    ]
+    got = fidelity.detector_power(rows, "signal", {"bad1", "bad2"})
+    assert got["at_budget"]["0"] == {"caught": 1, "threshold": 30.0}
+    assert got["at_budget"]["1"] == {"caught": 2, "threshold": 20.0}
+
+
+def test_detector_power_handles_a_signal_where_low_is_bad():
+    rows = [
+        {"file": "bad1", "signal": 0.5},
+        {"file": "ok1", "signal": 2.0},
+        {"file": "ok2", "signal": 3.0},
+    ]
+    got = fidelity.detector_power(rows, "signal", {"bad1"}, higher_is_worse=False)
+    assert got["direction"] == "low"
+    assert got["at_budget"]["0"] == {"caught": 1, "threshold": 0.5}
+
+
+def test_shape_uses_covered_speech_not_wall_duration():
+    entry = {"segments": 4, "duration_sec": 120.0, "speech_seconds": 100.0,
+             "uncovered_s": 20.0}
+    assert fidelity.shape(entry) == {"segments_per_min": 2.0, "segment_mean_s": 20.0}
+

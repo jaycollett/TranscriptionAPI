@@ -1113,3 +1113,253 @@ they are equal by test rather than by construction, and the harness does not exe
 `transcribe_audio` itself. Treat harness anomaly counts as their own measurement
 series until that gap is closed, and note that the reference runs shared GPU 0 with
 the sweep container, which is the likeliest source of the extra spread.
+
+## 2026-09-08 - The fidelity experiment: three candidate changes, none adopted
+
+Four configurations over 32 files, decode-only, plus a second submission of the shipped
+one. Full argument in `tools/quality_sweep/results/2026-09-08-fidelity/`.
+
+**Word count is not evidence of fidelity, and this run finally proves it on a real file.**
+The single largest one-sided run in the whole experiment is 137 words the shipped decode
+has and the sampled one does not, and it is a repetition loop: "the sins we commit"
+fifteen times over at 97 percent through `tcf.20201003`. On word count the shipped decode
+wins that file by 3 percent. On content it lost. The instrument that works is the run
+inventory: every contiguous one-sided run of twelve or more words between two decodes,
+checked against the legacy archive. All twenty such runs are in the legacy transcript,
+which makes each one a real difference in content judged by a baseline predating this
+release line.
+
+**Scoring scripture by word error rate works as a comparator and only as a comparator.**
+The preacher's translation is unknown, so absolute rates run 0.16 to 0.83 on passages that
+are transcribed perfectly well, and quoting one as accuracy would be a lie. What holds is
+the ordering: on the four passages with six cached translations the ranking of the
+configurations is identical under all six. Where two configurations produced the same text
+the rate matches to three decimals, which is the check that the scorer measures the
+transcript rather than the reference.
+
+**Sampling on the primary pass recovers more than it loses, and is still not worth
+shipping.** 578 words in fourteen runs recovered, ten of them scripture read aloud
+including Exodus 24 and 1 Peter 1, against 273 lost of which 137 are the loop. Eight of
+the ten recovered passages were not previously known to be missing, which says the
+read-aloud defect is roughly four times commoner than the sweep found. But it is one
+unseeded draw per file; the shipped rescue, which samples from the same base, failed to be
+selected on the very file the sampled primary recovered; every file becomes
+irreproducible where 23 of 32 are byte-identical today; total segments move from 18 325 to
+15 449 with individual files moving by a factor of four, and the per-utterance aligner was
+never run in this experiment. Three seeded draws with alignment enabled would settle it.
+
+**The uncovered-speech fraction is dead as a detector, definitively.** Bad files 0.053 to
+0.134, healthy 0.011 to 0.128, the three highest values in the subset all healthy, one of
+seven caught at every false-positive budget. Coverage ratio is the same number inverted.
+This is the fifth quality rule in two days that looked reasonable and measures the wrong
+thing: it measures how ragged the segment edges are, which is a property of the speaker.
+
+**The largest contiguous gap does work, at 8 s, and the reason nobody found that is
+instructive.** Every earlier evaluation of the gap statistic set the threshold for a
+quarantine gate, where a false positive costs a published transcript, so nothing below
+10 s was ever considered. As the trigger for a second decode a false positive costs GPU
+time only, and at 8.5 s the statistic reaches all seven files where a second decode and
+the legacy archive agree content was lost, flagging one healthy file. **The right
+threshold for a signal depends on what the signal is wired to, not on the signal.**
+
+**Cross-configuration disagreement detects a loss only in its directional form.**
+Symmetric disagreement catches one of seven, because it fires just as hard when the second
+decode is the wrong one; the largest reverse run in the corpus is the hallucination loop.
+The longest run the second decode has that the published pass lacks is the statistic that
+works, and it is the only thing that sees `tcf.20150424`, where it finds Colossians
+1:11-12 read aloud and missing. That file is therefore not undetectable, as the previous
+entry recorded; it is invisible to every free signal and plain to a second decode.
+
+**The rescue's two levers do not compose.** Running the rescue ladder from 0.2 with
+`condition_on_previous_text` left on loses a 91-word run on `tcf.20210217`, taking
+Matthew 6 from 0.435 to 0.770, and a 70-word run on `tcf.20260626`. Conditioning-off is
+doing the work; the higher ladder does not substitute for it. And Exodus 24 cannot be
+recovered by tuning the rescue at all: the rescue already runs on that file with both
+levers at their best measured values and its output was not selected.
+
+**Keying the VAD profile on sample and bit rate instead of level does not pay.** Median
+segments per minute 15.16 to 14.66 and mean segment length unchanged at 3.48 to 3.50 s,
+nine files better and six worse, seven files losing more than 1 percent of their words,
+and the subset moving from 981 words under the legacy archive to 1357 under it. The
+non-monotonic level finding stands as a reason to distrust the current rule and is not a
+reason to adopt this one.
+
+## 2026-09-08 - 0.6.1: `RESCUE_MAX_GAP_S`, and the lesson that a threshold belongs to the consequence, not to the signal
+
+One change: `RESCUE_MAX_GAP_S`, default 8.0, added as a second rescue trigger beside
+`RESCUE_ANOMALY_WINDOWS`. A primary pass whose largest contiguous uncovered stretch of
+speech reaches it fires one rescue, exactly as a low-rate window does. Selection is
+untouched: the retention floor at 0.99 and the 40-word cap still decide whether the
+rescue's output is published, and the rescue still runs at most once per job.
+
+**The general lesson, which is the part worth keeping.** The same signal wants a
+different threshold depending on what firing costs. The largest contiguous uncovered gap
+had been measured across 101 files and tuned once, as a quarantine gate, where a false
+positive withholds a finished transcript from the people waiting for it. At that price
+the value landed at 20 s and nothing below 10 s was ever evaluated, because nothing
+below 10 s was worth evaluating for that consequence. As a trigger for a second decode a
+false positive costs GPU time on a file that was fine, and at that price the same
+untouched measurement is one of the best detectors in the project: 8.5 s reaches all
+seven files where a second decode and the legacy archive agree the shipped transcript
+lost a run of 25 words or more, flagging one healthy recording, against three for the
+shipped low-rate window. The detector was not missing. It was sitting in the codebase
+priced for a different consequence, and nobody re-priced it when the consequence changed.
+When a signal is rewired to a cheaper outcome, its threshold is not inherited. It is a
+new question.
+
+The two thresholds are now separate constants on purpose, and 0.6.1 keeps
+`ANOMALY_MAX_UNCOVERED_GAP_SEC` at exactly 20.0. They read the same number and mean
+different things, which is precisely the confusion worth guarding, so the test suite
+asserts they are distinct and that no gap value on any path can quarantine a job,
+requeue it, or complete one with an empty row.
+
+**Predicted effect, measured rather than hoped.** On the 32-file fidelity subset the
+rescue fires on 8 files instead of 3, and the 8 are exactly the gap set: all three files
+the window trigger catches also have a gap of 8 s or more, so this widens the net rather
+than replacing it. All seven confirmed content losses are reached, against two before,
+and nothing outside the two label sets is flagged. On the 101-file sweep the union of
+the two triggers selects 19 files where 5 fired before, which is 29.6 percent of the
+corpus by duration against 5.8 percent, so budget about 24 percentage points more decode
+time across the corpus. That is the top of the 15 to 25 percent the analysis predicted,
+not the middle of it. Note the sweep's gap figures come from the sweep's own speech
+basis rather than the service's `coverage_report`, so treat 19 of 101 as an estimate to
+be confirmed by the re-run and not as a measurement of the shipped code.
+
+**Firing more often is not recovering more, and the release does not claim it is.** On
+at least one recording in the subset the rescue already runs with both levers at their
+best measured values and is correctly refused by the retention guards, and the extra
+rescues on the other files may well be refused too. What the trigger buys on those files
+is a second attempt and a review marker, not a guaranteed recovery.
+
+**The review marker is free where it is available, and it is not bought anywhere else.**
+The completion line now carries `rescue_triggers` (window, gap, or window+gap) so the
+firing mix is readable off production logs, and `rescue_unpublished_run`, the longest
+contiguous run of words the rescue has that the published pass lacks. That statistic
+needs two decodes, which is why it can never be a trigger, but where the rescue has
+already run both transcripts are in memory and it costs one difflib pass, a fraction of
+a second against a decode measured in minutes. It is directional on purpose: symmetric
+disagreement fires just as hard when the second decode is the wrong one, and the largest
+one-sided run in the whole experiment was a 137-word repetition loop. It is zero by
+construction when the rescue was the pass published.
+
+**Deferred, not rejected: sampling on the primary pass.** Starting
+`WHISPER_TEMPERATURE_BASE` at 0.2 instead of 0.0 recovered fourteen runs totalling 578
+words that the shipped decode loses and the legacy archive has, ten of them scripture
+read aloud, and eight of those ten were not previously known to be missing at all. That
+is a real finding about the corpus and it is the reason this line of work should be
+picked up again, not dropped. It was not adopted for three reasons, all of them about
+evidence rather than about the result. It is one unseeded draw per file, and the same
+configuration family contradicts itself inside the dataset: the shipped rescue samples
+from the same base, ran on `tcf.20250607`, and was not selected on the very file where
+the sampled primary recovered Exodus 24. It moves segment counts by up to a factor of
+four in both directions, from 18 325 to 15 449 in total, under a release that runs MFA
+once per segment. And every configuration in the experiment was decode-only, so the
+aligner, the stage most exposed to that change, was never exercised. Three submissions
+of the sampled configuration with alignment enabled, reporting the run inventory per
+draw and `agree250`, would settle it.
+
+**Validation still owed.** Re-run the 101-file sweep against this branch and confirm
+three things: no file loses words to a selected rescue, the retention floor still blocks
+the cases it was built for, and `agree250` does not move. The firing rate above is a
+prediction from the 2026-09-07 and 2026-09-08 result sets, not a measurement of this
+code.
+
+## 2026-09-10 The rescue retention guard is not what refuses rescues
+
+Worked the open retention-guard question end to end. Three things are worth keeping.
+
+**Two word-count gates sit in series, and neither can be changed alone.**
+`retains_enough_words` is a hard pre-filter in `select_pass`, and the ordering that runs
+after it is `(anomaly score, -words, -mean logprob)`. Of the nine rescues the 0.6.1 corpus
+run refused, removing the retention guard entirely changes zero outcomes: seven are tied
+on the anomaly score and lose on `-words`, and two lose on the anomaly score. Any proposal
+that replaces one gate while leaving the other is a no-op. Two earlier reports each blamed
+one of the two gates; both were half right and both recommendations were dead ends.
+
+**Word count was the wrong instrument again, but not always.** On six of the nine refusals
+the primary held no corroborated contiguous run of even twelve words while the rescue held
+a scripture reading at full legacy n-gram coverage: Colossians 1:11-12, 1 Peter 2:9-10,
+Ephesians 4:11, Exodus 24, Job 42:5-6 and 1 Peter 1:22. Four are on the list of eight
+passages the quality proposal says are missing from current transcripts, so they were
+transcribed and then discarded. But on `tcf.20241105` the primary held 69, 24 and 19 word
+corroborated runs the rescue lost and the rescue held nothing above eight words, and the
+guard was right. Conservative refusal is not always wrong; it was wrong six times in nine.
+
+**The rescue sampler's draw-to-draw variance is large enough to change what is published.**
+Re-decoding three refused files, the primary reproduced the corpus run to within two words
+every time, being a deterministic beam search, while the rescue came out 67, 106 and 42
+words away from the corpus draw. On `tcf.20240713` that flipped the decision from refuse
+to publish. No quality rule in this service can be validated while the input to the rule
+is a coin flip. The recommendation is to seed from a hash of the job GUID, not from a
+constant: per-GUID keeps the draws as varied across the archive as they are now while
+making each one reproducible, and `ctranslate2.set_random_seed` is available in the 4.8.0
+the image ships.
+
+`RESCUE_TRANSCRIPT_DIR` now exists in `transcribe.py`: set it and a job that runs a rescue
+writes both transcripts and both sets of counts to a JSON file. Off by default. The 0.6.1
+corpus run stored the word counts of both passes but the text of neither, which is why
+this question needed the audio decoded a second time.
+
+Full analysis: `docs/analysis-retention-guard-2026-09-10.md`.
+
+## 2026-09-10 - 0.6.2: the sampler is seeded per job, and nothing else changes
+
+One behavioural change, plus the retention facility the analysis produced.
+
+**What shipped.**
+
+- `RESCUE_SEED_MODE`, default `guid`. Every decode, primary and rescue alike, is seeded
+  immediately before it runs from `blake2b(guid, digest_size=8)` reduced modulo
+  `2**32 - 1`, via `ctranslate2.set_random_seed(seed)`. Set it to `off` to restore the
+  0.6.1 behaviour on a running container without a rebuild.
+- `RESCUE_TRANSCRIPT_DIR`, unset by default, merged from the retention-guard branch. A
+  job that runs a rescue writes both transcripts, both sets of counts and now the seed
+  to one JSON file, so a discarded transcript is reviewable and reproducible from disk.
+- The retention guard is unchanged. The selection ordering is unchanged.
+
+**Why per-identifier rather than a constant.** A constant seed would fix every recording
+to the same corner of the sampler, and the standing objection to seeding, that it might
+be systematically worse on some material, would be fair. A per-GUID seed keeps the draws
+as varied across the archive as they are today while making each individual sermon
+reproducible. Each recording is decoded once either way; unseeded only ever meant that
+nobody could say which draw it got. The variety that matters is across the archive, not
+across hypothetical re-decodes of one file that never happen.
+
+**Why blake2b and not `hash()`.** Python salts `hash()` per process, so the same GUID
+would seed differently in every worker and after every restart, which is the one thing
+this must not do. The derivation is pinned by a test against an expected value:
+`f5e593e9-c7b8-4809-a476-2a82d7b613f3` must seed 2700934071. Changing the derivation
+changes every transcript decoded from then on, so it must not be possible to change it
+by accident during a refactor.
+
+**The seed call is process-global, and that is safe only because the worker is not
+concurrent.** `ctranslate2.set_random_seed` seeds the generator, not a call. app.py
+starts exactly one `transcription-worker` thread, `worker_cycle` claims one pending job
+and runs it to completion before looking for the next, and the model is loaded with
+`num_workers=1`. If a second decoding thread or a pool is ever added, two jobs interleave
+and each reseeds the generator the other is drawing from, with no visible symptom.
+`tests/test_seeded_sampler.py` parses app.py and asserts the only thread it constructs
+targets `transcription_worker`, so that assumption fails a test rather than quietly
+returning the archive to unrecorded draws.
+
+**The consequence that has to be paid, not argued away.** The seven measured recoveries
+of 0.6.1 were obtained unseeded. They are a property of draws that will never be drawn
+again. They must be re-measured under seeding before any further quality rule is judged
+against them, and that means a fresh hundred-file corpus run on this build establishing
+firing rate, selection rate, genuine recoveries and any file losing more than five
+percent, exactly as 0.6.1 was validated. Until that run exists, no 0.6.1 quality figure
+should be quoted as a baseline for 0.6.2.
+
+**Why this release deliberately contains no quality change.** The analysis identified the
+lever that moves the outcome: `content_first`, ranking corroborated contiguous content
+ahead of raw words inside the selection ordering, which gains five rescues and loses none
+in replay. It is not here. Shipping it in the same release as seeding would mean
+measuring a new selection rule against a baseline drawn from a sampler that was itself
+changing, and the whole point of 0.6.2 is to make the next measurement trustworthy. The
+ordering change is a separate release, and it needs the corpus run above to come first.
+
+**Logging.** Each pass line carries `seed=`, and the completion line carries `seed=` and
+`seed_mode=`, so a published transcript can be reproduced exactly from production logs.
+`transcribe_audio` also returns `seed` among its diagnostics.
+
+**Validation still owed.** All of the above is unit-level. No GPU ran in this release.

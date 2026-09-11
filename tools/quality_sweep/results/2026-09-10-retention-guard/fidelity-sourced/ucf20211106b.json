@@ -1,0 +1,212 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 32,
+   "left_words": 32,
+   "right_runs": 10,
+   "right_words": 10
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 1,
+   "right_words": 64
+  },
+  "2-3": {
+   "left_runs": 16,
+   "left_words": 32,
+   "right_runs": 4,
+   "right_words": 6
+  },
+  "4-11": {
+   "left_runs": 1,
+   "left_words": 1,
+   "right_runs": 2,
+   "right_words": 6
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -81,
+  "legacy_minus_rescue": -102,
+  "legacy_words": 4974,
+  "primary_words": 5055,
+  "rescue_minus_primary": 21,
+  "rescue_words": 5076
+ },
+ "file": "ucf20211106b.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "20:57",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5416,
+   "side": "rescue-only",
+   "start_s": 1257.88,
+   "text": "all right having purified your souls by your obedience to the truth for a sincere brotherly love love one another earnestly from a pure heart since you have been born again not of perishable seed but of imperishable through the living and abiding word of god for all flesh is like grass and all its glory like the flower of grass the grass withers",
+   "word_index": 2749,
+   "words": 64
+  },
+  {
+   "class": "ambiguous",
+   "clock": "3:25",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.1007,
+   "side": "rescue-only",
+   "start_s": 205.64,
+   "text": "amen thanks amen alright",
+   "word_index": 511,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "9:22",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2564,
+   "side": "primary-only",
+   "start_s": 562.21,
+   "text": "four three through six",
+   "word_index": 1296,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "26:43",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.7139,
+   "side": "rescue-only",
+   "start_s": 1603.81,
+   "text": "power enough to do",
+   "word_index": 3624,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "20:57",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5416,
+   "side": "rescue-only",
+   "start_s": 1257.88,
+   "text": "all right having purified your souls by your obedience to the truth for a sincere brotherly love love one another earnestly from a pure heart since you have been born again not of perishable seed but of imperishable through the living and abiding word of god for all flesh is like grass and all its glory like the flower of grass the grass withers",
+   "word_index": 2749,
+   "words": 64
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "the",
+   3
+  ],
+  [
+   "is",
+   3
+  ],
+  [
+   "on",
+   2
+  ],
+  [
+   "are",
+   2
+  ],
+  [
+   "to",
+   2
+  ],
+  [
+   "all",
+   1
+  ],
+  [
+   "let's",
+   1
+  ],
+  [
+   "having",
+   1
+  ],
+  [
+   "was",
+   1
+  ],
+  [
+   "upon",
+   1
+  ],
+  [
+   "under",
+   1
+  ],
+  [
+   "they're",
+   1
+  ],
+  [
+   "when",
+   1
+  ],
+  [
+   "this",
+   1
+  ],
+  [
+   "face",
+   1
+  ],
+  [
+   "their",
+   1
+  ],
+  [
+   "of",
+   1
+  ],
+  [
+   "too",
+   1
+  ],
+  [
+   "but",
+   1
+  ],
+  [
+   "his",
+   1
+  ],
+  [
+   "and",
+   1
+  ],
+  [
+   "listen",
+   1
+  ],
+  [
+   "for",
+   1
+  ],
+  [
+   "that's",
+   1
+  ],
+  [
+   "set",
+   1
+  ]
+ ],
+ "timings_words": 5055
+}
