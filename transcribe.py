@@ -255,6 +255,19 @@ RESCUE_MIN_WORD_RETENTION = _env_float("RESCUE_MIN_WORD_RETENTION", 0.99)
 # loss, which is larger than the two Psalm 91 runs (61 and 58 words) whose loss
 # motivated this whole rewrite. Both conditions have to hold.
 RESCUE_MAX_WORD_LOSS = _env_int("RESCUE_MAX_WORD_LOSS", 40)
+# Where to keep the pass that was not published, when a rescue runs.
+#
+# Only the selected pass survives a job: the other one is decoded, compared, scored and
+# then dropped on the floor. That cost a whole session. The 0.6.1 corpus run recorded
+# that nine rescues were refused and by how many words, but not what either transcript
+# said, so the question of whether those refusals threw away content could not be
+# answered from disk and needed the audio decoded a second time.
+#
+# Set this to a directory and every job that runs a rescue drops one JSON file there
+# holding both transcripts and both sets of counts. Unset, which is the default and is
+# what production runs, nothing is written and nothing changes. It is a review facility
+# for sweeps, so a failure to write it must never fail the job.
+RESCUE_TRANSCRIPT_DIR = os.getenv("RESCUE_TRANSCRIPT_DIR", "").strip()
 
 # Boundary de-duplication.
 #
@@ -1248,6 +1261,51 @@ def retains_enough_words(primary, candidate):
     )
 
 
+def retain_both_passes(guid, file_path, passes, selected):
+    """Write both decoded passes to `RESCUE_TRANSCRIPT_DIR`, when one is configured.
+
+    The published transcript is recoverable from the database; the pass that lost is
+    recoverable from nowhere, and it is exactly the thing anyone reviewing the retention
+    guard needs. One file per job, named for the GUID, holding the text and the counts
+    for every pass that ran and which one was published.
+
+    No-op unless the directory is set, and every failure is swallowed: this exists to
+    make a past run reviewable, and no review facility is worth losing a transcript over.
+    """
+    if not RESCUE_TRANSCRIPT_DIR:
+        return
+    try:
+        os.makedirs(RESCUE_TRANSCRIPT_DIR, exist_ok=True)
+        record = {
+            "guid": guid,
+            "file": os.path.basename(file_path or ""),
+            "published": selected["label"],
+            "passes": [
+                {
+                    "label": p["label"],
+                    "words": p["words"],
+                    "anomaly_count": p["anomaly_count"],
+                    "anomaly_windows": p["anomaly_windows"],
+                    "mean_logprob": p["mean_logprob"],
+                    "uncovered_s": p["uncovered_s"],
+                    "uncovered_max_gap_s": p["uncovered_max_gap_s"],
+                    "transcription": p["transcript"],
+                }
+                for p in passes
+            ],
+        }
+        path = os.path.join(RESCUE_TRANSCRIPT_DIR, f"{guid}.json")
+        with open(path, "w") as handle:
+            json.dump(record, handle, indent=1, sort_keys=True)
+        logger.info(
+            f"Kept both passes for {guid} at {path}: "
+            + ", ".join(f"{p['label']} {p['words']} words" for p in passes)
+            + f", published the {selected['label']}"
+        )
+    except Exception as exc:  # noqa: BLE001 - a review file must never fail a job
+        logger.warning(f"Could not keep both passes for {guid}: {exc}")
+
+
 def select_pass(passes):
     """Pick the best of the decoded passes.
 
@@ -1423,6 +1481,7 @@ def transcribe_audio(file_path, guid):
     selected = select_pass(passes)
     rescue_selected = selected["label"] == "rescue"
     if rescue_attempted:
+        retain_both_passes(guid, file_path, passes, selected)
         # The directional cross-check, against the pass that is actually published.
         unpublished_run = longest_unpublished_run(selected["transcript"], rescue["transcript"])
         if rescue_selected:
