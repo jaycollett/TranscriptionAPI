@@ -10,6 +10,13 @@ uncovered stretch of speech now buys a second decode. The signal was already mea
 and already used, priced for a quarantine gate at 20 s; priced for a second decode it
 belongs at 8. See docs/QUALITY_PROPOSAL.md section 4.4 and
 tools/quality_sweep/results/2026-09-08-fidelity/.
+
+0.6.2 changes no decision. It seeds the sampler per job (RESCUE_SEED_MODE) so the
+rescue is a reproducible draw rather than an unrecorded one, and keeps both passes on
+disk when a rescue runs (RESCUE_TRANSCRIPT_DIR, off by default). The retention guard
+and the selection ordering are untouched: see
+docs/analysis-retention-guard-2026-09-10.md for why, and for where the lever that does
+move the outcome actually is.
 """
 
 import difflib
