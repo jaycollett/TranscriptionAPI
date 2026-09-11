@@ -5,7 +5,7 @@
 #   uv pip install -r requirements-dev.txt
 #   python -m pytest tests/ -q
 #   ruff check .
-requests>=2.32
+requests>=2.34.2
 pytest>=8.0
 pytest-cov>=5.0
 ruff>=0.5
