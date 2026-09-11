@@ -1,9 +1,20 @@
 # Open analysis: should the rescue retention guard count content instead of words
 
-Status: in progress, 2026-09-10. Step 0 (count reconciliation) is done and is recorded
-below. Steps 1 to 4 follow. Written so this can be finished by a session with no prior
-context; everything needed to resume is below, and each section says whether it is
-settled or still open.
+Status: **closed 2026-09-10. The answer is no, leave the guard alone.** The findings,
+the evidence and the decision are in `docs/analysis-retention-guard-2026-09-10.md`; the
+per-recording reports are in `tools/quality_sweep/results/2026-09-10-retention-guard/`.
+This document is kept as the record of what was asked and how it was worked, and every
+section below is now annotated with what turned out to be true.
+
+The three things worth carrying forward:
+
+1. The proposal gains nothing at any N from 8 to 30 and costs one to three published
+   rescues. Not one of the nine refusals publishes under it.
+2. It gains nothing because **the retention guard is not what refuses them**. Remove it
+   and `select_pass`'s own `-words` term refuses seven of the nine again, and the anomaly
+   score refuses the other two. There are two word-count gates in series.
+3. `RESCUE_TRANSCRIPT_DIR` now keeps both transcripts whenever a rescue runs, off by
+   default, so this question is answerable from disk next time.
 
 Progress log, newest last:
 
@@ -26,6 +37,15 @@ Progress log, newest last:
   from current transcripts. The sixth, `women_retreat_2025_session1`, is a genuine trade
   and is discussed below.
 - 2026-09-10 Decode-only re-run of the three remaining refusals, with both passes kept.
+  Reports in `.../redecoded/`. `tcf.20240713` matches the pattern above; `tcf.20260428`
+  is a close trade at 35 against 34; **`tcf.20241105` is a genuine save**, the primary
+  holding 69, 24 and 19 word corroborated runs the rescue lost while the rescue holds
+  nothing above eight words. On that one file the guard was right.
+- 2026-09-10 Step 3 replay over all twenty rescues. The proposal gains 0 and loses 1 to 3
+  at every threshold tried. See `.../retention_threshold.md`.
+- 2026-09-10 Step 4 decided: no change to the guard in 0.6.2. Written up in
+  `docs/analysis-retention-guard-2026-09-10.md`, along with a recommendation to seed the
+  rescue sampler per GUID.
 
 ## The question in one sentence
 
@@ -148,6 +168,10 @@ such and are the matched pair.
 
 ## How to finish it
 
+**All four steps are done.** What follows is the plan as written, kept because the
+reasoning in it is still the right reasoning; the outcomes are in the progress log above
+and in `docs/analysis-retention-guard-2026-09-10.md`.
+
 ### Step 1, get the transcripts
 
 For each of the five unanalysed files, obtain both the primary transcript and the rescue
@@ -192,7 +216,12 @@ alone; conservative refusal keeps the primary, which is the safe failure.
 
 ## Also open, same area
 
-**Should the rescue sampler be seeded?** It samples unseeded, so selection differed on two of
+**Should the rescue sampler be seeded?** Answered 2026-09-10: yes, seeded from a hash of
+the job GUID rather than from a constant, and pay for the corpus re-run it costs. The
+reasoning is at the end of `docs/analysis-retention-guard-2026-09-10.md`. Not implemented.
+The original framing follows.
+
+ It samples unseeded, so selection differed on two of
 eleven recordings between two runs of the same build, meaning recovery is an expectation
 across the archive rather than a promise for any one sermon. Seeding makes it reproducible and
 would also settle an anomaly-count oscillation with the same root cause. The argument against
