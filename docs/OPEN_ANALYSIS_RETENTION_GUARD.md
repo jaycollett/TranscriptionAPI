@@ -11,6 +11,21 @@ Progress log, newest last:
   The "six refused" table below was a subset and is corrected in place.
 - 2026-09-10 Fidelity coverage checked. Six of the nine refused rescues already have
   both transcripts on disk. Only three need a re-decode.
+- 2026-09-10 `rescue_deficit.py` fixed: it now explains what `--fidelity` wants, takes
+  `--primary-json`/`--rescue-json` instead, and runs a batch into `--out-dir`.
+- 2026-09-10 `RESCUE_TRANSCRIPT_DIR` added to `transcribe.py`, so a job that runs a
+  rescue keeps both transcripts. Off by default, which is what production runs. This is
+  the gap that made the question unanswerable from disk.
+- 2026-09-10 Step 2 run on the six refused rescues that already had transcripts.
+  Reports in `tools/quality_sweep/results/2026-09-10-retention-guard/fidelity-sourced/`.
+  **Five of six: the primary holds no corroborated run of twelve or more words at all**,
+  its longest one-sided stretch being four to seven words, while the rescue holds runs of
+  40, 59, 25, 156 and 64 words at full legacy n-gram coverage. Those runs are
+  Colossians 1:11-12, 1 Peter 2:9-10, Ephesians 4:11, Exodus 24 and 1 Peter 1:22 read
+  aloud, four of which are on the list of eight passages section 4.4 says are missing
+  from current transcripts. The sixth, `women_retreat_2025_session1`, is a genuine trade
+  and is discussed below.
+- 2026-09-10 Decode-only re-run of the three remaining refusals, with both passes kept.
 
 ## The question in one sentence
 
