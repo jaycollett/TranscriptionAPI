@@ -1,7 +1,16 @@
 # Open analysis: should the rescue retention guard count content instead of words
 
-Status: open, blocked on data that was never stored. Written 2026-09-10 so this can be
-finished by a session with no prior context. Everything needed to resume is below.
+Status: in progress, 2026-09-10. Step 0 (count reconciliation) is done and is recorded
+below. Steps 1 to 4 follow. Written so this can be finished by a session with no prior
+context; everything needed to resume is below, and each section says whether it is
+settled or still open.
+
+Progress log, newest last:
+
+- 2026-09-10 Counts reconciled. 20 rescues fired, 11 selected, **9 refused**, not six.
+  The "six refused" table below was a subset and is corrected in place.
+- 2026-09-10 Fidelity coverage checked. Six of the nine refused rescues already have
+  both transcripts on disk. Only three need a re-decode.
 
 ## The question in one sentence
 
@@ -55,27 +64,41 @@ should not be revisited. The guard is the thing to change, or nothing is.
 
 Full detail is on devmachine at `/home/jay/sweep/rescue_deficit.md` and `.json`.
 
-## The six refused rescues
+## The nine refused rescues
 
-From the corpus run. `lost` is primary words minus rescue words; `gaps` is largest uncovered
-gap, primary versus rescue.
+Settled 2026-09-10. `/home/jay/sweep/rc061.log` is authoritative and the two lists are
+now reconciled: **102 files ran, 20 fired a rescue, 11 selected it, 9 refused it.** The
+earlier "six refused, six selected" table was a subset of twelve `tcf.*` files, not the
+corpus. `/home/jay/sweep/rc061/selected_list.json` holds exactly the eleven selected
+files, which is where the eleven came from; it does not list the refusals at all, so it
+cannot be used to enumerate them. The full twenty-row table in
+`docs/analysis-rescue-deficit-tcf20250607.md` agrees with the log line for line, and
+there are nine `Discarding the rescue pass:` lines in the log, one per refusal.
 
-| file | primary | rescue | lost | anomaly | gaps | analysed |
-|---|---|---|---|---|---|---|
-| tcf.20150424 | 7060 | 6981 | 79 | 0 v 1 | 12.0 v 27.6 | no |
-| tcf.20211203 | 9996 | 9700 | 296 | 0 v 1 | 16.5 v 5.7 | no |
-| tcf.20221203 | 9695 | 9575 | 120 | 0 v 0 | 8.8 v 8.5 | no |
-| tcf.20240713 | 6531 | 6483 | 48 | 0 v 0 | 13.4 v 11.0 | no |
-| tcf.20241105 | 7786 | 7442 | 344 | 0 v 0 | 11.9 v 8.6 | no |
-| tcf.20250607 | 7815 | 7475 | 340 | 1 v 1 | 24.9 v 12.1 | **yes** |
+`lost` is primary words minus rescue words; `gaps` is largest uncovered gap, primary
+versus rescue. `on disk` says whether both transcripts already exist in the 32-file
+fidelity set, which decides whether a re-decode is needed.
 
-The six rescues that were selected and published, for the regression check:
+| file | primary | rescue | lost | anomaly | gaps | on disk | analysed |
+|---|---|---|---|---|---|---|---|
+| tcf.20150424 | 7060 | 6981 | 79 | 0 v 1 | 12.0 v 27.6 | yes | no |
+| tcf.20211203 | 9996 | 9700 | 296 | 0 v 1 | 16.5 v 5.7 | yes | no |
+| tcf.20221203 | 9695 | 9575 | 120 | 0 v 0 | 8.8 v 8.5 | yes | no |
+| tcf.20240713 | 6531 | 6483 | 48 | 0 v 0 | 13.4 v 11.0 | no | no |
+| tcf.20241105 | 7786 | 7442 | 344 | 0 v 0 | 11.9 v 8.6 | no | no |
+| tcf.20250607 | 7815 | 7475 | 340 | 1 v 1 | 24.9 v 12.1 | yes | **yes** |
+| tcf.20260428 | 13470 | 13321 | 149 | 0 v 0 | 10.5 v 2.7 | no | no |
+| ucf20211106b | 5050 | 4984 | 66 | 1 v 1 | 20.6 v 19.2 | yes | no |
+| women_retreat_2025_session1 | 2245 | 2217 | 28 | 0 v 0 | 8.5 v 1.5 | yes | no |
+
+The last three were missing from the earlier list. `women_retreat_2025_session1` is worth
+noting on its own: it loses 28 words, which is inside the 40 word cap, so the 99 percent
+floor alone refused it. It is the only refusal the cap would have let through.
+
+The eleven rescues that were selected and published, for the regression check:
 `tcf.20210210`, `tcf.20210217`, `tcf.20210604`, `tcf.20240326b`, `tcf.20240412`,
-`tcf.20240621`.
-
-Reconcile before trusting these lists: the corpus run reported 20 rescues fired and 11
-selected, while this table totals 12 files with 6 selected. One of the two is a subset. Check
-`/home/jay/sweep/rc061/selected_list.json` and the run log before building on either.
+`tcf.20240621`, `tcf.20260626`, `tcf.202606623b`, `tcf.20260717`, `tcf.20260724`,
+`women_retreat_2026_session1`.
 
 ## Why it is blocked
 
@@ -90,9 +113,23 @@ Two blockers, both found on 2026-09-10:
    both the primary and the rescue transcript for each file in order to diff them, and only
    `tcf.20250607` has them, which is why only it was analysed.
 
-The 32-file fidelity set at `/home/jay/sweep/fidelity/` does have transcripts, but it is a
-different subset and does not contain all six refused rescues. Check the overlap before
-assuming a re-decode is needed.
+The 32-file fidelity set at `/home/jay/sweep/fidelity/` does have transcripts. Overlap
+checked 2026-09-10: it covers **six of the nine refused rescues** (`tcf.20150424`,
+`tcf.20211203`, `tcf.20221203`, `tcf.20250607`, `ucf20211106b`,
+`women_retreat_2025_session1`) and five of the eleven selected ones (`tcf.20210210`,
+`tcf.20210217`, `tcf.20260626`, `tcf.20260717`, `women_retreat_2026_session1`). Only
+three refusals need a decode: `tcf.20240713`, `tcf.20241105`, `tcf.20260428`.
+
+One caveat that has to travel with every fidelity-sourced result. `A.json` is 0.6.0 as
+shipped, a beam search from temperature 0.0, deterministic, so it is the same primary the
+0.6.1 run published and its word counts agree with the log to within normalisation.
+`B.json` is a whole-file decode with the ladder starting at 0.2, which is what the rescue
+does, but it is **a different unseeded draw**, not the refused draw. On `tcf.20250607` the
+refused rescue was 7475 words and `B.json` is 7610. So a fidelity-sourced result answers
+"does a rescue-configuration decode of this recording drop corroborated content the
+primary holds", which is the question the guard needs answered in distribution, but it is
+not literally the transcript that was thrown away. Results from a re-decode are marked as
+such and are the matched pair.
 
 ## How to finish it
 
