@@ -25,6 +25,7 @@ import gaps  # noqa: E402
 import legacy_eras  # noqa: E402
 import runner  # noqa: E402
 import select_files  # noqa: E402
+import select_replay  # noqa: E402
 import service_log  # noqa: E402
 import strata  # noqa: E402
 import trims  # noqa: E402
@@ -1253,3 +1254,131 @@ def test_service_basis_is_absent_without_a_service_number():
     result = gaps.analyse_file([], [(0.0, 70.0)], 100.0)
     assert result["uncovered_fraction_service_basis"] is None
     assert result["speech_ratio_to_service"] is None
+
+
+def test_guid_for_is_stable_for_uuid5_and_random_otherwise():
+    a = runner.guid_for("tcf.20240213b.mp3", "uuid5")
+    b = runner.guid_for("tcf.20240213b.mp3", "uuid5")
+    c = runner.guid_for("tcf.20240116.mp3", "uuid5")
+    assert a == b            # the seed must not move between runs
+    assert a != c            # but every recording gets its own
+    assert runner.guid_for("tcf.20240213b.mp3", "uuid4") != a
+
+
+# --- replaying an alternative selection ordering ----------------------------------------
+
+
+def test_retention_guard_mirrors_the_service():
+    assert select_replay.retains_enough_words(1000, 1000) is True
+    assert select_replay.retains_enough_words(1000, 1010) is True
+    assert select_replay.retains_enough_words(1000, 995) is True      # 5 lost, within both
+    assert select_replay.retains_enough_words(1000, 985) is False     # 1.5 percent
+    assert select_replay.retains_enough_words(8904, 8850) is False    # 54 lost, over the cap
+    assert select_replay.retains_enough_words(0, 0) is True
+
+
+def test_longest_unique_run_needs_corroboration():
+    words = "the lord he is god the lord he is god indeed".split()
+    other = "completely different words entirely here".split()
+    legacy = words
+    run, span = select_replay.longest_unique_run(words, other, legacy, min_run=5)
+    assert run == len(words)
+    assert span is not None
+    # Without corroboration in the legacy text the same run is not counted.
+    run_uncorroborated, _ = select_replay.longest_unique_run(
+        words, other, "nothing matching at all here".split(), min_run=5
+    )
+    assert run_uncorroborated == 0
+
+
+def test_longest_unique_run_ignores_short_coincidences():
+    words = "alpha beta gamma delta epsilon zeta".split()
+    other = "alpha beta gamma delta epsilon zeta".split()
+    assert select_replay.longest_unique_run(words, other, words)[0] == 0
+
+
+def make_pass(label, words, anomaly=0, windows=0, logprob=-0.1, text=""):
+    return {"label": label, "words": words, "anomaly_count": anomaly,
+            "anomaly_windows": windows, "mean_logprob": logprob, "transcription": text,
+            "uncovered_s": 0, "uncovered_max_gap_s": 0, "seed": 123}
+
+
+def test_content_first_flips_only_when_a_corroborated_run_decides_it():
+    shared = "one two three four five six seven eight nine ten " * 6
+    passage = "moses came and told the people all the words of the lord and all the rules"
+    legacy_text = shared + passage
+    record = {
+        "guid": "g", "file": "a.mp3", "published": "primary",
+        "passes": [
+            make_pass("primary", 70, text=shared),
+            make_pass("rescue", 70, text=shared + passage),
+        ],
+    }
+    legacy = {"a.mp3": select_replay.norm_words(legacy_text)}
+    row = select_replay.replay_one(record, legacy)
+    # Equal anomaly and equal word count: the current rule cannot separate them and keeps
+    # the primary; the corroborated run decides it for content_first.
+    assert row["current"] == "primary"
+    assert row["content_first"] == "rescue"
+    assert row["flips"] is True
+    assert row["recall_gain"] > 0
+
+
+def test_content_first_keeps_the_primary_when_the_primary_holds_the_content():
+    shared = "one two three four five six seven eight nine ten " * 6
+    passage = "and he rose early in the morning and built an altar at the foot"
+    record = {
+        "guid": "g", "file": "a.mp3", "published": "primary",
+        "passes": [
+            make_pass("primary", 76, text=shared + passage),
+            make_pass("rescue", 70, text=shared),
+        ],
+    }
+    legacy = {"a.mp3": select_replay.norm_words(shared + passage)}
+    row = select_replay.replay_one(record, legacy)
+    assert row["current"] == "primary"
+    assert row["content_first"] == "primary"
+    assert row["flips"] is False
+
+
+def test_anomaly_score_still_comes_first():
+    shared = "one two three four five six seven eight nine ten " * 6
+    passage = "moses came and told the people all the words of the lord and all"
+    record = {
+        "guid": "g", "file": "a.mp3", "published": "primary",
+        "passes": [
+            make_pass("primary", 70, anomaly=0, text=shared),
+            make_pass("rescue", 70, anomaly=3, text=shared + passage),
+        ],
+    }
+    legacy = {"a.mp3": select_replay.norm_words(shared + passage)}
+    row = select_replay.replay_one(record, legacy)
+    # The rescue holds the corroborated run but scores worse on anomalies, which is the
+    # first key in both orderings, so neither publishes it.
+    assert row["current"] == "primary" and row["content_first"] == "primary"
+
+
+def test_an_ineligible_rescue_is_never_published_by_either_rule():
+    record = {
+        "guid": "g", "file": "a.mp3", "published": "primary",
+        "passes": [
+            make_pass("primary", 1000, anomaly=2, text="alpha beta gamma delta epsilon"),
+            make_pass("rescue", 900, anomaly=0, text="zeta eta theta iota kappa"),
+        ],
+    }
+    row = select_replay.replay_one({**record}, {"a.mp3": []})
+    assert row["eligible"] == ["primary"]
+    assert row["current"] == "primary" and row["content_first"] == "primary"
+
+
+def test_summarise_splits_flips_by_whether_recall_improved():
+    rows = [
+        {"file": "a.mp3", "flips": True, "recall_gain": 0.02},
+        {"file": "b.mp3", "flips": True, "recall_gain": -0.01},
+        {"file": "c.mp3", "flips": True, "recall_gain": 0.0},
+        {"file": "d.mp3", "flips": False, "recall_gain": 0.0},
+    ]
+    s = select_replay.summarise(rows)
+    assert s["rescues"] == 4 and s["flips"] == 3
+    assert s["flips_better"] == 1 and s["flips_worse"] == 1 and s["flips_indifferent"] == 1
+    assert s["better_files"] == ["a.mp3"]

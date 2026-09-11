@@ -183,12 +183,28 @@ def summarise(payload, duration_s):
     }
 
 
+# Namespace for deterministic per-file job identifiers. From 0.6.2 the decoder seed is
+# derived from the job GUID, so a random GUID would reseed on every run and the result
+# would not be reproducible by anyone else. A UUIDv5 of the filename makes the GUID, and
+# therefore the seed, a stable function of the recording.
+GUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/jaycollett/TranscriptionAPI/quality_sweep")
+
+
+def guid_for(filename, mode):
+    """The job identifier for a file: random, or derived from the name."""
+    if mode == "uuid5":
+        return str(uuid.uuid5(GUID_NAMESPACE, filename))
+    return str(uuid.uuid4())
+
+
 class Runner:
-    def __init__(self, base_url, audio_dir, out_dir, poll_interval=10.0, scratch_dirs=()):
+    def __init__(self, base_url, audio_dir, out_dir, poll_interval=10.0, scratch_dirs=(),
+                 guid_mode="uuid4"):
         self.base_url = base_url.rstrip("/")
         self.audio_dir = audio_dir
         self.out_dir = out_dir
         self.poll_interval = poll_interval
+        self.guid_mode = guid_mode
         # Directories the sweep service works in, on this host. After each job the
         # runner removes everything named after that job's GUID: the uploaded copy of
         # the audio, the 16 kHz WAV MFA was given, and the alignment output. Over a
@@ -270,7 +286,7 @@ class Runner:
     def run_one(self, entry):
         filename = entry["file"]
         duration_s = entry.get("duration_s")
-        guid = str(uuid.uuid4())
+        guid = guid_for(filename, self.guid_mode)
         record = {
             "file": filename,
             "guid": guid,
@@ -370,6 +386,11 @@ def main(argv=None):
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--poll-interval", type=float, default=10.0)
     parser.add_argument(
+        "--guid-mode", choices=("uuid4", "uuid5"), default="uuid4",
+        help="uuid5 derives the job identifier from the filename, which from 0.6.2 also "
+             "fixes the decoder seed, so the run is reproducible by anyone",
+    )
+    parser.add_argument(
         "--scratch-dir",
         action="append",
         default=[],
@@ -390,7 +411,8 @@ def main(argv=None):
         entries = entries[: args.limit]
 
     runner = Runner(
-        args.base_url, args.audio_dir, args.out_dir, args.poll_interval, args.scratch_dir
+        args.base_url, args.audio_dir, args.out_dir, args.poll_interval, args.scratch_dir,
+        args.guid_mode,
     )
     print(f"{len(entries)} entries, {runner.free_bytes() / 1024 ** 3:.1f} GB free at start")
     processed = runner.run(entries, force=args.force)
