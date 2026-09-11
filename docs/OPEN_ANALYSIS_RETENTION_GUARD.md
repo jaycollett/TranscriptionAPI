@@ -45,6 +45,14 @@ Conclusion for that one recording: the rescue is the better transcript and a wor
 refused it. The tie-break was never the blocker; the retention guard was. Changing the
 tie-break alone flips nothing.
 
+That is settled in the code, not inferred. `select_pass` in `transcribe.py` builds an
+eligibility list first and only sorts what survives it, so `retains_enough_words` is a hard
+pre-filter and a candidate that fails it never reaches the tie-break at all. On this recording
+the rescue is 340 words down against a 40 word cap, so it fails eligibility by a factor of
+eight and is discarded before any tie is considered. One earlier report attributed the
+discard to the tie-break and recommended changing it; that recommendation is a dead end and
+should not be revisited. The guard is the thing to change, or nothing is.
+
 Full detail is on devmachine at `/home/jay/sweep/rescue_deficit.md` and `.json`.
 
 ## The six refused rescues
