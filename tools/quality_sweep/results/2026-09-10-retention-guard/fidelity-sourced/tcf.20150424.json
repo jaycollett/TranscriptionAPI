@@ -1,0 +1,187 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 7,
+   "left_words": 7,
+   "right_runs": 6,
+   "right_words": 6
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 2,
+   "right_words": 57
+  },
+  "2-3": {
+   "left_runs": 11,
+   "left_words": 21,
+   "right_runs": 7,
+   "right_words": 12
+  },
+  "4-11": {
+   "left_runs": 2,
+   "left_words": 8,
+   "right_runs": 2,
+   "right_words": 11
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": 1228,
+  "legacy_minus_rescue": 1178,
+  "legacy_words": 8292,
+  "primary_words": 7064,
+  "rescue_minus_primary": 50,
+  "rescue_words": 7114
+ },
+ "file": "tcf.20150424.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.3122,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "may you be strengthened with all power according to his glorious might for all endurance and patience with joy verse 12 giving thanks to the father who has qualified you to share in the inheritance of the saints in light",
+   "word_index": 2221,
+   "words": 40
+  },
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 2,
+   "position": 0.6053,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "people i don't want to do it for the pastor i don't want to do it for",
+   "word_index": 4306,
+   "words": 17
+  },
+  {
+   "class": "ambiguous",
+   "clock": "-",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.4294,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "verse oh that's not that was good",
+   "word_index": 3055,
+   "words": 7
+  },
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.0313,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "lord i pray that",
+   "word_index": 223,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.3662,
+   "side": "primary-only",
+   "start_s": null,
+   "text": "i am in that",
+   "word_index": 2587,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.9013,
+   "side": "primary-only",
+   "start_s": null,
+   "text": "do that and i'll",
+   "word_index": 6367,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.3122,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "may you be strengthened with all power according to his glorious might for all endurance and patience with joy verse 12 giving thanks to the father who has qualified you to share in the inheritance of the saints in light",
+   "word_index": 2221,
+   "words": 40
+  },
+  {
+   "class": "real content",
+   "clock": "-",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 2,
+   "position": 0.6053,
+   "side": "rescue-only",
+   "start_s": null,
+   "text": "people i don't want to do it for the pastor i don't want to do it for",
+   "word_index": 4306,
+   "words": 17
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "these",
+   1
+  ],
+  [
+   "read",
+   1
+  ],
+  [
+   "reality",
+   1
+  ],
+  [
+   "okay",
+   1
+  ],
+  [
+   "and",
+   1
+  ],
+  [
+   "then",
+   1
+  ],
+  [
+   "all",
+   1
+  ],
+  [
+   "my",
+   1
+  ],
+  [
+   "amen",
+   1
+  ]
+ ],
+ "timings_words": null
+}

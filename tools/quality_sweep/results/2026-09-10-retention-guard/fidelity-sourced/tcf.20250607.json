@@ -1,0 +1,355 @@
+{
+ "budget": {
+  "1": {
+   "left_runs": 207,
+   "left_words": 207,
+   "right_runs": 14,
+   "right_words": 14
+  },
+  "12+": {
+   "left_runs": 0,
+   "left_words": 0,
+   "right_runs": 1,
+   "right_words": 154
+  },
+  "2-3": {
+   "left_runs": 70,
+   "left_words": 147,
+   "right_runs": 6,
+   "right_words": 6
+  },
+  "4-11": {
+   "left_runs": 11,
+   "left_words": 44,
+   "right_runs": 3,
+   "right_words": 16
+  }
+ },
+ "counts": {
+  "legacy_minus_primary": -199,
+  "legacy_minus_rescue": 9,
+  "legacy_words": 7619,
+  "primary_words": 7818,
+  "rescue_minus_primary": -208,
+  "rescue_words": 7610
+ },
+ "file": "tcf.20250607.mp3",
+ "legacy_probe_ngram": 6,
+ "run_floor": 4,
+ "run_min_words": 12,
+ "runs": [
+  {
+   "class": "real content",
+   "clock": "1:41",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.9536,
+   "max_self_repeat": 2,
+   "position": 0.0269,
+   "side": "rescue-only",
+   "start_s": 101.1,
+   "text": "moses came and told the people all the words that the lord of the lord and all the rules and all the people answered with one voice and said all the words that the lord has spoken we will do and moses wrote down all the words of the lord he rose early in the morning and built an altar at the foot of the mountain and 12 pillars according to the 12 tribes of israel and he sent young men of the people of israel who offered burnt offerings and sacrificed peace offerings and oxen to the lord and moses took half of the blood and put it in basins and half of the blood he threw against the altar then he took the book of the covenant and read it in the hearing of all the people and they said all that the lord has spoken we will do and we will be obedient",
+   "word_index": 205,
+   "words": 156
+  },
+  {
+   "class": "real content",
+   "clock": "18:20",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.3861,
+   "side": "rescue-only",
+   "start_s": 1100.34,
+   "text": "shannon gets on to me all the time",
+   "word_index": 2938,
+   "words": 8
+  },
+  {
+   "class": "real content",
+   "clock": "27:51",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 1.0,
+   "max_self_repeat": 1,
+   "position": 0.5742,
+   "side": "rescue-only",
+   "start_s": 1671.3,
+   "text": "do you have anything to say about",
+   "word_index": 4370,
+   "words": 7
+  },
+  {
+   "class": "ambiguous",
+   "clock": "39:18",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.8109,
+   "side": "primary-only",
+   "start_s": 2358.24,
+   "text": "all you know we should we should",
+   "word_index": 6340,
+   "words": 7
+  },
+  {
+   "class": "ambiguous",
+   "clock": "37:46",
+   "in_legacy": false,
+   "legacy_ngram_coverage": 0.0,
+   "max_self_repeat": 1,
+   "position": 0.7739,
+   "side": "primary-only",
+   "start_s": 2266.36,
+   "text": "uh i think they've got it",
+   "word_index": 6050,
+   "words": 6
+  },
+  {
+   "class": "ambiguous",
+   "clock": "33:26",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.6811,
+   "side": "primary-only",
+   "start_s": 2006.08,
+   "text": "is it it's a uh",
+   "word_index": 5325,
+   "words": 5
+  },
+  {
+   "class": "ambiguous",
+   "clock": "35:08",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.7263,
+   "side": "rescue-only",
+   "start_s": 2108.13,
+   "text": "is it going to be",
+   "word_index": 5527,
+   "words": 5
+  },
+  {
+   "class": "real content",
+   "clock": "11:37",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.2278,
+   "side": "primary-only",
+   "start_s": 697.01,
+   "text": "i don't want to",
+   "word_index": 1781,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "17:53",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.3605,
+   "side": "primary-only",
+   "start_s": 1073.57,
+   "text": "um over the reading",
+   "word_index": 2818,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "21:43",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4336,
+   "side": "primary-only",
+   "start_s": 1303.03,
+   "text": "in his he turned",
+   "word_index": 3390,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "24:24",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.4863,
+   "side": "primary-only",
+   "start_s": 1464.61,
+   "text": "uh it you know",
+   "word_index": 3802,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "25:15",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.5022,
+   "side": "primary-only",
+   "start_s": 1515.26,
+   "text": "gets you focused yep",
+   "word_index": 3926,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "28:19",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.5687,
+   "side": "primary-only",
+   "start_s": 1699.66,
+   "text": "um i am reading",
+   "word_index": 4446,
+   "words": 4
+  },
+  {
+   "class": "ambiguous",
+   "clock": "29:57",
+   "in_legacy": false,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.6023,
+   "side": "primary-only",
+   "start_s": 1797.47,
+   "text": "or evangelical yeah evangelical",
+   "word_index": 4709,
+   "words": 4
+  },
+  {
+   "class": "real content",
+   "clock": "34:22",
+   "in_legacy": true,
+   "legacy_ngram_coverage": null,
+   "max_self_repeat": 1,
+   "position": 0.7027,
+   "side": "primary-only",
+   "start_s": 2062.77,
+   "text": "a succinct statement of",
+   "word_index": 5494,
+   "words": 4
+  }
+ ],
+ "runs_at_threshold": [
+  {
+   "class": "real content",
+   "clock": "1:41",
+   "in_legacy": true,
+   "legacy_ngram_coverage": 0.9536,
+   "max_self_repeat": 2,
+   "position": 0.0269,
+   "side": "rescue-only",
+   "start_s": 101.1,
+   "text": "moses came and told the people all the words that the lord of the lord and all the rules and all the people answered with one voice and said all the words that the lord has spoken we will do and moses wrote down all the words of the lord he rose early in the morning and built an altar at the foot of the mountain and 12 pillars according to the 12 tribes of israel and he sent young men of the people of israel who offered burnt offerings and sacrificed peace offerings and oxen to the lord and moses took half of the blood and put it in basins and half of the blood he threw against the altar then he took the book of the covenant and read it in the hearing of all the people and they said all that the lord has spoken we will do and we will be obedient",
+   "word_index": 205,
+   "words": 156
+  }
+ ],
+ "single_word_deficit": [
+  [
+   "um",
+   83
+  ],
+  [
+   "uh",
+   40
+  ],
+  [
+   "i",
+   12
+  ],
+  [
+   "and",
+   11
+  ],
+  [
+   "yeah",
+   8
+  ],
+  [
+   "the",
+   8
+  ],
+  [
+   "right",
+   4
+  ],
+  [
+   "it's",
+   4
+  ],
+  [
+   "that",
+   3
+  ],
+  [
+   "it",
+   3
+  ],
+  [
+   "like",
+   3
+  ],
+  [
+   "is",
+   3
+  ],
+  [
+   "in",
+   2
+  ],
+  [
+   "there's",
+   2
+  ],
+  [
+   "somebody",
+   2
+  ],
+  [
+   "of",
+   2
+  ],
+  [
+   "sure",
+   2
+  ],
+  [
+   "a",
+   2
+  ],
+  [
+   "but",
+   2
+  ],
+  [
+   "if",
+   1
+  ],
+  [
+   "gotcha",
+   1
+  ],
+  [
+   "i'm",
+   1
+  ],
+  [
+   "most",
+   1
+  ],
+  [
+   "really",
+   1
+  ],
+  [
+   "that's",
+   1
+  ]
+ ],
+ "timings_words": 7818
+}
