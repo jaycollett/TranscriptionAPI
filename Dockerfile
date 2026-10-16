@@ -28,7 +28,7 @@
 #   * CUDA_LAUNCH_BLOCKING=1 removed. It serialises every kernel launch and is a
 #     debugging setting; it cost throughput on all five Whisper passes.
 # Still deferred: a non-root USER (the MFA base runs as root and writes to /mfa).
-FROM mmcauliffe/montreal-forced-aligner:v3.4.2
+FROM mmcauliffe/montreal-forced-aligner:v3.4.3
 
 # Switch to root to install packages
 USER root
