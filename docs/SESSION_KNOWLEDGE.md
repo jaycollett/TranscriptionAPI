@@ -6,6 +6,18 @@ dependency set, or the deployment path. Add an entry when you learn something
 that is not recoverable from the code or git history, and correct an entry when
 new evidence proves it wrong.
 
+## 2026-11-17: a failed job can be uploaded again
+
+`/upload` used to answer 409 for any GUID it held, including `error` and
+`quarantined` rows, which `cleanup_old_jobs` only removes a day after
+completion. The orchestrator now retries failed steps on a schedule (every 5
+minutes for an hour, then hourly), and its resubmits got 409 and polled the
+same failed job. An upload of a GUID whose row is `error` or `quarantined` now
+deletes that row and its files (`job_artifact_paths`) under `upload_lock`, then
+goes through the normal insert path, so the job starts again with
+`attempt_count` 0. Pending, processing and completed rows still answer 409.
+The orchestrator reuses its local copy of the MP3 for these resubmits.
+
 ## 2026-09-07 - Decode collapse: three defects, one release
 
 Production transcription fell to 0.15-1.24 words/sec on a set of 2024

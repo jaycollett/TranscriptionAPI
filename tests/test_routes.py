@@ -107,6 +107,55 @@ def test_upload_duplicate_guid_returns_409(client, route_db):
     assert resp.get_json()["error"] == "GUID already exists"
 
 
+@pytest.mark.parametrize("status", ["error", "quarantined"])
+def test_upload_requeues_a_failed_job(client, route_db, upload_dir, app_module, monkeypatch, status):
+    """A failed or quarantined GUID can be resubmitted: the old row and files go,
+    and the job is queued again with a fresh attempt count."""
+    monkeypatch.setattr(app_module, "get_audio_duration", lambda path: 60.0)
+    guid = str(uuid.uuid4())
+    insert_job(route_db, guid, filename="old.wav", status=status, attempt_count=3)
+    (upload_dir / f"{guid}.wav").write_bytes(b"old audio")
+    (upload_dir / f"{guid}_aligned").mkdir()
+    (upload_dir / f"{guid}.txt").write_text("old transcript")
+
+    resp = _upload(client, guid, data=b"new audio")
+
+    assert resp.status_code == 201
+    row = get_row(route_db, guid)
+    assert row["status"] == "pending"
+    assert row["attempt_count"] == 0
+    assert row["transcription"] is None
+    assert row["filename"] == "sermon.mp3"
+    assert (upload_dir / f"{guid}.mp3").read_bytes() == b"new audio"
+    assert not (upload_dir / f"{guid}.wav").exists()
+    assert not (upload_dir / f"{guid}_aligned").exists()
+    assert not (upload_dir / f"{guid}.txt").exists()
+    assert route_db.execute("SELECT COUNT(*) FROM transcriptions").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("status", ["pending", "processing", "completed"])
+def test_upload_of_an_active_or_completed_job_is_still_409(client, route_db, upload_dir, status):
+    guid = str(uuid.uuid4())
+    insert_job(route_db, guid, status=status)
+    (upload_dir / f"{guid}.mp3").write_bytes(b"original")
+
+    resp = _upload(client, guid, data=b"different bytes")
+
+    assert resp.status_code == 409
+    assert get_row(route_db, guid)["status"] == status
+    assert (upload_dir / f"{guid}.mp3").read_bytes() == b"original"
+
+
+def test_upload_requeues_a_failed_job_stored_in_other_casing(client, route_db, upload_dir, app_module, monkeypatch):
+    monkeypatch.setattr(app_module, "get_audio_duration", lambda path: 60.0)
+    guid = str(uuid.uuid4())
+    insert_job(route_db, guid.upper(), status="error")
+
+    assert _upload(client, guid).status_code == 201
+    rows = route_db.execute("SELECT guid, status FROM transcriptions").fetchall()
+    assert rows == [(guid, "pending")]
+
+
 def test_upload_integrity_error_returns_409(client, app_module, monkeypatch, upload_dir):
     """A row that appears between the check and the insert (another process on the
     same database) is a conflict, not a 500."""

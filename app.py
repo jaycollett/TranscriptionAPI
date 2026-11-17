@@ -1108,6 +1108,11 @@ def is_canonical_uuid(guid):
     return str(parsed) == guid.lower()
 
 
+# Statuses a resubmit of the same GUID may replace. Pending, processing and
+# completed jobs keep answering 409.
+RESUBMITTABLE_STATUSES = ('error', 'quarantined')
+
+
 @app.route('/upload', methods=['POST'])
 # Endpoint to upload an audio file and register a transcription job
 def upload_audio():
@@ -1149,9 +1154,27 @@ def upload_audio():
             cursor = conn.cursor()
             # Case-insensitive, matching the orphan sweep: one UUID in two casings
             # is one job.
-            cursor.execute("SELECT 1 FROM transcriptions WHERE lower(guid) = lower(?)", (guid,))
-            if cursor.fetchone():
-                return jsonify({'error': 'GUID already exists'}), 409  # Conflict status
+            cursor.execute(
+                "SELECT guid, status, filename FROM transcriptions WHERE lower(guid) = lower(?)",
+                (guid,)
+            )
+            existing = cursor.fetchone()
+            if existing:
+                existing_guid, existing_status, existing_filename = existing
+                if existing_status not in RESUBMITTABLE_STATUSES:
+                    return jsonify({'error': 'GUID already exists'}), 409  # Conflict status
+                # A job that failed ('error') or was quarantined is cleared, row
+                # and files, and the upload below queues it afresh with a new
+                # attempt count. Without this the GUID answered 409 until the
+                # cleanup removed the row a day later, so a caller could not
+                # retry it. Done under upload_lock like the rest of this block.
+                for path in job_artifact_paths(app.config['UPLOAD_FOLDER'],
+                                               existing_guid, existing_filename):
+                    remove_path(path)
+                cursor.execute("DELETE FROM transcriptions WHERE guid = ?", (existing_guid,))
+                app.logger.info(
+                    f"Resubmitted {existing_status} job {existing_guid}: cleared and requeued"
+                )
 
             try:
                 cursor.execute(
