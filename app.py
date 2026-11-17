@@ -1031,24 +1031,31 @@ def cleanup_old_jobs(cursor, upload_folder):
     """
     # Age is measured from completion, not submission: a job that waited a day
     # in a deep queue and finished minutes ago still has a client polling for it.
-    cursor.execute(
-        "SELECT guid, filename FROM transcriptions "
-        "WHERE status IN ('completed', 'error', 'quarantined') "
-        "AND COALESCE(completed_at, created_at) <= datetime('now', ?)",
-        (CLEANUP_ROW_AGE,)
-    )
-    old_records = cursor.fetchall()
-
-    for guid, filename in old_records:
-        for path in job_artifact_paths(upload_folder, guid, filename):
-            remove_path(path)
-
-    if old_records:
-        cursor.executemany(
-            "DELETE FROM transcriptions WHERE guid = ?",
-            [(guid,) for guid, _ in old_records]
+    #
+    # Held under upload_lock: /upload replaces an 'error' or 'quarantined' row
+    # with a fresh job under the same lock. Without it, a resubmit landing
+    # between this SELECT and the deletes below would lose its new row and its
+    # new audio file. The DELETE repeats the terminal-status condition as well.
+    with upload_lock:
+        cursor.execute(
+            "SELECT guid, filename FROM transcriptions "
+            "WHERE status IN ('completed', 'error', 'quarantined') "
+            "AND COALESCE(completed_at, created_at) <= datetime('now', ?)",
+            (CLEANUP_ROW_AGE,)
         )
-        app.logger.info(f"Cleanup: deleted {len(old_records)} old transcription(s) and their files")
+        old_records = cursor.fetchall()
+
+        for guid, filename in old_records:
+            for path in job_artifact_paths(upload_folder, guid, filename):
+                remove_path(path)
+
+        if old_records:
+            cursor.executemany(
+                "DELETE FROM transcriptions WHERE guid = ? "
+                "AND status IN ('completed', 'error', 'quarantined')",
+                [(guid,) for guid, _ in old_records]
+            )
+            app.logger.info(f"Cleanup: deleted {len(old_records)} old transcription(s) and their files")
 
     swept = sweep_orphaned_files(cursor, upload_folder)
     return len(old_records), swept
