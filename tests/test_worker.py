@@ -71,6 +71,60 @@ def test_cleanup_removes_old_terminal_rows_and_their_files(app_module, db, uploa
     assert (upload_dir / f"{old_pending}.mp3").exists()
 
 
+def test_cleanup_holds_the_upload_lock_while_it_deletes(app_module, db, upload_dir, monkeypatch):
+    """/upload requeues a failed GUID under upload_lock. Cleanup must hold the
+    same lock from its SELECT through the file and row deletes, or a resubmit
+    in between would lose its new file and row."""
+    real_lock = app_module.upload_lock
+    seen = []
+
+    class RecordingLock:
+        held = False
+
+        def __enter__(self):
+            real_lock.acquire()
+            RecordingLock.held = True
+
+        def __exit__(self, *exc):
+            RecordingLock.held = False
+            real_lock.release()
+
+    real_remove = app_module.remove_path
+
+    def remove(path):
+        seen.append(RecordingLock.held)
+        return real_remove(path)
+
+    monkeypatch.setattr(app_module, "upload_lock", RecordingLock())
+    monkeypatch.setattr(app_module, "remove_path", remove)
+    guid = str(uuid.uuid4())
+    insert_job(db, guid, status="error", created_at="2026-01-01 00:00:00")
+    (upload_dir / f"{guid}.mp3").write_bytes(b"x")
+
+    deleted, _ = app_module.cleanup_old_jobs(db.cursor(), str(upload_dir))
+
+    assert deleted == 1
+    assert seen and all(seen)
+
+
+def test_cleanup_does_not_delete_a_row_requeued_after_its_select(app_module, db, upload_dir, monkeypatch):
+    """The DELETE repeats the terminal-status check, so a row that became
+    'pending' after the SELECT survives even if the lock were bypassed."""
+    guid = str(uuid.uuid4())
+    insert_job(db, guid, status="error", created_at="2026-01-01 00:00:00")
+    real_remove = app_module.remove_path
+
+    def remove_then_requeue(path):
+        db.execute("UPDATE transcriptions SET status = 'pending' WHERE guid = ?", (guid,))
+        return real_remove(path)
+
+    monkeypatch.setattr(app_module, "remove_path", remove_then_requeue)
+
+    app_module.cleanup_old_jobs(db.cursor(), str(upload_dir))
+
+    assert get_row(db, guid)["status"] == "pending"
+
+
 def test_cleanup_deletes_every_old_row_not_just_twenty(app_module, db, upload_dir):
     """The old code deleted files for 20 rows but rows without limit; both must agree."""
     guids = [str(uuid.uuid4()) for _ in range(25)]
